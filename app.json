@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Tripvisor",
+    "slug": "tripvisor",
+    "scheme": "tripvisor",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tripvisor.app",
+      "config": {
+        "googleMapsApiKey": "REPLACE_WITH_IOS_MAPS_KEY"
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to suggest nearby places for your trip."
+      }
+    },
+    "android": {
+      "package": "com.tripvisor.app",
+      "config": {
+        "googleMaps": {
+          "apiKey": "REPLACE_WITH_ANDROID_MAPS_KEY"
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-location",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

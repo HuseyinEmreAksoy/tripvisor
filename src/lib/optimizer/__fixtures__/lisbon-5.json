@@ -1,0 +1,15 @@
+{
+  "name": "lisbon-5",
+  "description": "Five Lisbon landmarks, 8h/day, no anchor — expect at least one day",
+  "input": {
+    "places": [
+      { "id": "belem-tower", "lat": 38.6916, "lng": -9.2159, "visitMinutes": 60 },
+      { "id": "jeronimos", "lat": 38.6979, "lng": -9.2068, "visitMinutes": 75 },
+      { "id": "alfama", "lat": 38.712, "lng": -9.13, "visitMinutes": 90 },
+      { "id": "saint-george", "lat": 38.7139, "lng": -9.1335, "visitMinutes": 60 },
+      { "id": "oceanario", "lat": 38.7636, "lng": -9.0937, "visitMinutes": 120 }
+    ],
+    "legs": [],
+    "dailyBudgetMinutes": 480
+  }
+}
