@@ -1,5 +1,16 @@
+/**
+ * Map.web.tsx — Google Maps JavaScript API rendering for web.
+ *
+ * Web-only graceful-degradation:
+ *   When EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY is empty or undefined (e.g. during local dev
+ *   without a configured key), we render <MapUnavailable> instead of crashing.
+ *   This fallback shows the place list grouped by day with day-color chips.
+ *
+ * Map.native.tsx is untouched — native API keys live in app.json and are never
+ * exposed to the web bundle.
+ */
 import { useEffect, useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import {
   APIProvider,
   Map as GoogleMap,
@@ -9,29 +20,26 @@ import {
 } from '@vis.gl/react-google-maps';
 import Constants from 'expo-constants';
 import { dayColor, type MapViewProps } from './types';
+import { MapUnavailable } from '../MapUnavailable';
 
+/**
+ * Returns the Maps JavaScript API key, or null when absent.
+ * Checks process.env first (Metro inlines EXPO_PUBLIC_* at bundle time),
+ * then falls back to Constants.expoConfig.extra for OTA-update scenarios.
+ */
 function getWebKey(): string | null {
   const fromEnv =
     typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY : undefined;
   if (fromEnv) return fromEnv;
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
   const k = extra.googleMapsWebKey;
-  return typeof k === 'string' ? k : null;
+  return typeof k === 'string' && k.length > 0 ? k : null;
 }
 
 export function Map(props: MapViewProps) {
   const key = getWebKey();
 
-  if (!key) {
-    return (
-      <View style={styles.fallback}>
-        <Text style={styles.fallbackText}>
-          Map unavailable — set EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY.
-        </Text>
-      </View>
-    );
-  }
-
+  // Always call hooks before conditional returns (Rules of Hooks).
   const defaultCenter = useMemo(() => {
     if (props.initialRegion) {
       return { lat: props.initialRegion.lat, lng: props.initialRegion.lng };
@@ -46,6 +54,11 @@ export function Map(props: MapViewProps) {
     }
     return { lat: 0, lng: 0 };
   }, [props.initialRegion, props.markers]);
+
+  // ── Graceful degradation: no key → list view ──────────────────────────────
+  if (!key) {
+    return <MapUnavailable {...props} />;
+  }
 
   return (
     <View style={styles.container}>
@@ -106,6 +119,4 @@ function Polylines({ polylines }: { polylines: MapViewProps['polylines'] }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, minHeight: 320 },
-  fallback: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  fallbackText: { color: '#5A5A62' },
 });

@@ -1,6 +1,7 @@
 import { FlatList, RefreshControl, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button, EmptyState, Heading, Screen } from '@/components';
+import { noTrips } from '@/components/emptyStates';
 import { TripCard } from '@/components/TripCard';
 import { useTrips, useSignOut } from '@/api';
 import { useTheme } from '@/theme';
@@ -50,11 +51,8 @@ export default function TripsList() {
 
       {isEmpty ? (
         <EmptyState
-          title="No trips yet"
-          description="Create your first trip to start planning."
-          action={
-            <Button label="Create trip" onPress={() => router.push('/trip/new')} fullWidth={false} />
-          }
+          {...noTrips}
+          onPress={() => router.push('/trip/new')}
         />
       ) : (
         <FlatList

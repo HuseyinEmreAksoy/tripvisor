@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Button, Heading, PoweredByGoogle, Screen, TextField } from '@/components';
+import { Button, EmptyState, Heading, PoweredByGoogle, Screen, TextField } from '@/components';
+import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import {
   useAutocompleteSessionToken,
@@ -112,21 +113,15 @@ export default function AddPlace() {
           ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
           ListEmptyComponent={
             debounced.length >= 2 ? (
-              <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
-                {isFetching ? (
+              isFetching ? (
+                <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
                   <ActivityIndicator />
-                ) : (
-                  <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-                    No results
-                  </Text>
-                )}
-              </View>
+                </View>
+              ) : (
+                <EmptyState {...noSearchResults} />
+              )
             ) : (
-              <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
-                <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-                  Type at least 2 characters to search Google Places.
-                </Text>
-              </View>
+              <EmptyState {...searchPrompt} />
             )
           }
           ListFooterComponent={suggestions.length ? <PoweredByGoogle /> : null}

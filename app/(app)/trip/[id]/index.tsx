@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Button,
   DraggableItinerary,
+  EmptyState,
   Heading,
   PlaceActionsSheet,
   Screen,
@@ -13,8 +14,12 @@ import {
   TabBar,
   type DraggableItem,
 } from '@/components';
+import { noPlaces } from '@/components/emptyStates';
+import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { Map, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
+// Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
+import { useDownloadTripIcs } from '@/api/ics';
 import {
   supabase,
   useDeleteTrip,
@@ -130,6 +135,7 @@ export default function TripDetail() {
           tripId={trip.id}
           dailyHoursBudget={trip.daily_hours_budget}
           transportMode={trip.transport_mode}
+          hasPlaces={places.length > 0}
           onDelete={async () => {
             await deleteTrip.mutateAsync(trip.id);
             router.replace('/trips');
@@ -198,6 +204,7 @@ function ItineraryTab({
   onOpen: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
+  const router = useRouter();
   const reorderDay = useReorderDay();
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
 
@@ -216,11 +223,10 @@ function ItineraryTab({
 
   if (places.length === 0) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: t.spacing.xl }}>
-        <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-          No places yet. Add your first destination to start planning.
-        </Text>
-      </View>
+      <EmptyState
+        {...noPlaces}
+        onPress={() => router.push(`/trip/${tripId}/add`)}
+      />
     );
   }
 
@@ -334,18 +340,24 @@ function SettingsTab({
   tripId,
   dailyHoursBudget,
   transportMode,
+  hasPlaces,
   onDelete,
   deleting,
 }: {
   tripId: string;
   dailyHoursBudget: number;
   transportMode: TransportMode;
+  hasPlaces: boolean;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const t = useTheme();
   const [budget, setBudget] = useState(dailyHoursBudget);
   const [mode, setMode] = useState<TransportMode>(transportMode);
+
+  // ICS export state
+  const downloadIcs = useDownloadTripIcs(tripId);
+  const [icsStatus, setIcsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   async function commitBudget(v: number) {
     setBudget(v);
@@ -367,8 +379,31 @@ function SettingsTab({
     ]);
   }
 
+  async function handleExportIcs() {
+    if (!hasPlaces) return;
+    setIcsStatus('loading');
+    try {
+      await downloadIcs.mutateAsync();
+      setIcsStatus('success');
+      setTimeout(() => setIcsStatus('idle'), 3000);
+    } catch {
+      setIcsStatus('error');
+      setTimeout(() => setIcsStatus('idle'), 4000);
+    }
+  }
+
+  function icsButtonLabel() {
+    switch (icsStatus) {
+      case 'loading': return 'Exporting…';
+      case 'success': return 'Downloaded!';
+      case 'error': return 'Export failed — retry';
+      default: return 'Export to calendar (.ics)';
+    }
+  }
+
   return (
     <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
+      {/* ── Trip settings ───────────────────────────────────────────────── */}
       <Slider
         label="Daily hours budget"
         unit="h"
@@ -388,8 +423,62 @@ function SettingsTab({
           { value: 'transit', label: 'Transit' },
         ]}
       />
+
+      {/* ── Share ───────────────────────────────────────────────────────── */}
+      <SectionHeading label="Share" t={t} />
+      <ShareLinkCard tripId={tripId} />
+
+      {/* ── Calendar export ─────────────────────────────────────────────── */}
+      <SectionHeading label="Export" t={t} />
+      <View style={{ gap: t.spacing.sm }}>
+        <Button
+          label={icsButtonLabel()}
+          variant="secondary"
+          onPress={handleExportIcs}
+          loading={icsStatus === 'loading'}
+          disabled={!hasPlaces || icsStatus === 'loading'}
+          accessibilityLabel={
+            hasPlaces
+              ? 'Export itinerary to calendar as ICS file'
+              : 'Add places before exporting to calendar'
+          }
+          accessibilityState={{ disabled: !hasPlaces || icsStatus === 'loading' }}
+        />
+        {!hasPlaces ? (
+          <Text
+            style={[t.typography.caption, { color: t.colors.textMuted }]}
+            accessibilityLiveRegion="polite"
+          >
+            Add at least one place to enable calendar export.
+          </Text>
+        ) : null}
+        {icsStatus === 'error' ? (
+          <Text
+            style={[t.typography.caption, { color: t.colors.danger }]}
+            accessibilityLiveRegion="assertive"
+          >
+            Export failed. Please try again.
+          </Text>
+        ) : null}
+      </View>
+
+      {/* ── Danger zone ─────────────────────────────────────────────────── */}
+      <SectionHeading label="Danger zone" t={t} />
       <Button variant="danger" label="Delete trip" onPress={confirmDelete} loading={deleting} />
     </ScrollView>
+  );
+}
+
+/** Small inline section heading used inside the Settings scroll view. */
+function SectionHeading({ label, t }: { label: string; t: ReturnType<typeof useTheme> }) {
+  return (
+    <Text
+      style={[t.typography.subtitle, { color: t.colors.text }]}
+      accessibilityRole="header"
+      aria-level={3}
+    >
+      {label}
+    </Text>
   );
 }
 

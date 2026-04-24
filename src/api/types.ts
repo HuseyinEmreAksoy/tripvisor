@@ -121,3 +121,62 @@ export type CreateTripPlaceInput = {
   visit_duration_minutes?: number;
   notes?: string | null;
 };
+
+// ============================================================
+// Share links (Phase 4)
+// ============================================================
+
+/**
+ * A trip returned by the anonymous share-trip:read path.
+ * Excludes `user_id` and all Google-ToS-restricted content. Only ToS-safe
+ * persistable fields are present on places (no reviews/photos/rating/etc).
+ */
+export interface SharedTrip {
+  trip: Pick<
+    Trip,
+    | 'id'
+    | 'title'
+    | 'start_date'
+    | 'end_date'
+    | 'daily_hours_budget'
+    | 'transport_mode'
+    | 'timezone'
+  >;
+  places: Array<
+    Pick<
+      TripPlace,
+      | 'id'
+      | 'google_place_id'
+      | 'user_title'
+      | 'category'
+      | 'lat'
+      | 'lng'
+      | 'visit_duration_minutes'
+      | 'day_index'
+      | 'order_in_day'
+      | 'notes'
+    >
+  >;
+  legs: Array<
+    Pick<
+      TripLeg,
+      | 'id'
+      | 'from_place_id'
+      | 'to_place_id'
+      | 'day_index'
+      | 'transport_mode'
+      | 'duration_seconds'
+      | 'distance_meters'
+      | 'polyline'
+      | 'computed_at'
+    >
+  >;
+}
+
+export interface CreateShareResult {
+  token: string;
+}
+
+export interface RevokeShareResult {
+  revoked: number;
+}

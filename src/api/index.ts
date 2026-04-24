@@ -5,3 +5,6 @@ export * from './trips';
 export * from './trip-places';
 export * from './places';
 export * from './routes';
+export * from './share';
+export * from './offline';
+export * from './ics';
