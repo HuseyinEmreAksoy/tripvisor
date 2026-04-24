@@ -129,6 +129,10 @@ Every phase plan ends with a **"Phase exit criteria"** section — concrete, ver
 
 If any criterion is hand-wavy ("works well"), rewrite it.
 
+### Live smoke step (mandatory)
+
+Every phase plan **must** include a penultimate step assigned to `test-specialist`: "Live smoke on web — walk the golden path in a real browser, record result in `docs/smoke/phase-N.md`." Native smoke is optional and marked deferred-to-user unless the phase introduces native-only surface (camera, secure store, native map, push, deep link). The reviewer step that follows MUST NOT start if the smoke log shows a blocker — the main assistant loops back to the owning specialist for a fix first.
+
 ### ADRs (when to write one)
 
 Write an ADR at `docs/adr/NNNN-title.md` when the plan contains a load-bearing decision that future readers will ask about:

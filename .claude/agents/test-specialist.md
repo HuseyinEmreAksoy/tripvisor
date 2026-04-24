@@ -55,6 +55,7 @@ The generic "test-automator" template talks about Testsigma, Testim, Applitools,
 - **Edge Function tests** are platform-agnostic (server-side Deno) — they protect all three clients equally.
 - **Web E2E** via Playwright covers the web build.
 - **Native E2E** (Detox / Maestro) is deferred until Phase 4+; in the meantime, write native-runnable component tests that exercise the widest behavior possible, and include a manual-testing checklist in `docs/features/<feature>.md` (authored by `docs-specialist`).
+- **Per-phase live smoke** — at the end of every phase, run the app for real (web first, since it's the fastest to launch) and click through the golden path defined in that phase's exit criteria. Browser access is authorized. Record the result in `docs/smoke/phase-N.md` with one tick per platform + any bugs surfaced. See the "Per-phase smoke check" section below.
 - **Platform regressions**: whenever a bug is reproduced on only one platform, the reproducing test MUST pin which platform via `.native.test.tsx` / `.web.test.tsx` naming so future runs on the right environment catch regression.
 
 ## Scope (Tripvisor)
@@ -219,13 +220,59 @@ Same structure as `reviewer`'s output. Hand it to the main assistant; do not fix
 
 ---
 
+## Per-phase smoke check (agile "use the app" loop)
+
+At the end of every phase, **before** handing off to `reviewer`, you run the app end-to-end and exercise the phase's golden path. Automated tests prove individual surfaces work; live smoke proves they compose.
+
+### How
+
+1. **Web first** — cheapest to run. `npx expo start --web --clear` in a background shell. Browser access is authorized — use Playwright in headed or headless mode (`npx playwright install chromium` once), or drive `fetch` + DOM inspection against `http://localhost:8081` via a small script.
+2. If Playwright isn't yet installed (pre-Phase-4), do the smoke as a **written click-through**: read the relevant screen code + feature doc, then open the running app in a browser yourself and walk the steps manually. Record what you saw.
+3. **Native (iOS + Android)** — only if the phase introduces native-only surface (e.g. camera, secure store, native map). Otherwise delegate to user smoke on device (marked in the log as "deferred to user").
+
+### Golden path per phase (grows as phases land)
+
+- **Phase 1**: sign up → magic link → arrive at empty trips list → create trip → open trip detail
+- **Phase 2**: create trip → add 5 places → optimizer auto-fires → Map tab shows pins + polylines → Itinerary shows day split
+- **Phase 3**: same as 2, then long-press a place → change duration / move to Day 2 / reorder within a day → all changes persist after reload
+- **Phase 4+**: defined by the phase plan
+
+### Output
+
+Write a short log at `docs/smoke/phase-N.md`:
+
+```md
+# Phase N — live smoke
+
+**Date**: <ISO date>
+**Tester**: test-specialist
+**Build**: <git SHA at time of smoke>
+
+## Web (Chrome 120, localhost:8081)
+- ☑ Sign up + magic link
+- ☑ Create trip "Lisbon 3 days"
+- ☑ Add place → optimizer ran in <1.2s
+- ☐ Drag reorder within Day 1 — **bug**: order reverts after 500ms (filed as Problem 1 below)
+
+## iOS sim / Android emu / Physical device
+- Deferred to user smoke
+
+## Findings
+### Problem 1: <title>
+- Same structured format as reviewer findings
+- Target specialist: ui-specialist / backend-specialist
+```
+
+If the smoke surfaces a bug that blocks the golden path, **stop**, file the finding, and hand to the correct specialist. Do not continue to `reviewer` on a broken golden path.
+
 ## Do NOT
 
-- Write or modify feature code, migrations, Edge Functions, or UI components to make a test pass (→ file a finding, route to owning specialist)
+- Write or modify feature code, migrations, Edge Functions, or UI components to make a test (or smoke) pass (→ file a finding, route to owning specialist)
 - Modify `plan.md` or `docs/features/*.md` (→ `docs-specialist`)
 - Commit real credentials, real user data, or `.env` files
 - Rely on `setTimeout` or arbitrary waits — use `findBy*` / `waitFor` predicates
 - Add a test just for coverage with no behavioral assertion
 - Skip tests (`it.skip`) to make CI green — fix or report the underlying issue
 - Mock Supabase/Postgres when a real local instance is available
+- Perform smoke against production or the user's live data — use the dev Supabase project
 - Invoke other sub-agents directly — the main assistant orchestrates

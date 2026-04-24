@@ -1,0 +1,2 @@
+# .ics files must preserve CRLF line endings for RFC 5545 golden fixtures
+*.ics text eol=crlf

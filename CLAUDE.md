@@ -46,7 +46,9 @@ A feature isn't "Done" in `docs/features/overview.md` until `docs-specialist` ha
 - `reviewer` — debug + review (no code writes)
 - `docs-specialist` — plan.md + docs/
 
-Workflow per phase: `planner` → `ui-specialist` + `backend-specialist` (parallel) → `test-specialist` → `reviewer` → fixes → `docs-specialist`.
+Workflow per phase: `planner` → `ui-specialist` + `backend-specialist` (parallel) → `test-specialist` (automated tests **and** live smoke on web) → `reviewer` → fixes → `docs-specialist`.
+
+The live smoke log lives at `docs/smoke/phase-N.md`. A phase is not "code complete" until the web golden path is ticked. Native platforms default to deferred user smoke unless the phase introduces native-only surface.
 
 ## Don'ts
 
