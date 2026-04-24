@@ -51,7 +51,7 @@ Workflow per phase: `planner` → `ui-specialist` + `backend-specialist` (parall
 ## Don'ts
 
 - Don't install packages with `-g` globally.
-- Don't push to git without explicit user confirmation.
 - Don't run `supabase db reset` against anything other than local.
 - Don't hardcode API keys; use `.env` / Supabase secrets.
 - Don't bypass sub-agent roles — each one owns its scope.
+- Don't force-push, rewrite history, or push to protected branches (`main`, `master`, `release/*`) as a force-push without explicit user confirmation. Regular fast-forward pushes by the `git-committer` agent are pre-authorized.
