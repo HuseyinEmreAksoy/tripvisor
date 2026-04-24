@@ -1,7 +1,7 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 3 — Manual editing (code complete · MVP ships here)
-**Last updated**: 2026-04-23
+**Current phase**: Phase 3 — Manual editing (🚧 **Code complete · MVP ready pending live smoke**)
+**Last updated**: 2026-04-24
 
 ## Status by phase
 
@@ -10,7 +10,7 @@
 | 0 | Scaffold + tooling | ✅ Done (code) · pending user install/provision | docs, ui, backend |
 | 1 | Auth + trip CRUD + place search | 🚧 Code complete · awaiting live smoke | backend + ui |
 | 2 | Route optimization + day split | 🚧 Code complete · awaiting live smoke | backend (optimizer) + ui (map) |
-| 3 | Manual editing (drag, move-to-day, duration override) | 🚧 In progress (MVP ships here) | ui + backend |
+| 3 | Manual editing (drag, move-to-day, duration override) | 🚧 Code complete · MVP ready pending live smoke | ui + backend |
 | 4 | Polish (offline cache, share link, .ics export, Sentry) | 📋 Planned | ui + backend |
 | 5 | Test hardening | 📋 Planned | test-specialist |
 
@@ -337,11 +337,12 @@ Phase 2 code can be authored without GCP provisioning. Live smoke requires Route
 
 ---
 
-## Phase 3 — Manual editing (MVP ships here)
+## Phase 3 — Manual editing (MVP ships here — ⏸ PAUSED mid-phase)
 
 **Goal**: User can drag-reorder places within a day, long-press to open an actions sheet (move to a different day, change visit duration, delete), and have the itinerary auto-save. All three Phase 2 review deferrals land too (atomic RPC, web Polylines lifecycle, stable auto-optimize deps).
 
-**Status**: 🚧 In progress
+**Status**: 🚧 Resumed 2026-04-24. Backend + Phase 2 deferrals (Steps 1–4) already landed; now completing UI (Steps 5–7), tests (Step 8), reviewer (Step 9), docs (Step 10).
+
 **Entry criteria**: Phase 2 code shipped.
 **Phase exit criteria**:
 - Drag-reorder within a day works on iOS, Android, and Web; order persists instantly (no full re-optimize)
@@ -354,7 +355,7 @@ Phase 2 code can be authored without GCP provisioning. Live smoke requires Route
 
 **Critical path**: Step 1 → Step 2 → Step 3 → Step 5 → Step 6 → Step 7
 
-### Step 1 — Postgres RPCs (apply_optimization, apply_manual_day_order)
+### Step 1 — Postgres RPCs (apply_optimization, apply_manual_day_order) ✅ done
 - **Agent**: backend-specialist
 - **Size**: M
 - **Task**: Migration `0002_rpcs.sql`. `apply_optimization(p_trip_id uuid, p_assignments jsonb)` — updates `trip_places.day_index` + `order_in_day` in a single statement using `jsonb_to_recordset`, scoped to the trip. `apply_manual_day_order(p_trip_id uuid, p_day_index int, p_ordered_ids uuid[])` — assigns `order_in_day` by index position, within that trip+day.
@@ -362,57 +363,57 @@ Phase 2 code can be authored without GCP provisioning. Live smoke requires Route
 - **Risks**: [Medium] `SECURITY DEFINER` vs RLS — we keep `SECURITY INVOKER` so RLS still applies (caller must own the trip)
 - **Verification**: Integration test seeds a trip, calls RPC, verifies order matches
 
-### Step 2 — Switch optimize-trip to apply_optimization RPC
+### Step 2 — Switch optimize-trip to apply_optimization RPC ✅ done
 - **Agent**: backend-specialist
 - **Size**: S
 - **Task**: Replace the `for (const day …) for (let i …) await admin.from('trip_places').update(...)` loop with a single `admin.rpc('apply_optimization', { p_trip_id, p_assignments })` call. Assignments is a JSON array `[{ id, day_index, order_in_day }]`.
 - **Depends on**: Step 1
 
-### Step 3 — Manual-edit client hooks
+### Step 3 — Manual-edit client hooks ✅ done (hooks exist; no UI callers yet)
 - **Agent**: backend-specialist
 - **Size**: M
 - **Task**: `src/api/trip-places.ts` — add `useUpdateTripPlace({ id, trip_id, ...patch })` and `useReorderDay({ tripId, dayIndex, orderedIds })` and `useMoveToDay({ id, tripId, toDayIndex })`. Invalidate `tripPlacesKeys.forTrip(tripId)` on success. Zod-validate patches.
 - **Depends on**: Step 1
 
-### Step 4 — Phase 2 deferral fixes
+### Step 4 — Phase 2 deferral fixes ✅ done (web Polylines + stable optimizeMutate dep)
 - **Agent**: ui-specialist
 - **Size**: S
 - **Task**: 1) Replace the imperative `setTimeout(0)` polyline teardown in `Map.web.tsx` with a proper `useEffect` lifecycle (create on polylines change; clean up on unmount / dep change). 2) In `app/(app)/trip/[id]/index.tsx` swap the auto-optimize effect's `optimize` dep for `optimize.mutate` (stable reference).
 - **Depends on**: None (independent)
 
-### Step 5 — BottomSheet + VisitDurationStepper primitives
+### Step 5 — BottomSheet + VisitDurationStepper primitives ✅ code done
 - **Agent**: ui-specialist
 - **Size**: M
 - **Task**: `src/components/BottomSheet.tsx` — `Modal` on native with a dimmed backdrop; web uses a fixed-position overlay with Escape-to-close + focus trap. `src/components/VisitDurationStepper.tsx` — ± 15-minute buttons, min 15min, max 12h, announced via `accessibilityLiveRegion`. Keyboard support (arrow keys on web).
 - **Depends on**: None
 - **Platform check**: ☐ iOS ☐ Android ☐ Web
 
-### Step 6 — DraggableItinerary (platform-split)
+### Step 6 — DraggableItinerary (platform-split) ✅ code done
 - **Agent**: ui-specialist
 - **Size**: M
 - **Task**: `src/components/DraggableItinerary.native.tsx` via `react-native-draggable-flatlist`. `.web.tsx` via `@dnd-kit/core` vertical sortable (keyboard + pointer). Shared prop shape `{ items, onReorder(newIds), onLongPress(id) }`. Intra-day only (no cross-day).
 - **Depends on**: None
 - **Risks**: [Medium] `@dnd-kit` bundle size + React Native Web compatibility — Mitigation: lazy-load on web via dynamic import inside `.web.tsx`
 
-### Step 7 — PlaceActionsSheet + Itinerary integration
+### Step 7 — PlaceActionsSheet + Itinerary integration ✅ code done
 - **Agent**: ui-specialist
 - **Size**: M
 - **Task**: `src/components/PlaceActionsSheet.tsx` — duration stepper, "Move to day" radio list, delete confirm. Long-press on a `DraggableItinerary` row opens it. Refactor `ItineraryTab` in `app/(app)/trip/[id]/index.tsx` to render one `DraggableItinerary` per day; wire `onReorder` to `useReorderDay` and delete/duration/move to their respective hooks.
 - **Depends on**: Steps 3, 5, 6
 
-### Step 8 — Tests for Phase 3
+### Step 8 — Tests for Phase 3 ✅ done — VisitDurationStepper unit + RPC integration
 - **Agent**: test-specialist
 - **Size**: S
 - **Task**: Extend `tests/rls.test.ts` with RPC tests (call `apply_optimization` + `apply_manual_day_order` as user A; user B cannot invoke against A's trip). Component test for `VisitDurationStepper`: ± buttons, min/max clamps, a11y label.
 - **Depends on**: Steps 1, 5
 
-### Step 9 — Reviewer pre-exit (MVP gate)
+### Step 9 — Reviewer pre-exit (MVP gate) ✅ done — `docs/reviews/phase-3.md`
 - **Agent**: reviewer
 - **Size**: S
 - **Task**: Walk the full checklist. Confirm: RPC ownership enforced via RLS; drag has keyboard support on web; bottom sheet traps focus; live regions announce duration; no Google calls on pure reorder (only on duration change).
 - **Depends on**: Steps 1–8
 
-### Step 10 — Docs + MVP banner
+### Step 10 — Docs + MVP banner ✅ done
 - **Agent**: docs-specialist
 - **Size**: S
 - **Task**: `docs/features/manual-edit.md` + `docs/features/visit-duration.md`. Flip Phase 3 + affected feature rows to code-complete. Add a "MVP ships here" banner with the user deploy checklist in `plan.md`.
@@ -421,6 +422,17 @@ Phase 2 code can be authored without GCP provisioning. Live smoke requires Route
 ## ⚠ Blockers (Phase 3 — none new)
 
 Same prerequisites as Phase 1 + 2. No additional API / key / service needed.
+
+## 🎉 MVP is code-complete
+
+Phases 0 → 3 are code-complete. To run the MVP end-to-end you still need to:
+
+1. `cd C:\Users\hemre\Desktop\Tripvisor && npm install`
+2. `npx expo install --check` to reconcile pinned versions with the installed SDK
+3. Supabase: create project → link → `supabase db push` (applies migrations 0001 + 0002) → deploy all five Edge Functions (`places-autocomplete`, `place-details`, `distance-matrix`, `directions-polyline`, `optimize-trip`) → set secrets (`GOOGLE_MAPS_SERVER_KEY`, `ALLOWED_ORIGINS`) → add redirect URLs in Authentication settings
+4. GCP: enable Places API (New), Routes API, Maps SDK for iOS + Android, Maps JavaScript API; create one server-only key (into Supabase secrets) and one referer-restricted client key (into `EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY`)
+5. EAS: `eas build --profile development` for iOS + Android dev clients
+6. Smoke-test the 10 verification steps in each per-feature doc on all three platforms; then tick the "Platforms verified" boxes in `docs/features/*.md`
 
 ---
 

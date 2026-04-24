@@ -8,3 +8,8 @@ export { TabBar } from './TabBar';
 export { StatusPill } from './StatusPill';
 export { SegmentedControl } from './SegmentedControl';
 export { Slider } from './Slider';
+export { BottomSheet, type BottomSheetProps } from './BottomSheet';
+export { VisitDurationStepper, formatMinutes } from './VisitDurationStepper';
+export { PlaceActionsSheet } from './PlaceActionsSheet';
+export { DraggableItinerary } from './DraggableItinerary';
+export type { DraggableItem } from './DraggableItinerary';

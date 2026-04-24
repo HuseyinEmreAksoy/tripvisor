@@ -11,8 +11,8 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Route optimization (k-means + 2-opt) | 🚧 In progress | 2 | [optimization.md](optimization.md) |
 | Day split by time budget | 🚧 In progress | 2 | [day-split.md](day-split.md) |
 | Map + polyline visualization | 🚧 In progress | 2 | [map.md](map.md) |
-| Manual drag / move-to-day | 📋 Planned | 3 | [manual-edit.md](manual-edit.md) |
-| Visit duration override | 📋 Planned | 3 | [visit-duration.md](visit-duration.md) |
+| Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
+| Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
 | Offline itinerary view | 📋 Planned | 4 | [offline.md](offline.md) |
 | Shareable read-only link | 📋 Planned | 4 | [share.md](share.md) |
 | .ics calendar export | 📋 Planned | 4 | [ics-export.md](ics-export.md) |

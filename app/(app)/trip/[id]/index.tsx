@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Button,
+  DraggableItinerary,
   Heading,
+  PlaceActionsSheet,
   Screen,
   SegmentedControl,
   Slider,
   StatusPill,
   TabBar,
+  type DraggableItem,
 } from '@/components';
 import { Map, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
@@ -16,6 +19,7 @@ import {
   supabase,
   useDeleteTrip,
   useOptimizeTrip,
+  useReorderDay,
   useTrip,
   useTripLegs,
   useTripPlaces,
@@ -36,14 +40,17 @@ export default function TripDetail() {
   const { data: places = [] } = useTripPlaces(id);
   const { data: legs = [] } = useTripLegs(id);
   const optimize = useOptimizeTrip();
-  const optimizeMutate = optimize.mutate; // stable reference per TanStack Query v5
+  const optimizeMutate = optimize.mutate;
   const deleteTrip = useDeleteTrip();
 
   // Auto-optimize (debounced 500ms) when places or trip settings change meaningfully.
+  // Includes visit_duration_minutes so duration edits trigger re-split.
   const stateKey = useMemo(
     () =>
       JSON.stringify({
-        placeIds: places.map((p) => p.id).sort(),
+        places: places
+          .map((p) => `${p.id}:${p.visit_duration_minutes}`)
+          .sort(),
         budget: trip?.daily_hours_budget,
         mode: trip?.transport_mode,
       }),
@@ -112,7 +119,12 @@ export default function TripDetail() {
       {tab === 'map' ? (
         <MapTab places={places} legs={legs} onMarker={(pid) => router.push(`/place/${pid}`)} />
       ) : tab === 'itinerary' ? (
-        <ItineraryTab places={places} legs={legs} onOpen={(gid) => router.push(`/place/${gid}`)} />
+        <ItineraryTab
+          tripId={trip.id}
+          places={places}
+          legs={legs}
+          onOpen={(gid) => router.push(`/place/${gid}`)}
+        />
       ) : (
         <SettingsTab
           tripId={trip.id}
@@ -175,16 +187,32 @@ function MapTab({
 }
 
 function ItineraryTab({
+  tripId,
   places,
   legs,
   onOpen,
 }: {
+  tripId: string;
   places: TripPlace[];
   legs: TripLeg[];
   onOpen: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
+  const reorderDay = useReorderDay();
+  const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
+
   const byDay = useMemo(() => groupByDay(places), [places]);
+  const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
+  const availableDays = useMemo(
+    () => byDay.filter((d) => d.dayIndex >= 0).map((d) => d.dayIndex),
+    [byDay],
+  );
+
+  const legIndex = useMemo(() => {
+    const m = new Map<string, TripLeg>();
+    for (const l of legs) m.set(`${l.day_index}|${l.from_place_id}|${l.to_place_id}`, l);
+    return m;
+  }, [legs]);
 
   if (places.length === 0) {
     return (
@@ -196,64 +224,109 @@ function ItineraryTab({
     );
   }
 
+  const activePlace = activePlaceId ? byId.get(activePlaceId) ?? null : null;
+
   return (
-    <FlatList
-      data={byDay}
-      keyExtractor={(section) => `day-${section.dayIndex}`}
-      contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}
-      renderItem={({ item: section }) => (
-        <View style={{ gap: t.spacing.sm }}>
-          <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex) }]}>
-            <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
-              {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
-            </Text>
+    <View style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}>
+        {byDay.map((section) => (
+          <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
+            <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex) }]}>
+              <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
+                {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
+              </Text>
+            </View>
+
+            <DraggableItinerary
+              groupLabel={section.dayIndex < 0 ? 'Unscheduled places' : `Day ${section.dayIndex + 1}`}
+              items={section.places.map<DraggableItem>((place, idx) => {
+                const next = section.places[idx + 1];
+                const leg = next
+                  ? legIndex.get(`${section.dayIndex}|${place.id}|${next.id}`)
+                  : undefined;
+                return {
+                  id: place.id,
+                  render: (dragging) => (
+                    <PlaceRow
+                      place={place}
+                      dragging={dragging}
+                      legAfter={leg}
+                      hasNext={Boolean(next)}
+                      onOpenDetails={() => onOpen(place.google_place_id)}
+                    />
+                  ),
+                };
+              })}
+              onReorder={(newIds) => {
+                if (section.dayIndex < 0) return; // unscheduled bucket is not orderable
+                reorderDay.mutate({
+                  tripId,
+                  dayIndex: section.dayIndex,
+                  orderedIds: newIds,
+                });
+              }}
+              onLongPress={(id) => setActivePlaceId(id)}
+            />
           </View>
-          {section.places.map((place, idx) => {
-            const next = section.places[idx + 1];
-            const leg = next
-              ? legs.find(
-                  (l) =>
-                    l.day_index === section.dayIndex &&
-                    l.from_place_id === place.id &&
-                    l.to_place_id === next.id,
-                )
-              : undefined;
-            return (
-              <View key={place.id} style={{ gap: t.spacing.xs }}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${place.user_title ?? 'place'}`}
-                  onPress={() => onOpen(place.google_place_id)}
-                  style={[
-                    styles.placeCard,
-                    {
-                      borderColor: t.colors.border,
-                      borderRadius: t.radius.md,
-                      backgroundColor: t.colors.bgElevated,
-                      padding: t.spacing.md,
-                    },
-                  ]}
-                >
-                  <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-                    {place.user_title ?? 'Place'}
-                  </Text>
-                  <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                    {place.category ?? 'Unclassified'} · {place.visit_duration_minutes} min
-                  </Text>
-                </Pressable>
-                {next ? (
-                  <Text
-                    style={[t.typography.small, { color: t.colors.textMuted, paddingHorizontal: 12 }]}
-                  >
-                    ↓ {leg ? formatTravel(leg.duration_seconds, leg.distance_meters) : 'travel time unknown'}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      )}
-    />
+        ))}
+      </ScrollView>
+
+      <PlaceActionsSheet
+        visible={activePlaceId !== null}
+        onClose={() => setActivePlaceId(null)}
+        place={activePlace}
+        availableDays={availableDays}
+      />
+    </View>
+  );
+}
+
+function PlaceRow({
+  place,
+  dragging,
+  legAfter,
+  hasNext,
+  onOpenDetails,
+}: {
+  place: TripPlace;
+  dragging: boolean;
+  legAfter: TripLeg | undefined;
+  hasNext: boolean;
+  onOpenDetails: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <View style={{ gap: t.spacing.xs }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open details for ${place.user_title ?? 'place'}. Long-press to change day, duration, or delete.`}
+        onPress={onOpenDetails}
+        style={[
+          styles.placeCard,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.md,
+            backgroundColor: t.colors.bgElevated,
+            padding: t.spacing.md,
+            opacity: dragging ? 0.85 : 1,
+          },
+        ]}
+      >
+        <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+          {place.user_title ?? 'Place'}
+        </Text>
+        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+          {place.category ?? 'Unclassified'} · {place.visit_duration_minutes} min
+        </Text>
+      </Pressable>
+      {hasNext ? (
+        <Text
+          style={[t.typography.small, { color: t.colors.textMuted, paddingHorizontal: 12 }]}
+        >
+          ↓ {legAfter ? formatTravel(legAfter.duration_seconds, legAfter.distance_meters) : 'travel time unknown'}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
