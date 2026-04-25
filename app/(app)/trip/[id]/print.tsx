@@ -18,9 +18,9 @@
  * notes, day_index, order_in_day) are displayed.
  */
 import { useMemo } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Button, Heading, MarkdownText, Screen, TripCostRollup, DaySummaryCard } from '@/components';
+import { BackButton, Button, Heading, MarkdownText, Screen, TripCostRollup, DaySummaryCard } from '@/components';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { useTheme } from '@/theme';
 import { useTrip, useTripDays, useTripLegs, useTripPlaces, type TripDay, type TripPlace, type TripLeg } from '@/api';
@@ -116,7 +116,9 @@ export default function PrintRoute() {
   }
 
   const dateRange = formatRange(trip.start_date, trip.end_date);
-  const costRateLabel = `${trip.currency} · ${new Intl.NumberFormat(undefined, {
+  // Step 5: label clearly identifies this as estimated travel cost per km
+  // (fuel / transport), not a full-trip money budget.
+  const costRateLabel = `${trip.currency} · Est. travel cost ${new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: trip.currency,
     maximumFractionDigits: 2,
@@ -142,15 +144,8 @@ export default function PrintRoute() {
         >
           {/* ── Itinerary header ─────────────────────────────────────────── */}
           <View style={{ gap: t.spacing.xs }}>
-            <Pressable
-              onPress={() => router.back()}
-              accessibilityRole="button"
-              accessibilityLabel="Back"
-              // data-no-print hides the back button in the browser print dialog.
-              {...(Platform.OS === 'web' ? ({ 'data-no-print': '' } as object) : {})}
-            >
-              <Text style={[t.typography.body, { color: t.colors.primary }]}>← Back</Text>
-            </Pressable>
+            {/* BackButton with noPrint=true hides it from the browser print dialog */}
+            <BackButton onPress={() => router.back()} label="Trip" noPrint />
 
             <Heading level={1}>{trip.title}</Heading>
             <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{dateRange}</Text>

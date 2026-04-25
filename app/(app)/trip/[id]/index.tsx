@@ -19,8 +19,14 @@ import {
 } from '@/components';
 import { noPlaces } from '@/components/emptyStates';
 import { ShareLinkCard } from '@/components/ShareLinkCard';
-import { Map, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
+// Renamed to TripMap to avoid shadowing the built-in JS Map collection constructor.
+// Every `new Map(...)` call in this file must resolve to the built-in; if the
+// import were named `Map`, TypeScript/Metro would resolve those call sites to
+// the React component and produce a runtime crash ("Cannot read properties of
+// undefined (reading 'markers')") on first render.
+import { Map as TripMap, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
@@ -49,6 +55,11 @@ export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const t = useTheme();
+  const bp = useBreakpoint();
+  const isDesktop = bp === 'desktop';
+  // On desktop, the map + itinerary are shown side-by-side; the tab defaults
+  // to 'settings' for the TabBar which only shows the Settings tab on desktop.
+  // On mobile/tablet, the original tab behaviour (map | itinerary | settings) applies.
   const [tab, setTab] = useState<TabKey>('map');
 
   const { data: trip, isLoading, error } = useTrip(id);
@@ -99,41 +110,130 @@ export default function TripDetail() {
     );
   }
 
+  // ── Shared page header (title, meta, cost rollup) ────────────────────────
+  const pageHeader = (
+    <View style={{ padding: t.spacing.lg, gap: t.spacing.xs }}>
+      <BackButton onPress={() => router.back()} label="Trips" />
+      <View style={styles.titleRow}>
+        <Heading level={1}>{trip.title}</Heading>
+        {/* Print button — navigates to print route on all platforms */}
+        <Button
+          label="Print itinerary"
+          variant="secondary"
+          fullWidth={false}
+          onPress={() => router.push(`/trip/${trip.id}/print` as never)}
+          accessibilityLabel="Print itinerary"
+        />
+      </View>
+      <View style={styles.metaRow}>
+        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+          {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h plan/day ·{' '}
+          {trip.transport_mode}
+        </Text>
+        {optimize.isPending ? (
+          <StatusPill tone="info" label="Optimizing…" loading />
+        ) : optimize.error ? (
+          (() => {
+            const { tone, label } = pillForOptimizeError(optimize.error);
+            return <StatusPill tone={tone} label={label} />;
+          })()
+        ) : places.length < 2 ? (
+          <StatusPill tone="info" label="Add places to optimize" />
+        ) : null}
+      </View>
+
+      {/* ── Cost rollup card (Step 8.4) ───────────────────────────────── */}
+      <TripCostRollup trip={trip} legs={legs} />
+    </View>
+  );
+
+  // ── Desktop: map + itinerary side-by-side, Settings behind a tab ──────────
+  // The two content columns share the remaining screen height after the header.
+  // Map (~60%) is sticky (doesn't scroll), itinerary (~40%) scrolls on its own.
+  // The Settings tab is still accessible via the TabBar below the header.
+  if (isDesktop) {
+    return (
+      <Screen padded={false}>
+        {pageHeader}
+
+        {/*
+         * Desktop TabBar shows only the Settings tab — on desktop the map and
+         * itinerary are always visible side-by-side rather than tab-switched.
+         * We still use the TabBar component for visual consistency and keyboard
+         * accessibility. When "settings" is the only tab it still receives focus
+         * correctly.
+         *
+         * The `tab` state governs whether the side-by-side panel or the settings
+         * panel is visible: any value !== 'settings' shows the split panel.
+         */}
+        <TabBar<TabKey>
+          activeKey={tab === 'settings' ? 'settings' : 'map'}
+          onSelect={(key) => setTab(key)}
+          tabs={[
+            { key: 'map', label: 'Map & Itinerary' },
+            { key: 'settings', label: 'Settings' },
+          ]}
+        />
+
+        {tab === 'settings' ? (
+          <>
+            <SettingsTab
+              tripId={trip.id}
+              dailyHoursBudget={trip.daily_hours_budget}
+              transportMode={trip.transport_mode}
+              currency={trip.currency}
+              costPerKm={trip.cost_per_km}
+              hasPlaces={places.length > 0}
+              onDelete={async () => {
+                await deleteTrip.mutateAsync(trip.id);
+                router.replace('/trips');
+              }}
+              deleting={deleteTrip.isPending}
+            />
+            <View style={{ padding: t.spacing.lg }}>
+              <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
+            </View>
+          </>
+        ) : (
+          /*
+           * Side-by-side panel: map (left, ~60%, sticky) + itinerary (right, ~40%, scrolling).
+           * flex: 1 on the outer row ensures it fills the remaining Screen height.
+           * The map column has `overflow: 'hidden'` so the Map component's fixed-
+           * positioned elements don't escape its bounds on web.
+           */
+          <View style={desktopDetailStyles.splitRow}>
+            {/* Left: map column — sticky (no scroll) */}
+            <View style={desktopDetailStyles.mapColumn}>
+              <MapTab
+                places={places}
+                legs={legs}
+                onMarker={(pid) => router.push(`/place/${pid}`)}
+              />
+            </View>
+
+            {/* Right: itinerary + add-place button */}
+            <View style={[desktopDetailStyles.itineraryColumn, { borderLeftColor: t.colors.border }]}>
+              <ItineraryTab
+                tripId={trip.id}
+                places={places}
+                legs={legs}
+                trip={trip}
+                onOpen={(gid) => router.push(`/place/${gid}`)}
+              />
+              <View style={{ padding: t.spacing.lg, borderTopWidth: 1, borderTopColor: t.colors.border }}>
+                <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
+              </View>
+            </View>
+          </View>
+        )}
+      </Screen>
+    );
+  }
+
+  // ── Mobile / tablet: original tab layout ─────────────────────────────────
   return (
     <Screen padded={false}>
-      <View style={{ padding: t.spacing.lg, gap: t.spacing.xs }}>
-        <BackButton onPress={() => router.back()} label="Trips" />
-        <View style={styles.titleRow}>
-          <Heading level={1}>{trip.title}</Heading>
-          {/* Print button — navigates to print route on all platforms */}
-          <Button
-            label="Print itinerary"
-            variant="secondary"
-            fullWidth={false}
-            onPress={() => router.push(`/trip/${trip.id}/print` as never)}
-            accessibilityLabel="Print itinerary"
-          />
-        </View>
-        <View style={styles.metaRow}>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h plan/day ·{' '}
-            {trip.transport_mode}
-          </Text>
-          {optimize.isPending ? (
-            <StatusPill tone="info" label="Optimizing…" loading />
-          ) : optimize.error ? (
-            (() => {
-              const { tone, label } = pillForOptimizeError(optimize.error);
-              return <StatusPill tone={tone} label={label} />;
-            })()
-          ) : places.length < 2 ? (
-            <StatusPill tone="info" label="Add places to optimize" />
-          ) : null}
-        </View>
-
-        {/* ── Cost rollup card (Step 8.4) ───────────────────────────────── */}
-        <TripCostRollup trip={trip} legs={legs} />
-      </View>
+      {pageHeader}
 
       <TabBar<TabKey>
         activeKey={tab}
@@ -343,10 +443,10 @@ function MapTab({
 
       {/* Map fills the remaining space */}
       <View style={{ flex: 1 }}>
-        <Map
+        <TripMap
           markers={filteredMarkers}
           polylines={filteredPolylines}
-          onMarkerPress={(markerId) => {
+          onMarkerPress={(markerId: string) => {
             const p = byId.get(markerId);
             if (p) onMarker(p.google_place_id);
           }}
@@ -465,7 +565,7 @@ function ItineraryTab({
                   ),
                 };
               })}
-              onReorder={(newIds) => {
+              onReorder={(newIds: string[]) => {
                 if (section.dayIndex < 0) return; // unscheduled bucket is not orderable
                 reorderDay.mutate({
                   tripId,
@@ -473,7 +573,7 @@ function ItineraryTab({
                   orderedIds: newIds,
                 });
               }}
-              onLongPress={(id) => setActivePlaceId(id)}
+              onLongPress={(id: string) => setActivePlaceId(id)}
             />
           </View>
         ))}
@@ -1073,7 +1173,7 @@ function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: Trip
     map.set(key, arr);
   }
   for (const [, arr] of map) {
-    arr.sort((a, b) => (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
+    arr.sort((a: TripPlace, b: TripPlace) => (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
   }
   return [...map.entries()]
     .sort(([a], [b]) => a - b)
@@ -1127,5 +1227,30 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+});
+
+// ── Desktop side-by-side panel styles ────────────────────────────────────────
+// These are static (no theme dependency) so they live outside the component.
+const desktopDetailStyles = StyleSheet.create({
+  // Row container that fills the remaining screen height after header + TabBar.
+  splitRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  // Left: map fills ~60% of the split, stays sticky (no internal scroll).
+  // `overflow: 'hidden'` is important on web: Map.web.tsx renders a Google
+  // Maps div that uses absolute positioning internally; clipping it here
+  // prevents it from overflowing the column boundary.
+  mapColumn: {
+    flex: 3, // 60% share (3 of 3+2 = 5 parts)
+    overflow: 'hidden',
+  },
+  // Right: itinerary fills ~40%, scrolls inside ItineraryTab's own ScrollView.
+  // borderLeftWidth: 1 provides a visible column separator; color is applied
+  // inline where the theme is available.
+  itineraryColumn: {
+    flex: 2, // 40% share
+    borderLeftWidth: 1,
   },
 });

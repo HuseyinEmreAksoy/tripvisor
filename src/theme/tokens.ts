@@ -41,9 +41,20 @@ export const lightColors = {
   success: '#1D9B5E',
   warning: '#E0A010',
   attribution: '#8B8B93',
+  // Hero overlay: semi-transparent dark scrim over imagery on auth screens.
+  // Kept at 55% opacity so text remains WCAG AA compliant on varied photos.
+  heroOverlay: 'rgba(0, 0, 0, 0.55)',
+  // Soft hero accent for value-prop chips on auth screens.
+  heroChipBg: 'rgba(255,255,255,0.18)',
+  heroChipText: '#FFFFFF',
 } as const;
 
-export const darkColors: typeof lightColors = {
+// `Record<keyof typeof lightColors, string>` enforces the same set of keys as
+// lightColors but allows different string values (hex or rgba) in each theme.
+// The original `typeof lightColors` annotation incorrectly required identical
+// literal string values and was already producing TS errors before this file
+// was touched. This annotation corrects that.
+export const darkColors: Record<keyof typeof lightColors, string> = {
   bg: '#0E0E11',
   bgElevated: '#17171B',
   bgMuted: '#1F1F24',
@@ -58,9 +69,15 @@ export const darkColors: typeof lightColors = {
   success: '#4CD294',
   warning: '#F1C14B',
   attribution: '#7A7A82',
+  // Dark mode hero overlay is slightly lighter so imagery still reads.
+  heroOverlay: 'rgba(0, 0, 0, 0.62)',
+  heroChipBg: 'rgba(255,255,255,0.14)',
+  heroChipText: '#F2F2F5',
 };
 
-export type Colors = typeof lightColors;
+// Colors: a record with the same keys as lightColors but with string values,
+// so both lightColors (literal types) and darkColors (string values) satisfy it.
+export type Colors = Record<keyof typeof lightColors, string>;
 
 export const themes = {
   light: lightColors,

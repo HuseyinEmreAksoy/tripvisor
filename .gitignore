@@ -29,6 +29,7 @@ Thumbs.db
 supabase/.branches
 supabase/.temp
 supabase/.env
+supabase/functions/.env
 
 # Test / coverage
 coverage/

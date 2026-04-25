@@ -2,7 +2,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
-import { Button, Heading, PoweredByGoogle, Screen } from '@/components';
+import { BackButton, Button, Heading, PoweredByGoogle, Screen } from '@/components';
 import { usePlaceDetails } from '@/api';
 import { useTheme } from '@/theme';
 import type { PlacePhoto, PlaceReview } from '@/api';
@@ -36,9 +36,7 @@ export default function PlaceDetailsScreen() {
   return (
     <Screen padded={false}>
       <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}>
-        <Text style={[t.typography.body, { color: t.colors.primary }]} onPress={() => router.back()}>
-          ← Back
-        </Text>
+        <BackButton onPress={() => router.back()} />
 
         <Heading level={1}>{place.displayName}</Heading>
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>

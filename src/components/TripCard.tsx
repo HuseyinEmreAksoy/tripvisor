@@ -6,10 +6,18 @@
  * - Overflow trigger (⋮) → opens TripActionsSheet
  * - "Archived" StatusPill when trip.archived_at is set
  *
- * The overflow trigger does NOT propagate to the card's onPress.
- * On web, stopPropagation() is called on the native event.
- * On native, wrapping in a separate Pressable with zIndex prevents
- * the parent Pressable from receiving the touch.
+ * DOM nesting fix (Problem 3, Phase 20):
+ * The outer card uses `accessibilityRole="link"` so RN Web renders it as <a>
+ * rather than <button>. An <a> can legally contain a <button> child, which is
+ * what the inner overflow Pressable renders as. This resolves the
+ * <button>-inside-<button> invalid HTML pattern that caused React DOM warnings
+ * and broken keyboard navigation on web.
+ *
+ * On native, accessibilityRole="link" still triggers `onPress` correctly — the
+ * difference is only in the rendered host element on web.
+ *
+ * The overflow trigger still calls stopPropagation() on the synthetic web event
+ * to prevent the card's onPress from firing when the user taps the kebab.
  *
  * Handler props (onArchive, onUnarchive, onDuplicate, onDelete) are
  * optional here; Step 7.8 will pass real mutation calls from trips.tsx.
@@ -54,8 +62,13 @@ export function TripCard({
 
   return (
     <>
+      {/*
+       * accessibilityRole="link" renders as <a> on web (not <button>), which
+       * legally accepts the inner overflow <button> child without a DOM nesting
+       * violation. On native the role still fires onPress correctly.
+       */}
       <Pressable
-        accessibilityRole="button"
+        accessibilityRole="link"
         accessibilityLabel={`Open trip ${trip.title}`}
         onPress={onPress}
         style={({ pressed }) => [

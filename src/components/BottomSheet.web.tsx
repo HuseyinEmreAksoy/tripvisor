@@ -98,8 +98,10 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     marginBottom: 24,
     marginHorizontal: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
+    // RN Web 0.19+ deprecates the native shadow* properties for web-only files.
+    // Using boxShadow (CSS shorthand) avoids the deprecation warning and maps
+    // directly to the browser's box-shadow without requiring elevation hacks.
+    // Equivalent to: shadowColor:#000, shadowOpacity:0.25, shadowRadius:20.
+    boxShadow: '0px 8px 20px rgba(0,0,0,0.25)',
   },
 });

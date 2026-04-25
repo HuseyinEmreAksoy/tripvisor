@@ -10,8 +10,9 @@
  */
 import { useState } from 'react';
 import { Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { Button, Heading, Screen, SegmentedControl } from '@/components';
+import { BackButton, Button, Heading, Screen, SegmentedControl } from '@/components';
 import { useSession, useSignOut, useExportAccount, supabase } from '@/api';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
@@ -24,6 +25,7 @@ const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
 
 export default function SettingsScreen() {
   const t = useTheme();
+  const router = useRouter();
   const { data: session } = useSession();
   const { mode, setMode } = useThemeControls();
   const signOut = useSignOut();
@@ -90,6 +92,7 @@ export default function SettingsScreen() {
 
   return (
     <Screen>
+      <BackButton onPress={() => router.back()} label="Trips" />
       <Heading level={1}>Settings</Heading>
 
       {/* ─── Email row ─────────────────────────────────────────────────── */}

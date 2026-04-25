@@ -70,14 +70,15 @@ export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
       accessibilityRole="summary"
       accessibilityLabel={
         isEmpty
-          ? 'Cost rollup: optimize the trip to see estimate'
-          : `Estimated cost ${formattedCost}, ${formattedDistance}, drive time ${formattedDuration}`
+          ? 'Estimated travel cost: optimize the trip to see estimate'
+          : `Estimated travel cost ${formattedCost}, ${formattedDistance}, drive time ${formattedDuration}`
       }
     >
-      {/* Header row */}
+      {/* Header row — Step 5: "Estimated travel cost" clarifies this is
+          derived from km × rate (fuel/transport), not the full trip budget. */}
       <View style={styles.headerRow}>
         <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-          Estimated cost
+          Estimated travel cost
         </Text>
         <Text
           style={[t.typography.title, { color: isEmpty ? t.colors.textMuted : t.colors.text }]}
@@ -100,7 +101,7 @@ export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
           style={[t.typography.caption, { color: t.colors.textMuted }]}
           accessibilityLiveRegion="polite"
         >
-          Optimize the trip to see cost estimate
+          Optimize the trip to see estimated travel cost
         </Text>
       ) : null}
 

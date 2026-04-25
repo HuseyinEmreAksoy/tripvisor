@@ -11,9 +11,9 @@ import type { EmptyStateProps } from './EmptyState';
 
 /** Trips list — the authenticated user has no trips yet. */
 export const noTrips: Pick<EmptyStateProps, 'title' | 'body' | 'ctaLabel'> = {
-  title: 'Plan your first trip',
-  body: "Add places, set a budget, and we'll split your days.",
-  ctaLabel: 'New trip',
+  title: 'Where to next?',
+  body: 'Add places, set how many hours you want per day, and we\'ll build your perfect itinerary.',
+  ctaLabel: 'Plan a trip',
 };
 
 /** Itinerary tab — a trip exists but has no places added yet. */

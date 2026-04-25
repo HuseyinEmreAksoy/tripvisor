@@ -82,12 +82,14 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
   const formattedDrive =
     derived.driveSeconds !== null ? humanizeDuration(derived.driveSeconds) : '—';
 
+  // Step 5: "Est. travel cost" in the a11y label makes clear this is the
+  // fuel/transport cost derived from distance × rate, not the full budget.
   const accessLabel = [
     `${dayPlaces.length} place${dayPlaces.length !== 1 ? 's' : ''}`,
     `${derived.visitHours.toFixed(1)}h visit time`,
     `Drive ${formattedDrive}`,
     `${formattedDistance}`,
-    `Est. cost ${formattedCost}`,
+    `Est. travel cost ${formattedCost}`,
   ].join(', ');
 
   return (

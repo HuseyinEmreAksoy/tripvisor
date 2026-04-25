@@ -1,11 +1,21 @@
 /**
- * Trips list screen.
+ * Trips list screen — desktop layout pass (Phase 20, Step 4).
  *
  * Filter / sort pipeline (applied in order, all client-side):
  *   1. archive filter  — driven by `useTrips({ archived })`, server-side
  *   2. search filter   — case-insensitive substring on trip.title
  *   3. date filter     — All | Upcoming | Past
  *   4. sort            — one of: Recent | A→Z | Start date | Cost (desc)
+ *
+ * Desktop layout (≥ 1024px):
+ *   - Header (search, sort, filter, tabs) is constrained to maxWidth 1200px, centred.
+ *   - Trip cards render in a 2-column grid at 1024px+, 3-column at 1440px+.
+ *   - The grid is centred within a maxWidth 1200px container.
+ *   - FlatList is replaced with a flat ScrollView + manual column layout on web
+ *     desktop so the "New trip" footer button stays at the bottom of the grid,
+ *     not after the last card in a single column.
+ *
+ * Mobile / tablet layout: unchanged from before.
  *
  * Cost sort defers the legs fetch until the user selects it; if `sortKey`
  * is not `'cost'`, `useAllTripLegs` receives an empty array which keeps
@@ -22,10 +32,12 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button, EmptyState, FilterSheet, Heading, Screen, SegmentedControl } from '@/components';
@@ -40,6 +52,7 @@ import {
   useAllTripLegs,
 } from '@/api';
 import { useTheme } from '@/theme';
+import { BREAKPOINTS, useBreakpoint } from '@/hooks/useBreakpoint';
 import { confirmDestructive } from '@/lib/confirm';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
@@ -48,8 +61,6 @@ import type { SortKey, DateFilter } from '@/lib/tripsFilters';
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Tab = 'active' | 'archived';
-
-// SortKey and DateFilter are imported from @/lib/tripsFilters.
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -74,20 +85,26 @@ const DATE_FILTER_OPTIONS: Array<{ value: DateFilter; label: string }> = [
   { value: 'past', label: 'Past' },
 ];
 
+// Max content width for the centred desktop layout.
+const DESKTOP_MAX_WIDTH = 1200;
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function TripsList() {
   const t = useTheme();
   const router = useRouter();
+  const bp = useBreakpoint();
+  const { width: windowWidth } = useWindowDimensions();
+  const isDesktop = bp === 'desktop';
+  // At 1440px+ switch to 3 columns; between 1024–1439 use 2 columns.
+  const columns = windowWidth >= BREAKPOINTS.desktopWide ? 3 : 2;
 
   // ── Tab state (Active / Archived) ──────────────────────────────────────────
   const [tab, setTab] = useState<Tab>('active');
 
   // ── Search state ───────────────────────────────────────────────────────────
   // `searchText` updates immediately (controlled input); `debouncedSearch`
-  // updates after 200 ms of quiet and drives the filter. This gives instant
-  // cursor responsiveness while avoiding a filter recalculation on every
-  // keystroke.
+  // updates after 200 ms of quiet and drives the filter.
   const [searchText, setSearchText] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchRef = useRef<TextInput>(null);
@@ -105,8 +122,6 @@ export default function TripsList() {
     setSearchText('');
     pushDebouncedSearch.cancel();
     setDebouncedSearch('');
-    // Re-focus after clearing so the user can type a new query without an
-    // extra tap.
     searchRef.current?.focus();
   };
 
@@ -116,8 +131,6 @@ export default function TripsList() {
   const handleSortCycle = () => {
     const currentIndex = SORT_CYCLE.indexOf(sortKey);
     const nextIndex = (currentIndex + 1) % SORT_CYCLE.length;
-    // SORT_CYCLE is a fixed-length tuple so nextIndex is always in bounds;
-    // the non-null assertion avoids the TS2345 on `SortKey | undefined`.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     setSortKey(SORT_CYCLE[nextIndex]!);
   };
@@ -131,13 +144,8 @@ export default function TripsList() {
     archived: tab === 'archived',
   });
 
-  // Build the trip-id list for the legs batch fetch. Only pass ids when the
-  // user has actually selected "cost" sort — otherwise we give an empty array
-  // which keeps the hook disabled (no query, no network traffic).
   const activeTripsIds = useMemo(
     () => (sortKey === 'cost' ? (trips ?? []).map((trip) => trip.id) : []),
-    // Intentionally include sortKey here so the list re-computes when the
-    // user switches away from cost sort (disabling the query).
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [trips, sortKey],
   );
@@ -145,7 +153,6 @@ export default function TripsList() {
   const { byTripId: legsByTripId } = useAllTripLegs(activeTripsIds);
 
   // ── Derived / filtered + sorted list ──────────────────────────────────────
-  // Order: archive filter (server) → search → date filter → sort.
   const today = new Date().toISOString().slice(0, 10);
 
   const displayedTrips = useMemo(() => {
@@ -153,9 +160,6 @@ export default function TripsList() {
     const searched = applySearch(base, debouncedSearch);
     const dateFilt = applyDateFilter(searched, dateFilter, today);
     return applySort(dateFilt, sortKey, legsByTripId);
-    // `today` is a stable string per render day; it does not need to be in
-    // deps — the memo will naturally recompute whenever trips/search/filter
-    // changes. Including it would cause unnecessary daily busts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trips, debouncedSearch, dateFilter, sortKey, legsByTripId]);
 
@@ -197,16 +201,11 @@ export default function TripsList() {
     );
   }
 
-  // `serverIsEmpty` is true when the server returned no trips at all (no data
-  // to filter). Distinguish from `noResults`, which means filters produced
-  // zero matches from a non-empty list.
   const serverIsEmpty = !trips || trips.length === 0;
   const noResults = !serverIsEmpty && displayedTrips.length === 0;
-
-  // Whether any filter is active (used to visually accent the Filter button).
   const filterActive = dateFilter !== 'all';
 
-  // ── Styles ─────────────────────────────────────────────────────────────────
+  // ── Styles (theme-dependent, recreated inline) ──────────────────────────────
   const s = StyleSheet.create({
     header: {
       paddingHorizontal: t.spacing.lg,
@@ -226,10 +225,6 @@ export default function TripsList() {
       ...(t.typography.bodyStrong as object),
       color: t.colors.primary,
     },
-    // Search row: input + sort button + filter button side-by-side.
-    // On 360px: search input takes flex:1 (shrinks), sort and filter are
-    // fixed-width icon/label pills. Total button width budget ≈ 120px so
-    // the search input retains ~196px — wide enough to show ~15 chars.
     searchRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -250,7 +245,6 @@ export default function TripsList() {
       flex: 1,
       ...(t.typography.body as object),
       color: t.colors.text,
-      // Suppress the default bottom border on Android.
       padding: 0,
     },
     clearBtn: {
@@ -262,9 +256,6 @@ export default function TripsList() {
       color: t.colors.textMuted,
       lineHeight: 20,
     },
-    // Sort cycle button — icon-only on 360px to keep the row compact.
-    // The sort key is communicated via accessibilityLabel so icon-only
-    // is accessible.
     sortBtn: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -282,7 +273,6 @@ export default function TripsList() {
       fontSize: 11,
       textAlign: 'center',
     },
-    // Filter button — accented with primary colour when a filter is active.
     filterBtn: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -303,143 +293,239 @@ export default function TripsList() {
     },
   });
 
-  return (
-    <Screen padded={false}>
-      <View style={s.header}>
-        {/* ─── Header row: title + settings link ──────────────────────── */}
-        <View style={s.titleRow}>
-          <Heading level={1}>Your trips</Heading>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open settings"
-            // The router.d.ts stubs are stale and don't yet include the
-            // settings route; cast to silence the type error until `npx expo
-            // start` regenerates .expo/types/router.d.ts.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            onPress={() => router.push('/(app)/settings' as any)}
-            hitSlop={8}
-            style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={s.settingsBtnText}>Settings</Text>
-          </Pressable>
+  // ── Shared header (search + sort + filter + tabs) ─────────────────────────
+  const headerContent = (
+    <View style={[s.header, isDesktop && desktopStyles.centeredContainer]}>
+      {/* ─── Header row: title + settings link ──────────────────────── */}
+      <View style={s.titleRow}>
+        <Heading level={1}>Your trips</Heading>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open settings"
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onPress={() => router.push('/(app)/settings' as any)}
+          hitSlop={8}
+          style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
+        >
+          <Text style={s.settingsBtnText}>Settings</Text>
+        </Pressable>
+      </View>
+
+      {/* ─── Search + Sort + Filter row ──────────────────────────────── */}
+      <View style={s.searchRow}>
+        <View style={s.searchWrap}>
+          <TextInput
+            ref={searchRef}
+            value={searchText}
+            onChangeText={handleSearchChange}
+            placeholder="Search trips by title"
+            placeholderTextColor={t.colors.textMuted}
+            style={s.searchInput}
+            accessibilityLabel="Search trips by title"
+            accessibilityRole="search"
+            returnKeyType="search"
+            clearButtonMode="never"
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {searchText.length > 0 ? (
+            <Pressable
+              onPress={handleClearSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              style={({ pressed }) => [s.clearBtn, { opacity: pressed ? 0.5 : 1 }]}
+              hitSlop={8}
+            >
+              <Text style={s.clearBtnText}>✕</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        {/* ─── Search + Sort + Filter row ──────────────────────────────── */}
-        {/*
-          Layout target: 360px wide.
-          - searchWrap: flex:1 → takes all remaining space (~196px at 360px)
-          - sortBtn: ~56px (2-line label, e.g. "Start" or "Cost ↓")
-          - filterBtn: 40px (icon-only; label on wider screens)
-          Total gutters: lg(16) * 2 + sm(8) * 2 = 48px
-          Button budget: 56 + 40 = 96px
-          Search input: 360 - 48 - 96 = 216px ✓
-        */}
-        <View style={s.searchRow}>
-          {/* Search input */}
-          <View style={s.searchWrap}>
-            <TextInput
-              ref={searchRef}
-              value={searchText}
-              onChangeText={handleSearchChange}
-              placeholder="Search trips by title"
-              placeholderTextColor={t.colors.textMuted}
-              style={s.searchInput}
-              accessibilityLabel="Search trips by title"
-              accessibilityRole="search"
-              returnKeyType="search"
-              clearButtonMode="never"
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            {searchText.length > 0 ? (
-              <Pressable
-                onPress={handleClearSearch}
-                accessibilityRole="button"
-                accessibilityLabel="Clear search"
-                style={({ pressed }) => [s.clearBtn, { opacity: pressed ? 0.5 : 1 }]}
-                hitSlop={8}
-              >
-                <Text style={s.clearBtnText}>✕</Text>
-              </Pressable>
-            ) : null}
-          </View>
+        <Pressable
+          onPress={handleSortCycle}
+          accessibilityRole="button"
+          accessibilityLabel={`Sort: ${SORT_LABELS[sortKey]}. Tap to change sort order.`}
+          style={({ pressed }) => [s.sortBtn, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Text style={s.sortBtnText}>{SORT_LABELS[sortKey]}</Text>
+        </Pressable>
 
-          {/* Sort cycle button — taps to advance: Recent → A→Z → Start → Cost ↓ → Recent */}
-          <Pressable
-            onPress={handleSortCycle}
-            accessibilityRole="button"
-            accessibilityLabel={`Sort: ${SORT_LABELS[sortKey]}. Tap to change sort order.`}
-            style={({ pressed }) => [s.sortBtn, { opacity: pressed ? 0.7 : 1 }]}
+        <Pressable
+          onPress={() => setFilterSheetOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={
+            filterActive
+              ? `Filter: ${DATE_FILTER_OPTIONS.find((o) => o.value === dateFilter)?.label ?? dateFilter}. Tap to change.`
+              : 'Filter trips. No filter active.'
+          }
+          style={({ pressed }) => [
+            s.filterBtn,
+            {
+              backgroundColor: filterActive ? t.colors.primary : t.colors.bgElevated,
+              borderColor: filterActive ? t.colors.primary : t.colors.border,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              fontSize: 16,
+              color: filterActive ? t.colors.primaryText : t.colors.textMuted,
+            }}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
           >
-            <Text style={s.sortBtnText}>{SORT_LABELS[sortKey]}</Text>
-          </Pressable>
+            ⊟
+          </Text>
+        </Pressable>
+      </View>
 
-          {/* Filter button — opens the date-filter sheet */}
-          <Pressable
-            onPress={() => setFilterSheetOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel={
-              filterActive
-                ? `Filter: ${DATE_FILTER_OPTIONS.find((o) => o.value === dateFilter)?.label ?? dateFilter}. Tap to change.`
-                : 'Filter trips. No filter active.'
-            }
-            style={({ pressed }) => [
-              s.filterBtn,
-              {
-                backgroundColor: filterActive ? t.colors.primary : t.colors.bgElevated,
-                borderColor: filterActive ? t.colors.primary : t.colors.border,
-                opacity: pressed ? 0.7 : 1,
-              },
+      {/* ─── Active / Archived segmented control ─────────────────────── */}
+      <SegmentedControl
+        value={tab}
+        options={TAB_OPTIONS}
+        onChange={(nextTab) => {
+          setTab(nextTab);
+          setSearchText('');
+          pushDebouncedSearch.cancel();
+          setDebouncedSearch('');
+          setSortKey('recent');
+          setDateFilter('all');
+        }}
+      />
+    </View>
+  );
+
+  // ── Desktop grid layout ───────────────────────────────────────────────────
+  if (isDesktop) {
+    return (
+      <Screen padded={false}>
+        {headerContent}
+
+        {serverIsEmpty ? (
+          tab === 'active' ? (
+            <View style={desktopStyles.centeredContainer}>
+              <EmptyState
+                {...noTrips}
+                icon={
+                  <Text
+                    style={{ fontSize: 56, lineHeight: 64 }}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                    aria-hidden
+                  >
+                    🗺️
+                  </Text>
+                }
+                onPress={() => router.push('/trip/new')}
+              />
+            </View>
+          ) : (
+            <View style={desktopStyles.centeredContainer}>
+              <EmptyState title="No archived trips" body="Archived trips will appear here." />
+            </View>
+          )
+        ) : noResults ? (
+          <View style={[s.noResultsWrap, desktopStyles.centeredContainer]}>
+            <Text style={s.noResultsText}>No trips match your search.</Text>
+          </View>
+        ) : (
+          <ScrollView
+            refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+            contentContainerStyle={[
+              desktopStyles.centeredContainer,
+              { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
             ]}
           >
-            {/* ⊟ icon is a compact "filter funnel" proxy; universally available
-                as a Unicode char so no extra asset is needed. */}
-            <Text
-              style={{
-                fontSize: 16,
-                color: filterActive ? t.colors.primaryText : t.colors.textMuted,
-              }}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
+            {/*
+             * Desktop grid: flexDirection row + flexWrap to fill columns.
+             * Each card gets (100% / columns) width minus the gap.
+             * Using percentage minus gap works reliably on RN Web Flexbox.
+             * Gap between columns is t.spacing.md (12px); between rows t.spacing.md.
+             */}
+            <View
+              style={[
+                desktopStyles.grid,
+                {
+                  gap: t.spacing.md,
+                  paddingTop: t.spacing.md,
+                },
+              ]}
             >
-              ⊟
-            </Text>
-          </Pressable>
-        </View>
+              {displayedTrips.map((item) => (
+                <View
+                  key={item.id}
+                  style={[
+                    desktopStyles.gridItem,
+                    {
+                      // Subtract gap budget: (columns - 1) gaps shared equally.
+                      // flexBasis computed as: (100 / columns)% minus gap contribution.
+                      // Using `width` + `flex: 0` pattern is more reliable than
+                      // flexBasis string arithmetic on RN Web.
+                      width: `${(100 / columns).toFixed(4)}%` as unknown as number,
+                    },
+                  ]}
+                >
+                  <TripCard
+                    trip={item}
+                    onPress={() => router.push(`/trip/${item.id}`)}
+                    onArchive={(id) => archiveMutation.mutate(id)}
+                    onUnarchive={(id) => unarchiveMutation.mutate(id)}
+                    onDuplicate={(id) => duplicateMutation.mutate(id)}
+                    onDelete={handleDelete}
+                  />
+                </View>
+              ))}
+            </View>
 
-        {/* ─── Active / Archived segmented control ─────────────────────── */}
-        <SegmentedControl
-          value={tab}
-          options={TAB_OPTIONS}
-          onChange={(nextTab) => {
-            setTab(nextTab);
-            // Reset search + sort + date filter when switching tabs so the
-            // user starts fresh and doesn't see confusing zero-result states.
-            setSearchText('');
-            pushDebouncedSearch.cancel();
-            setDebouncedSearch('');
-            setSortKey('recent');
-            setDateFilter('all');
-          }}
+            {tab === 'active' ? (
+              <View style={{ marginTop: t.spacing.lg, width: '100%' }}>
+                <Button label="New trip" onPress={() => router.push('/trip/new')} />
+              </View>
+            ) : null}
+          </ScrollView>
+        )}
+
+        <FilterSheet
+          visible={filterSheetOpen}
+          onClose={() => setFilterSheetOpen(false)}
+          title="Filter trips"
+          options={DATE_FILTER_OPTIONS}
+          selected={dateFilter}
+          onSelect={(value) => setDateFilter(value)}
         />
-      </View>
+      </Screen>
+    );
+  }
+
+  // ── Mobile / tablet layout (unchanged) ───────────────────────────────────
+  return (
+    <Screen padded={false}>
+      {headerContent}
 
       {serverIsEmpty ? (
         tab === 'active' ? (
-          // Active tab empty state — preserve existing "Plan your first trip" copy.
           <EmptyState
             {...noTrips}
+            icon={
+              <Text
+                style={{ fontSize: 56, lineHeight: 64 }}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                aria-hidden
+              >
+                🗺️
+              </Text>
+            }
             onPress={() => router.push('/trip/new')}
           />
         ) : (
-          // Archived tab empty state.
           <EmptyState
             title="No archived trips"
             body="Archived trips will appear here."
           />
         )
       ) : noResults ? (
-        // Filters yielded zero matches from a non-empty list.
         <View style={s.noResultsWrap}>
           <Text style={s.noResultsText}>No trips match your search.</Text>
         </View>
@@ -472,7 +558,6 @@ export default function TripsList() {
         />
       )}
 
-      {/* ─── Date filter sheet ───────────────────────────────────────────── */}
       <FilterSheet
         visible={filterSheetOpen}
         onClose={() => setFilterSheetOpen(false)}
@@ -484,3 +569,27 @@ export default function TripsList() {
     </Screen>
   );
 }
+
+// ── Desktop-specific static styles ───────────────────────────────────────────
+// These don't depend on the theme so they can be static.
+const desktopStyles = StyleSheet.create({
+  // Centers a content block and constrains its max width.
+  centeredContainer: {
+    maxWidth: DESKTOP_MAX_WIDTH,
+    width: '100%',
+    alignSelf: 'center',
+    // Horizontal padding is applied at usage site to support variation.
+  },
+  // Flex-wrap row for the desktop card grid.
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: '100%',
+  },
+  // Each grid item stretches to fill its column slot.
+  gridItem: {
+    // flex: 0 lets width drive the size; no stretching or shrinking.
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+});

@@ -1,8 +1,19 @@
+/**
+ * New trip screen — visual redesign (Phase 20, Step 1 + Step 5).
+ *
+ * Changes vs. previous version:
+ *  - Added back button (Step 2) for users who navigate here and change their mind.
+ *  - Added a destination-pin accent glyph beside the heading (Step 1).
+ *  - Supporting copy explains what comes next so the form feels purposeful.
+ *  - "Daily hours budget" → "Daily plan time" with a clearer hint (Step 5).
+ *  - Transport mode selector promoted from SettingsTab into creation flow
+ *    so users set it once upfront (design intention preserved from original).
+ */
 import { useRouter } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Button, Heading, Screen, TextField } from '@/components';
+import { BackButton, Button, Heading, Screen, TextField } from '@/components';
 import { DateField } from '@/components/DateField';
 import { useCreateTrip } from '@/api';
 import { useTheme } from '@/theme';
@@ -68,23 +79,45 @@ export default function NewTrip() {
   return (
     <Screen padded={false}>
       <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
-        <Heading level={1}>New trip</Heading>
+        {/* ── Back affordance ───────────────────────────────────────────── */}
+        <BackButton onPress={() => router.back()} label="My trips" />
 
+        {/* ── Heading + accent ─────────────────────────────────────────── */}
+        <View style={{ gap: t.spacing.xs }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm }}>
+            {/* Decorative map-pin accent next to the title — a11y hidden */}
+            <Text
+              style={{ fontSize: 24 }}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              aria-hidden
+            >
+              📍
+            </Text>
+            <Heading level={1}>Plan your trip</Heading>
+          </View>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+            Give your trip a name and dates. We'll help you build the perfect day-by-day itinerary.
+          </Text>
+        </View>
+
+        {/* ── Destination / title ───────────────────────────────────────── */}
         <Controller
           control={control}
           name="title"
           render={({ field: { value, onChange, onBlur } }) => (
             <TextField
-              label="Title"
+              label="Destination or trip name"
               value={value}
               onChangeText={onChange}
               onBlur={onBlur}
-              placeholder="e.g. Lisbon 3 days"
+              placeholder="e.g. Lisbon long weekend"
               error={errors.title?.message ?? null}
             />
           )}
         />
 
+        {/* ── Date range ────────────────────────────────────────────────── */}
         <Controller
           control={control}
           name="start_date"
@@ -111,18 +144,19 @@ export default function NewTrip() {
           )}
         />
 
+        {/* ── Daily plan time (Step 5 — time-first terminology) ─────────── */}
         <Controller
           control={control}
           name="daily_hours_budget"
           render={({ field: { value, onChange, onBlur } }) => (
             <TextField
-              label="Daily hours budget"
+              label="Daily plan time (hours)"
               value={String(value)}
               onChangeText={(s) => onChange(Number(s.replace(/[^0-9.]/g, '')) || 0)}
               onBlur={onBlur}
               keyboardType="numeric"
               inputMode="decimal"
-              hint="How many hours per day you want to spend on activities"
+              hint="How many hours of activities you want per day"
               error={errors.daily_hours_budget?.message ?? null}
             />
           )}
@@ -134,6 +168,7 @@ export default function NewTrip() {
           </Text>
         ) : null}
 
+        {/* ── Actions ───────────────────────────────────────────────────── */}
         <View style={{ gap: t.spacing.sm, marginTop: t.spacing.md }}>
           <Button
             label="Create trip"
