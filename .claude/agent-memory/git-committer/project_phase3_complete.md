@@ -18,6 +18,37 @@ Phase 5 (test hardening — partial) committed as a single commit on 2026-04-25:
   Two source fixes (optimizer anchor pinning + optimize-trip .catch thenable bug)
   + CI workflow landed; test-hardening exit criteria deferred to Phase 6.
 
+Phase 12 (close Phase 5 M1 + Phase 11 deferrals) committed 2026-04-25:
+- `8b9e5b0` — feat(ui,backend,db,docs): Phase 12 — close Phase 5 M1 + Phase 11 deferrals
+  Bundled Phase 5 M1 (real advisory lock, 409 semantics) + Phase 11 M1+L4 (Cost sort,
+  FilterSheet, batched useAllTripLegs hook). Single commit, 11 files, 980 ins / 275 del.
+  Pushed to origin master successfully (fast-forward).
+
+Phase 13 (DB-row mutex — closes Phase 12 C1) committed 2026-04-25:
+- `048c7e0` — feat(backend,db,docs): Phase 13 — DB-row mutex closes Phase 12 C1 (PgBouncer connection-swap)
+  Backend-only phase: migration 0008 (trips.optimizing_at column + claim/release RPCs,
+  drops 0007 advisory-lock wrappers), optimize-trip index.ts updated, plan.md + optimization.md docs.
+  4 files, 223 ins / 42 del. Pushed to origin master (fast-forward).
+  Scope: `feat(backend,db,docs)` — no ui scope because no UI surface changed.
+
+Phase 14 (Share link OG/Twitter meta tags — rich unfurl) committed 2026-04-25:
+- `4fdd565` — feat(ui,docs): Phase 14 — Share link OG/Twitter meta tags (rich unfurl)
+  UI-only phase: SharedTripHead in app/share/[token].tsx (9 meta tags, data-loaded
+  guard, buildSummary helper) + RootHead baseline in app/_layout.tsx.
+  Runtime-require pattern reused from print.tsx; Platform.OS early-return keeps
+  expo-router/head out of native bundle. No og:image — summary card variant.
+  5 files, 193 ins / 13 del. Pushed to origin master (fast-forward).
+  Scope: `feat(ui,docs)` — pure web meta injection, no backend or native surface.
+
+Phase 15 (Per-day map filter on trip detail Map tab) committed 2026-04-25:
+- `36db49f` — feat(ui,docs): Phase 15 — per-day map filter on trip detail
+  UI-only phase: chip row (radiogroup/radio + dayColor dot) above map;
+  availableDays/filteredMarkers/filteredPolylines useMemo; 1-based day labels;
+  edge cases: no days hides row, invalid selection resets to 'all', unassigned
+  places excluded from per-day filter but visible in 'All'.
+  4 files, 216 ins / 26 del. Push blocked by sandbox — user must push manually.
+  Scope: `feat(ui,docs)` — single shared MapTab file, no backend or native-only surface.
+
 **Why:** Two-commit strategy used in Phase 4; single commit used in Phase 5 because
 the user explicitly requested "one logical unit, conclude quickly" after course-correcting
 against long workflows.
@@ -49,6 +80,14 @@ into one commit. Always use multi-scope Conventional Commits: `feat(ui,backend,t
   env var references (`${{ secrets.* }}`).
 - Partial phases (user removed sub-agent mid-phase): bundle into single commit;
   mark deferred items in commit body, not as separate commits.
+- Cross-phase bundle commits (multiple deferred items closed in one phase): user
+  explicitly says "group them sensibly" — bundle into one commit when the items
+  are logically related (Phase 12 did Phase 5 M1 + Phase 11 M1+L4 in one commit).
+- `tsc-output.txt` at the repo root is a build artifact — never commit. It appears
+  in git status as an untracked file with a garbled Unicode path on Windows; skip it.
+- Pre-existing modified files listed in git status at conversation start may have
+  already been committed by the time git-committer runs — always do a fresh `git status`
+  before staging to confirm what is actually outstanding.
 - `supabase/functions/share-trip/test.ts` contains a fake JWT for testing — safe,
   not a real credential. Pattern: `eyJ...` in test files is expected.
 - `process.env.SUPABASE_SERVICE_ROLE_KEY` in test files is an env var read, not
