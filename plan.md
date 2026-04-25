@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 5 — Partial (source-only) · source-code fixes + CI workflow shipped; test-hardening exit criteria deferred
+**Current phase**: Phase 6 — Partial (UX polish only) · live smoke skipped per user direction
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -11,8 +11,9 @@
 | 1 | Auth + trip CRUD + place search | ✅ Done (web smoke green 2026-04-24; native smoke deferred to user) | backend + ui |
 | 2 | Route optimization + day split | 🚧 Code complete · full smoke gated on Google Maps keys | backend (optimizer) + ui (map) |
 | 3 | Manual editing (drag, move-to-day, duration override) | 🚧 Code complete · full smoke gated on Google Maps keys | ui + backend |
-| 4 | Polish (offline cache, share link, .ics export, Sentry, empty states) | 🚧 Code complete · awaiting live smoke | ui + backend |
+| 4 | Polish (offline cache, share link, .ics export, Sentry, empty states) | 🚧 Code complete · awaiting live smoke (closed out in Phase 6) | ui + backend |
 | 5 | Test hardening (coverage, E2E, property, CI) | 🚧 Partial — source fixes shipped 2026-04-25; test-hardening exit criteria deferred | backend + ui |
+| 6 | Phase 4 web close-out (live smoke + small polish) | 🚧 Partial — Step 6.0 (stack ready) + Step 6.4 (UX polish) shipped 2026-04-25; smoke (6.1–6.3, 6.5–6.7) skipped per user direction | backend + ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -846,3 +847,191 @@ User:
 6. Create GCP project + enable APIs listed above; copy keys into `.env` (see `.env.example`)
 
 Once these are done, the main assistant can delegate Phase 1 to `planner` → `backend-specialist` + `ui-specialist`.
+
+---
+
+## Phase 6 — Phase 4 web close-out (live smoke + small polish)
+
+**Goal**: Run the deferred Phase 4 web smoke end-to-end against local Supabase, fix any small breakage surfaced, and flip Phase 4 to ✅ Done on the web target. No new feature work; no Google Maps keys required (share / .ics / offline / Sentry / empty-states paths are key-independent).
+**Status**: 🚧 **Partial** — Step 6.0 (stack ready) + Step 6.4 (UX polish: Button accessibilityLabel + jest config typo) shipped 2026-04-25. Steps 6.1–6.3, 6.5–6.7 (the actual smoke run + triage) **skipped per user direction** — user elected not to run live Playwright smoke, so Phase 4 stays 🚧 awaiting live smoke (now deferred indefinitely or to a future user-driven run). Steps 6.6, 6.8, 6.9 reduced to "no-op / partial" because there is nothing to review or flip.
+**Last updated**: 2026-04-25
+
+**Direction chosen**: Option C (Phase 4 live-smoke close-out + small UX polish), with a thin slice of Option B (verify the existing Playwright `phase-4-polish.spec.ts` actually passes against local Supabase, not just gate-skips). Rejected Option A because it needs Apple Developer + Google Play accounts the user has not provisioned. Rejected full Option B because the test-specialist sub-agent was removed mid-Phase-5 and the deferred coverage/property/RLS work needs that role.
+
+**Entry criteria**:
+- Phase 4 code-complete (already true — commit `a2a24e3`)
+- User can run `npx supabase start` locally (Docker / Supabase CLI installed)
+- User has filled `.env` with `EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321` and the local anon + service-role keys printed by `supabase start`
+- User has applied migrations via `npx supabase db reset` (includes `0003_share_links.sql`)
+
+**Phase exit criteria**:
+- All 6 checks in `e2e/web/phase-4-polish.spec.ts` execute (no `test.skip`) and 5 of 6 are green; any single yellow must be explicitly justified in the smoke log (e.g. "Sentry DSN-present branch deferred to user smoke" — see Phase 4 Finding 1)
+- `docs/smoke/phase-4.md` updated 2026-04-25 (or later) with per-check 🟢/🟡/🔴 status, replacing the current 🟡 Partial state
+- Phase 4 row in this table flipped from "🚧 Code complete · awaiting live smoke" to "✅ Done (web; native deferred to user smoke)"
+- `docs/features/overview.md` Phase 4 row reflects the same flip; web "Platforms verified" boxes ticked in `docs/features/{offline,share,ics-export,sentry}.md`
+- Any small bugs surfaced during smoke and fixable in ≤ 1 hour each are shipped; anything bigger is logged in `docs/reviews/phase-6.md` as a follow-up and does NOT block this phase
+- Native iOS / Android smoke remains deferred to user — explicitly noted, not a blocker
+
+**Critical path**: Step 6.0 → Step 6.1 → Step 6.2 → Step 6.3 → Step 6.5 → Step 6.6 → Step 6.7 → Step 6.8 → Step 6.9
+
+(Step 6.4 is parallel polish; not on the critical path.)
+
+### Step 6.0 — Confirm local-stack readiness (no code)
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Verify `supabase/config.toml` exists and `npx supabase start` boots (Postgres + Auth + Edge runtime). Confirm `.env` has `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`. Confirm `npx supabase db reset` applies all four migrations cleanly (including `0003_share_links.sql`). Capture the anon/service keys for use in Steps 6.2 + 6.5. **Do not modify any code.** If anything fails, stop and surface a blocker — do NOT auto-fix.
+- **Inputs**: User-provisioned Docker + Supabase CLI; existing migrations in `supabase/migrations/`
+- **Expected output**: Plain-text confirmation comment in the conversation log: "Supabase up at 127.0.0.1:54321; migrations applied; anon key + service key available for smoke." Anon URL reachable via `curl http://127.0.0.1:54321/rest/v1/` returning 401 (auth required, server alive).
+- **Depends on**: None
+- **Parallel with**: (none — gates the rest)
+- **Platform check**: N/A (infra)
+- **Risks**:
+  - [Blocker] Supabase CLI not installed → Mitigation: stop and ask user to run `npm install -g supabase` (project rule forbids global installs by Claude — user must do this) or use `npx supabase` if version pin is available
+  - [Medium] Migration `0003_share_links.sql` may fail on a fresh DB if a foreign-key constraint references a Phase 5 table that was added but not migrated — Mitigation: read the migration first; flag if it has new dependencies
+- **Touched files**: None (read-only verification)
+- **Verification**: `curl http://127.0.0.1:54321/rest/v1/` returns 401; `psql` / Supabase Studio shows `trips`, `trip_places`, `trip_legs`, `trip_shares` tables
+
+### Step 6.1 — Boot the web app + sign in once for fixture session
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: `npm run web` to start the Expo dev server on `:8081`. Hit the magic-link sign-in flow once (email → Mailpit at `127.0.0.1:54324` → click link → land on `/trips`). Confirm session is persisted to localStorage (Phase 1 already shipped this). Create one fixture trip with 2–3 manually-added places via the UI (no Google Maps key needed — places can be entered as raw lat/lng via the existing manual add path, or from the autocomplete fallback if the app handles missing key gracefully). **Do not modify any code.**
+- **Inputs**: Step 6.0 stack live; `.env` populated
+- **Expected output**: Authenticated browser session stored; one trip exists in `public.trips` with ≥ 2 rows in `public.trip_places`. Browser tab left open for Step 6.2.
+- **Depends on**: Step 6.0
+- **Parallel with**: (none)
+- **Platform check**: Web only (this phase is web close-out; native deferred)
+- **Risks**:
+  - [Medium] Manual place-add UI may require a Google Place ID and break without the autocomplete key. Mitigation: if blocked, seed `trip_places` directly via Supabase Studio with a hand-written `google_place_id` like `'manual-fixture-1'` and lat/lng — verify whether the schema permits this (`google_place_id` may have a unique constraint but not a Google-format check). If blocked here, surface as blocker and stop.
+  - [Low] Magic-link delivery time → Mitigation: Mailpit is local, instant
+- **Touched files**: None (UI interaction only); fixture rows in Supabase
+- **Verification**: `/trips` shows the fixture trip; clicking it shows the trip detail screen with the 2–3 places
+
+### Step 6.2 — Run `phase-4-polish.spec.ts` against the live stack
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: With Step 6.0 stack + Step 6.1 fixture in place, execute `npx playwright test --project=chromium e2e/web/phase-4-polish.spec.ts`. Capture per-check pass/fail/skip output verbatim. **Do not modify the spec file** unless it's outright broken (e.g. typo, wrong selector); if a check fails because the app misbehaves, route the failure to Step 6.3 for the owning specialist. Record raw output to a scratch file the smoke step (6.7) will summarise. Tests are best-effort; no separate review.
+- **Inputs**: Steps 6.0, 6.1
+- **Expected output**: One of three states per check — green (pass), red (fail with copied stack trace), or yellow (skipped with documented reason, e.g. Sentry DSN absent). Total 6 checks accounted for.
+- **Depends on**: Step 6.1
+- **Parallel with**: (none — direct sequence)
+- **Platform check**: Web only
+- **Risks**:
+  - [Medium] Auth state in Playwright may not pick up the localStorage session from Step 6.1 (different browser context) — Mitigation: if Playwright opens a fresh context, the spec must seed its own auth via the helpers in `e2e/web/helpers/`; if that's broken, use Playwright's `storageState` option pointing at the Step 6.1 session export (one-line addition acceptable, scope-creep beyond that is a follow-up)
+  - [High] One or more Phase 4 features may not work end-to-end — this is the whole point of the smoke; record findings, route fixes to Step 6.3
+  - [Low] Playwright download handling for `.ics` differs from real browsers — Mitigation: Phase 4 spec already uses `page.waitForEvent('download')`
+- **Touched files**: None (spec runs as-is)
+- **Verification**: Command exits with at least 5/6 checks green or with a written justification per failure
+
+### Step 6.3 — Triage + fix small failures from 6.2
+- **Agent**: ui-specialist (most likely owner — share UI / empty states / map fallback) OR backend-specialist (if a failure traces to `share-trip` Edge Function or migration)
+- **Size**: M
+- **Task**: For each red check from Step 6.2, decide in 5 minutes whether the fix is ≤ 1 hour (in scope) or larger (parked as follow-up in `docs/reviews/phase-6.md`). Ship the small fixes. Examples of in-scope: missing `accessibilityLabel` causing a Playwright selector miss, a hard-coded URL pointing at a stale Edge Function path, a button label changed since the spec was written. Examples of parked: re-architecting share-token issuance, swapping the `.ics` library, fixing the Sentry DSN-coverage gap. **Tests for any fix are best-effort, written inline by the owning specialist; no separate test-specialist review.** If 6.2 was fully green, this step closes immediately as a no-op and the phase advances to Step 6.5.
+- **Inputs**: Step 6.2 output
+- **Expected output**: One commit per fix (small, focused); follow-up items appended to `docs/reviews/phase-6.md`; `docs/reviews/phase-6.md` exists even if empty (so 6.6 reviewer has something to read)
+- **Depends on**: Step 6.2
+- **Parallel with**: Step 6.4
+- **Platform check**: Web; if a fix touches a `.native.tsx` file, mark the corresponding native verification as deferred to user
+- **Risks**:
+  - [Medium] Scope creep on "small fixes" — Mitigation: hard 1-hour-per-fix budget; if a fix exceeds it, park and continue
+  - [Low] Re-running `phase-4-polish.spec.ts` after each fix slows feedback — Mitigation: re-run only the failing check during dev, full suite once at end of step
+- **Touched files**: As needed in `app/`, `src/`, or `supabase/functions/share-trip/index.ts`. Migration files MUST NOT be edited (would require `db reset` and reseed); flag any required migration change as a parked follow-up.
+- **Verification**: After fixes, re-run of `phase-4-polish.spec.ts` shows ≥ 5/6 green
+
+### Step 6.4 — Two small UX polish items (parallel with 6.3)
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Two specific polish items the user has not requested but which Phase 4 review (`docs/reviews/phase-4.md`) flagged at low severity and which can be batched here without scope creep:
+  1. Fix the pre-existing `Button.test.tsx` loading-state accessibility regression (Phase 5 smoke Finding 1): add `accessibilityLabel` to the button wrapper so RNTL `getByRole('button', {name})` succeeds when the button is in `loading=true` state.
+  2. Fix `jest.config.js` `setupFilesAfterEach` typo to `setupFilesAfterEnv` (Phase 5 smoke Finding 2). Confirm `jest-setup.ts` is empty or doesn't break tests when actually loaded — if it does break tests, revert and park.
+- **Inputs**: Phase 5 smoke findings 1 + 2
+- **Expected output**: Both fixes committed; `npm test` still green (or improved)
+- **Depends on**: None
+- **Parallel with**: Step 6.3
+- **Platform check**: Web (Button is cross-platform, the fix should work on all three; native verification deferred to user)
+- **Risks**:
+  - [Low] Activating `setupFilesAfterEnv` may load a stale `jest-setup.ts` that breaks tests — Mitigation: read the file first; if it has stale content, scope is "fix typo" not "rewrite setup"; revert and park if the fix breaks tests
+- **Touched files**: `src/components/Button.tsx`, `jest.config.js`
+- **Verification**: `npm test` exits 0; previously failing `Button.test.tsx` cases now pass
+
+### Step 6.5 — Re-run full Phase 4 spec end-to-end
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: After Step 6.3 fixes (if any) land, re-execute `npx playwright test --project=chromium e2e/web/phase-4-polish.spec.ts` once more, end-to-end, no flake-retries. Capture full output verbatim for the smoke log.
+- **Inputs**: Step 6.3 fixes (or Step 6.2 output if 6.3 was a no-op)
+- **Expected output**: Final test results to commit into `docs/smoke/phase-4.md` in Step 6.7
+- **Depends on**: Step 6.3, Step 6.4 (if 6.4 changed jest config it should not affect Playwright, but we serialise to be safe)
+- **Parallel with**: (none)
+- **Platform check**: Web only
+- **Risks**: [Low]
+- **Touched files**: None
+- **Verification**: ≥ 5/6 green; remaining yellow has a written justification (typically Sentry DSN-present branch)
+
+### Step 6.6 — Reviewer pass on Phase 6 changes
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read every diff introduced in Phase 6 (Steps 6.3 + 6.4). Confirm: (1) no Google ToS violations re-introduced (no `rating`, `reviews`, `photos`, `opening_hours` persisted to AsyncStorage or to any new schema); (2) no Google HTTP API key ends up in the web bundle (re-grep `dist/` if a web export was performed; otherwise grep the source diff for `EXPO_PUBLIC_GOOGLE_MAPS_HTTP_KEY` or similar — there should be none); (3) RLS still holds on `trips`, `trip_places`, `trip_legs`, `trip_shares` (no new public-grant statements snuck in via fix commits); (4) accessibility fix in 6.4 doesn't paper over real screen-reader issues. **MUST NOT start if Step 6.5 shows a red blocker** — main assistant loops back to 6.3 first.
+- **Inputs**: Phase 6 diff; Step 6.5 smoke result
+- **Expected output**: `docs/reviews/phase-6.md` with critical / high / medium / low findings; no critical or high blocks the docs flip in Step 6.8
+- **Depends on**: Step 6.5
+- **Parallel with**: (none)
+- **Platform check**: N/A
+- **Risks**: [Low]
+- **Touched files**: `docs/reviews/phase-6.md`
+- **Verification**: Report committed; main assistant verifies no critical/high before Step 6.8
+
+### Step 6.7 — Update the smoke log
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Rewrite `docs/smoke/phase-4.md` to reflect the Step 6.5 results: per-check 🟢/🟡/🔴, dropping the current ⏸ "skipped due to environment prerequisites" lines. Keep the existing test-counts table and findings sections; append a new "Phase 6 close-out" section at the top noting the 2026-04-25-or-later run date, the build commit, and the disposition of each check. Native iOS/Android remains "deferred to user smoke" — keep that line. Also create / update `docs/smoke/phase-6.md` with a one-paragraph pointer to `docs/smoke/phase-4.md` and `docs/reviews/phase-6.md` for orientation.
+- **Inputs**: Step 6.5 output
+- **Expected output**: `docs/smoke/phase-4.md` shows ≥ 5/6 green at the top; `docs/smoke/phase-6.md` exists as a thin index page
+- **Depends on**: Step 6.5
+- **Parallel with**: Step 6.6
+- **Platform check**: Web (native deferred line preserved)
+- **Risks**: [Low]
+- **Touched files**: `docs/smoke/phase-4.md`, `docs/smoke/phase-6.md`
+- **Verification**: Smoke log shows current status; reviewer (6.6) reads it and signs off
+
+### Step 6.8 — Docs + plan flip
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: Flip the Phase 4 row in the top-of-file table to "✅ Done (web; native deferred to user smoke)". Tick the web "Platforms verified" boxes in `docs/features/offline.md`, `docs/features/share.md`, `docs/features/ics-export.md`, `docs/features/sentry.md` (whichever already have such boxes — do not invent new ones; if a feature doc lacks the table, leave it alone and note the gap in `docs/reviews/phase-6.md` as a follow-up). Update `docs/features/overview.md` Phase 4 row similarly. Add a one-paragraph "Phase 6 — close-out" entry under the Phase 5 close-out section in this `plan.md`, summarising what shipped (smoke green; small accessibility fix on Button; jest config typo fixed). Also flip the Phase 6 row in this table to ✅ Done. Do NOT edit `CLAUDE.md` (planner project rule forbids; if `CLAUDE.md` needs a "running the smoke" note, route via main assistant).
+- **Inputs**: Step 6.6 review (no critical/high); Step 6.7 smoke log
+- **Expected output**: Tables + feature docs reflect the new state; `plan.md` has a Phase 6 close-out paragraph
+- **Depends on**: Step 6.6, Step 6.7
+- **Parallel with**: (none)
+- **Platform check**: N/A
+- **Risks**:
+  - [Low] Feature docs may not have a "Platforms verified" table for every Phase 4 feature — Mitigation: scope is "tick where the box exists"; do not add new tables in this phase
+- **Touched files**: `plan.md`, `docs/features/overview.md`, `docs/features/offline.md`, `docs/features/share.md`, `docs/features/ics-export.md`, `docs/features/sentry.md`
+- **Verification**: Phase 4 row reads ✅ Done on web; Phase 6 row reads ✅ Done; feature-doc web boxes ticked
+
+### Step 6.9 — Final sanity check
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read the final state of `plan.md` + `docs/features/overview.md` + `docs/smoke/phase-4.md`. Confirm: (1) Phase 4 row says ✅ Done web on every page; (2) no claim is made about native or about Google-Maps-gated checks (Phases 2/3 are still 🚧 awaiting keys); (3) `docs/reviews/phase-6.md` exists and is internally consistent with the smoke log; (4) no `test-specialist` was assigned anywhere in Phase 6. Surface any inconsistency for docs-specialist to fix; otherwise sign off.
+- **Inputs**: Step 6.8 outputs
+- **Expected output**: One-paragraph sign-off appended to `docs/reviews/phase-6.md`, or a list of doc inconsistencies for 6.8 to re-do
+- **Depends on**: Step 6.8
+- **Parallel with**: (none)
+- **Platform check**: N/A
+- **Risks**: [Low]
+- **Touched files**: `docs/reviews/phase-6.md` (append-only)
+- **Verification**: Sign-off paragraph present; phase is closed
+
+## ⚠ Blockers (Phase 6 — must be cleared before Step 6.0)
+
+1. **Local Supabase stack must be reachable**: User has to run `npx supabase start` and confirm Postgres + Auth + Edge runtime are healthy. Without this, every Step 6.0+ stalls. (Pre-existing project blocker, listed because Phase 6 is the first phase that hard-requires it.)
+2. **`.env` must contain local anon + service-role keys**: Printed by `supabase start`. The smoke spec needs these via `process.env.EXPO_PUBLIC_SUPABASE_URL` etc. Not the same as the leaked-PAT rotation issue (which is about the Supabase Personal Access Token for CLI auth against the cloud project, irrelevant to local).
+3. **Pre-existing blockers carried forward — NOT in scope for Phase 6**:
+   - Google Maps API keys (Places API New + Routes API) — still ungated; Phase 2/3 smoke remains gated. Phase 6 does NOT attempt to clear these.
+   - Leaked Supabase PAT rotation — still pending. Phase 6 uses local Supabase only; cloud PAT is irrelevant.
+   - EAS account / Apple Developer / Google Play Developer — still pending. Phase 6 is web-only; native is explicitly deferred.
+
+## Phase 6 — non-goals (explicit)
+
+- **Not** running the Phase 5 deferred test work (Steps 5.0–5.5, 5.7) — that needs a `test-specialist` which the user has removed. Coverage thresholds, property-test certification, RLS expansion certification, and Playwright-in-CI all stay deferred.
+- **Not** clearing any of the three pre-existing blockers above.
+- **Not** running native (iOS/Android) smoke — deferred to user.
+- **Not** addressing Phase 4 reviewer findings beyond the two small ones in Step 6.4.
+- **Not** flipping Phases 2 / 3 status — they stay 🚧 until Google Maps keys are provisioned.

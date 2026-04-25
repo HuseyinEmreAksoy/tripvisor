@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import 'dotenv/config';
 
 /**
  * Playwright config for Tripvisor web smoke tests.
@@ -8,6 +9,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   let Playwright start it via `webServer` (enabled below)
  * - Requires a live Supabase project + filled .env for the full golden path
  * - When env is not set, specs skip with a clear message instead of failing
+ *
+ * Auth & seeding:
+ *   The `setup` project (Step 6.1) runs once before chromium specs. It signs
+ *   in via admin generate_link, persists storage state to e2e/web/.auth/user.json,
+ *   and seeds one fixture trip with two places. The chromium project consumes
+ *   that storage state so phase-4-polish.spec.ts (and other auth-gated specs)
+ *   start authenticated.
  */
 export default defineConfig({
   testDir: './e2e/web',
@@ -24,8 +32,17 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'setup',
+      testMatch: /.*\.setup\.ts/,
+      timeout: 90_000,
+    },
+    {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'e2e/web/.auth/user.json',
+      },
+      dependencies: ['setup'],
     },
   ],
   webServer: {

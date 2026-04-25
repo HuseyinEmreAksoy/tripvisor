@@ -1,0 +1,1 @@
+- [Phase 3 and Phase 4 commit conventions](project_phase3_complete.md) — Phases 3+4 committed; sandbox blocks git push to master; two-commit split strategy; .gitignore gaps; Playwright artifacts
