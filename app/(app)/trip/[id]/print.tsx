@@ -20,10 +20,10 @@
 import { useMemo } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Button, Heading, Screen, TripCostRollup, DaySummaryCard } from '@/components';
+import { Button, Heading, MarkdownText, Screen, TripCostRollup, DaySummaryCard } from '@/components';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { useTheme } from '@/theme';
-import { useTrip, useTripLegs, useTripPlaces, type TripPlace, type TripLeg } from '@/api';
+import { useTrip, useTripDays, useTripLegs, useTripPlaces, type TripDay, type TripPlace, type TripLeg } from '@/api';
 
 // Web-only: inject @media print styles via expo-router Head.
 // The conditional import at module level is fine here because Metro/webpack
@@ -77,9 +77,18 @@ export default function PrintRoute() {
   const { data: trip, isLoading, error } = useTrip(id);
   const { data: places = [] } = useTripPlaces(id);
   const { data: legs = [] } = useTripLegs(id);
+  // Per-day notes (Step 9.5): sparse — only rows that have been written exist.
+  const { data: tripDays = [] } = useTripDays(id);
 
   // Group places by day (sorted, matching itinerary tab logic).
   const byDay = useMemo(() => groupByDay(places), [places]);
+
+  // Index trip_days by day_index for O(1) lookup in the render loop.
+  const dayNotesIndex = useMemo(() => {
+    const m = new Map<number, TripDay>();
+    for (const d of tripDays) m.set(d.day_index, d);
+    return m;
+  }, [tripDays]);
 
   if (isLoading) {
     return (
@@ -160,45 +169,69 @@ export default function PrintRoute() {
           ) : null}
 
           {/* ── Per-day sections ─────────────────────────────────────────── */}
-          {byDay.map((section) => (
-            <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.md }}>
-              {/* Day heading */}
-              <View
-                style={[
-                  styles.dayHeader,
-                  { borderColor: t.colors.primary, borderBottomWidth: 1, paddingBottom: t.spacing.xs },
-                ]}
-              >
-                <Heading level={2}>
-                  {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
-                </Heading>
-              </View>
+          {byDay.map((section) => {
+            const dayRecord = section.dayIndex >= 0
+              ? dayNotesIndex.get(section.dayIndex) ?? null
+              : null;
+            return (
+              <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.md }}>
+                {/* Day heading */}
+                <View
+                  style={[
+                    styles.dayHeader,
+                    { borderColor: t.colors.primary, borderBottomWidth: 1, paddingBottom: t.spacing.xs },
+                  ]}
+                >
+                  <Heading level={2}>
+                    {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
+                  </Heading>
+                </View>
 
-              {/* Day summary strip */}
-              {section.dayIndex >= 0 ? (
-                <DaySummaryCard
-                  dayIndex={section.dayIndex}
-                  places={places}
-                  legs={legs}
-                  trip={trip}
+                {/* Day summary strip */}
+                {section.dayIndex >= 0 ? (
+                  <DaySummaryCard
+                    dayIndex={section.dayIndex}
+                    places={places}
+                    legs={legs}
+                    trip={trip}
+                  />
+                ) : null}
+
+                {/* Per-day notes (Step 9.5) — rendered via MarkdownText */}
+                {dayRecord?.notes ? (
+                  <View
+                    style={[
+                      styles.dayNotesBlock,
+                      {
+                        backgroundColor: t.colors.bgElevated,
+                        borderRadius: t.radius.sm,
+                        padding: t.spacing.sm,
+                        borderLeftWidth: 3,
+                        borderColor: t.colors.primary,
+                      },
+                    ]}
+                    accessibilityLabel={`Day ${section.dayIndex + 1} notes`}
+                  >
+                    <MarkdownText source={dayRecord.notes} style={{ color: t.colors.text }} />
+                  </View>
+                ) : null}
+
+                {/* Place list for this day */}
+                <View style={{ gap: t.spacing.sm }}>
+                  {section.places.map((place, idx) => (
+                    <PlacePrintRow key={place.id} place={place} index={idx} t={t} />
+                  ))}
+                </View>
+
+                {/* Visual rule between days */}
+                <View
+                  style={[styles.rule, { backgroundColor: t.colors.border }]}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
                 />
-              ) : null}
-
-              {/* Place list for this day */}
-              <View style={{ gap: t.spacing.sm }}>
-                {section.places.map((place, idx) => (
-                  <PlacePrintRow key={place.id} place={place} index={idx} t={t} />
-                ))}
               </View>
-
-              {/* Visual rule between days */}
-              <View
-                style={[styles.rule, { backgroundColor: t.colors.border }]}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-              />
-            </View>
-          ))}
+            );
+          })}
 
           {/* ── Footer ───────────────────────────────────────────────────── */}
           <PoweredByGoogle />
@@ -267,9 +300,9 @@ function PlacePrintRow({
         <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{place.category}</Text>
       ) : null}
       {place.notes ? (
-        <Text style={[t.typography.caption, { color: t.colors.text, marginTop: 4 }]}>
-          {place.notes}
-        </Text>
+        <View style={{ marginTop: 4 }}>
+          <MarkdownText source={place.notes} style={{ color: t.colors.text }} />
+        </View>
       ) : null}
     </View>
   );
@@ -316,4 +349,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   nativeHint: {},
+  // Per-day notes block (Step 9.5)
+  dayNotesBlock: { borderLeftWidth: 3 },
 });

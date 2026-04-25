@@ -3,6 +3,7 @@ export { supabase, SUPABASE_CONFIGURED } from './supabase';
 export * from './auth';
 export * from './trips';
 export * from './trip-places';
+export * from './trip-days';
 export * from './places';
 export * from './routes';
 export * from './share';

@@ -20,19 +20,23 @@ import { noPlaces } from '@/components/emptyStates';
 import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { Map, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
+import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
 import {
-  supabase,
   useDeleteTrip,
   useOptimizeTrip,
   useReorderDay,
   useTrip,
+  useTripDays,
   useTripLegs,
   useTripPlaces,
   useUpdateTrip,
+  useUpdateTripDay,
+  useUpdateTripPlace,
   type TransportMode,
   type TripCurrency,
+  type TripDay,
   type TripLeg,
   type TripPlace,
 } from '@/api';
@@ -230,6 +234,15 @@ function ItineraryTab({
   const reorderDay = useReorderDay();
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
 
+  // ── Per-day notes (Step 9.5) ─────────────────────────────────────────────
+  const { data: tripDays = [] } = useTripDays(tripId);
+  // Index by day_index for O(1) lookup in the render loop.
+  const dayNotesIndex = useMemo(() => {
+    const m = new Map<number, TripDay>();
+    for (const d of tripDays) m.set(d.day_index, d);
+    return m;
+  }, [tripDays]);
+
   const byDay = useMemo(() => groupByDay(places), [places]);
   const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
   const availableDays = useMemo(
@@ -256,7 +269,15 @@ function ItineraryTab({
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}>
+      {/*
+       * keyboardShouldPersistTaps="handled" is required so tapping outside a
+       * focused TextInput inside the list correctly dismisses the keyboard on
+       * native without eating the tap event (risk M from planner spec Step 9.4).
+       */}
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}
+      >
         {byDay.map((section) => (
           <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
             <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex) }]}>
@@ -272,6 +293,15 @@ function ItineraryTab({
                 places={places}
                 legs={legs}
                 trip={trip}
+              />
+            ) : null}
+
+            {/* ── Per-day notes editor (Step 9.5) — only for scheduled days */}
+            {section.dayIndex >= 0 ? (
+              <DayNotesEditor
+                tripId={tripId}
+                dayIndex={section.dayIndex}
+                dayRecord={dayNotesIndex.get(section.dayIndex) ?? null}
               />
             ) : null}
 
@@ -319,6 +349,124 @@ function ItineraryTab({
   );
 }
 
+// ── DayNotesEditor (Step 9.5) ────────────────────────────────────────────────
+//
+// Design: Option A inline — collapsed Pressable "Add notes for this day" when
+// empty, or a truncated first line when populated. Tap to expand into a
+// multi-line TextInput. 500ms debounced write via useUpdateTripDay().
+
+function DayNotesEditor({
+  tripId,
+  dayIndex,
+  dayRecord,
+}: {
+  tripId: string;
+  dayIndex: number;
+  dayRecord: TripDay | null;
+}) {
+  const t = useTheme();
+  const updateDay = useUpdateTripDay();
+  const persistedNotes = dayRecord?.notes ?? null;
+
+  const [expanded, setExpanded] = useState(false);
+  // Local text mirrors the persisted notes; synced when the persisted value
+  // changes from the server (e.g. another device write / optimistic flush).
+  const [localText, setLocalText] = useState(persistedNotes ?? '');
+
+  // Keep local text in sync with server state when notes are updated externally.
+  useEffect(() => {
+    setLocalText(persistedNotes ?? '');
+  }, [persistedNotes]);
+
+  const debouncedSave = useDebouncedCallback((value: string) => {
+    const trimmed = value.trim();
+    updateDay.mutate({
+      trip_id: tripId,
+      day_index: dayIndex,
+      notes: trimmed.length > 0 ? trimmed : null,
+    });
+  }, 500);
+
+  function handleChange(text: string) {
+    setLocalText(text);
+    debouncedSave(text);
+  }
+
+  const hasNotes = Boolean(localText.trim());
+
+  // The collapsed preview: first line of text, truncated to one line.
+  const previewText = hasNotes
+    ? (localText.split('\n')[0] ?? '').slice(0, 80)
+    : null;
+
+  if (!expanded) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          hasNotes
+            ? `Day ${dayIndex + 1} notes: ${previewText}. Tap to edit.`
+            : `Add notes for Day ${dayIndex + 1}`
+        }
+        onPress={() => setExpanded(true)}
+        style={[
+          styles.dayNotesCollapsed,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.sm,
+            backgroundColor: t.colors.bgElevated,
+            padding: t.spacing.sm,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            t.typography.caption,
+            { color: hasNotes ? t.colors.text : t.colors.textMuted },
+          ]}
+          numberOfLines={1}
+        >
+          {hasNotes ? previewText : 'Add notes for this day…'}
+        </Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={{ gap: t.spacing.xs }}>
+      <TextInput
+        multiline
+        numberOfLines={4}
+        maxLength={2000}
+        value={localText}
+        onChangeText={handleChange}
+        placeholder="Add notes for this day (up to 2000 characters)"
+        placeholderTextColor={t.colors.textMuted}
+        accessibilityLabel={`Notes for Day ${dayIndex + 1}`}
+        style={[
+          styles.notesInput,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.sm,
+            backgroundColor: t.colors.bgElevated,
+            color: t.colors.text,
+            ...t.typography.caption,
+          },
+        ]}
+        autoFocus
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Collapse day notes"
+        onPress={() => setExpanded(false)}
+        style={{ alignSelf: 'flex-end' }}
+      >
+        <Text style={[t.typography.caption, { color: t.colors.primary }]}>Done</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function PlaceRow({
   place,
   dragging,
@@ -357,12 +505,127 @@ function PlaceRow({
           {place.category ?? 'Unclassified'} · {place.visit_duration_minutes} min
         </Text>
       </Pressable>
+
+      {/* ── Per-place notes editor (Step 9.4) — Option A inline ── */}
+      {!dragging ? (
+        <PlaceNotesEditor place={place} />
+      ) : null}
+
       {hasNext ? (
         <Text
           style={[t.typography.small, { color: t.colors.textMuted, paddingHorizontal: 12 }]}
         >
           ↓ {legAfter ? formatTravel(legAfter.duration_seconds, legAfter.distance_meters) : 'travel time unknown'}
         </Text>
+      ) : null}
+    </View>
+  );
+}
+
+// ── PlaceNotesEditor (Step 9.4) ───────────────────────────────────────────────
+//
+// Surface: Option A (inline, below the place card title row).
+// Rationale: the place card already has a natural content area under the title
+// and category line. Inlining here avoids opening an extra bottom sheet and
+// gives the user immediate visual feedback without a tap-to-open gesture.
+// On a 360px-wide viewport the notes field is comfortably within the card
+// width; numberOfLines={4} keeps vertical growth bounded.
+//
+// Debounced 500ms write via useUpdateTripPlace(); empty string saved as null.
+
+const NOTES_COLLAPSE_THRESHOLD = 120;
+
+function PlaceNotesEditor({ place }: { place: TripPlace }) {
+  const t = useTheme();
+  const updatePlace = useUpdateTripPlace();
+  const [focused, setFocused] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [localText, setLocalText] = useState(place.notes ?? '');
+
+  // Sync from server when the notes prop changes (cache invalidation).
+  useEffect(() => {
+    setLocalText(place.notes ?? '');
+  }, [place.notes]);
+
+  const debouncedSave = useDebouncedCallback((value: string) => {
+    const trimmed = value.trim();
+    updatePlace.mutate({
+      id: place.id,
+      trip_id: place.trip_id,
+      notes: trimmed.length > 0 ? trimmed : null,
+    });
+  }, 500);
+
+  function handleChange(text: string) {
+    setLocalText(text);
+    debouncedSave(text);
+  }
+
+  // Show-more / show-less logic: only applies when NOT focused and text > 120 chars.
+  const isLong = !focused && localText.length > NOTES_COLLAPSE_THRESHOLD;
+  const displayText =
+    isLong && !showMore
+      ? localText.slice(0, NOTES_COLLAPSE_THRESHOLD) + '…'
+      : localText;
+
+  return (
+    <View style={{ gap: t.spacing.xs, paddingHorizontal: t.spacing.xs }}>
+      {focused ? (
+        <TextInput
+          multiline
+          numberOfLines={4}
+          maxLength={2000}
+          value={localText}
+          onChangeText={handleChange}
+          onBlur={() => setFocused(false)}
+          placeholder="Add notes (up to 2000 characters)"
+          placeholderTextColor={t.colors.textMuted}
+          accessibilityLabel={`Notes for ${place.user_title ?? 'place'}`}
+          style={[
+            styles.notesInput,
+            {
+              borderColor: t.colors.border,
+              borderRadius: t.radius.sm,
+              backgroundColor: t.colors.bg,
+              color: t.colors.text,
+              ...t.typography.caption,
+            },
+          ]}
+          autoFocus
+        />
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            localText
+              ? `Notes for ${place.user_title ?? 'place'}: ${localText.slice(0, 60)}. Tap to edit.`
+              : `Add notes for ${place.user_title ?? 'place'}`
+          }
+          onPress={() => setFocused(true)}
+        >
+          <Text
+            accessibilityRole="text"
+            style={[
+              t.typography.caption,
+              { color: localText ? t.colors.text : t.colors.textMuted },
+            ]}
+          >
+            {localText ? displayText : 'Add notes…'}
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Show more / show less toggle */}
+      {isLong ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={showMore ? 'Show less notes' : 'Show more notes'}
+          onPress={() => setShowMore((v) => !v)}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+            {showMore ? 'Show less' : 'Show more'}
+          </Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -435,13 +698,20 @@ function SettingsTab({
     updateTrip.mutate({ currency: value });
   }
 
-  async function commitBudget(v: number) {
+  // Web Slider's <input type="range"> fires onChange per-tick during drag, so
+  // debounce 500ms to avoid spamming the API. Native Slider is a stepper
+  // (one tap = one fire), so the debounce is harmless there.
+  const debouncedSaveBudget = useDebouncedCallback((v: number) => {
+    updateTrip.mutate({ daily_hours_budget: v });
+  }, 500);
+
+  function commitBudget(v: number) {
     setBudget(v);
-    await supabase.from('trips').update({ daily_hours_budget: v }).eq('id', tripId);
+    debouncedSaveBudget(v);
   }
-  async function commitMode(v: TransportMode) {
+  function commitMode(v: TransportMode) {
     setMode(v);
-    await supabase.from('trips').update({ transport_mode: v }).eq('id', tripId);
+    updateTrip.mutate({ transport_mode: v });
   }
 
   function confirmDelete() {
@@ -651,5 +921,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     height: 44,
+  },
+  // Per-place and per-day notes inputs (Steps 9.4 + 9.5)
+  notesInput: {
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 80,
+    textAlignVertical: 'top', // Android: start text from the top of the multiline field
+  },
+  dayNotesCollapsed: {
+    borderWidth: 1,
   },
 });

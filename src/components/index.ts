@@ -16,3 +16,4 @@ export { DraggableItinerary } from './DraggableItinerary';
 export type { DraggableItem } from './DraggableItinerary';
 export { TripCostRollup } from './TripCostRollup';
 export { DaySummaryCard } from './DaySummaryCard';
+export { MarkdownText } from './MarkdownText';

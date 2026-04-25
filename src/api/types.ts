@@ -52,6 +52,8 @@ export interface TripDay {
   day_index: number;
   day_start_place_id: Uuid | null;
   day_end_place_id: Uuid | null;
+  /** Phase 9: free-text per-day journal entry (Markdown, rendered client-side per ADR-0008). */
+  notes: string | null;
 }
 
 export interface TripLeg {

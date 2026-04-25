@@ -209,19 +209,32 @@ export function useUnarchiveTrip() {
 
 /**
  * Patch shape for `useUpdateTrip`. Intentionally narrow — only fields the UI
- * actually edits in place (title from the rename affordance; currency +
- * cost_per_km from the Phase 8 cost rollup card). Add fields here as new
- * inline-editable surfaces land; do NOT widen to `Partial<Trip>` since that
- * would let callers blindly overwrite immutable fields like `id` /
- * `user_id` / `created_at`.
+ * actually edits in place:
+ *   - `title` — rename affordance (Phase 8)
+ *   - `currency`, `cost_per_km` — Phase 8 cost rollup card
+ *   - `daily_hours_budget`, `transport_mode` — Phase 9 trip-meta cleanup
+ *     (Step 9.6); these are the two remaining editable scalars on the trip
+ *     detail screen and the optimizer reads both, so a typed home for them
+ *     here keeps the editing surface consistent.
+ *
+ * Add fields here as new inline-editable surfaces land; do NOT widen to
+ * `Partial<Trip>` since that would let callers blindly overwrite immutable
+ * fields like `id` / `user_id` / `created_at`.
  */
-export type UpdateTripPatch = Partial<Pick<Trip, 'title' | 'currency' | 'cost_per_km'>>;
+export type UpdateTripPatch = Partial<
+  Pick<
+    Trip,
+    'title' | 'currency' | 'cost_per_km' | 'daily_hours_budget' | 'transport_mode'
+  >
+>;
 
 /**
  * Update editable trip metadata. Mirrors the `useArchiveTrip` shape: the
  * `.eq('user_id', userId)` is defense-in-depth on top of RLS, and on
  * settle we invalidate both the lists (in case `title` changed) and the
- * detail (so the trip screen recomputes the cost rollup with the new rate).
+ * detail (so the trip screen recomputes the cost rollup with the new rate
+ * and the optimizer picks up new `daily_hours_budget` / `transport_mode`
+ * values on the next run).
  *
  * Bound to a specific `tripId` at hook time — callers do
  * `useUpdateTrip(id).mutate({ cost_per_km: 0.35 })` rather than threading

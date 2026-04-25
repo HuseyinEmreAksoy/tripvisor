@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 8 — Done (web; native deferred)
+**Current phase**: Phase 9 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -16,6 +16,7 @@
 | 6 | Phase 4 web close-out (live smoke + small polish) | 🚧 Partial — Step 6.0 (stack ready) + Step 6.4 (UX polish) shipped 2026-04-25; smoke (6.1–6.3, 6.5–6.7) skipped per user direction | backend + ui |
 | 7 | Trip lifecycle (archive / duplicate) + Settings screen (theme toggle + delete account) | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 8 | Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view) | ✅ Done (web; native deferred to user smoke) | backend + ui |
+| 9 | Notes / journal expansion (inline place notes, per-day notes, Markdown in print) + M2 mutation cleanup | ✅ Done (web; native deferred to user smoke) | ui + backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1245,6 +1246,10 @@ Shipped 2026-04-25. Phase 7 landed two independent user-visible surfaces with no
 
 Shipped 2026-04-25. Phase 8 turned the optimizer's already-cached `trip_legs` data into a usable road-trip artifact with zero new Google API calls. The `0005_trip_cost_meta.sql` migration adds `trips.currency` (fixed list: USD/EUR/GBP/TRY/JPY, check constraint) and `trips.cost_per_km numeric(8,4)` (default 0.20) to the schema. Client-side cost math (`Sigma leg.distance_meters / 1000 * cost_per_km`) lives in `TripCostRollup.tsx` (memoized per-trip rollup card) and `DaySummaryCard.tsx` (per-day place count, visit hours, drive time, distance, and cost). The trip detail screen gains an inline "Cost settings" section — currency SegmentedControl and debounced rate TextInput — wired to the new `useUpdateTrip(tripId)` mutation. A new route `app/(app)/trip/[id]/print.tsx` renders a read-only itinerary view on all three platforms; on web it injects an `@media print { @page { size: A4 portrait } ... }` stylesheet via runtime `require('expo-router/head')` and exposes a "Print this page" button that calls `window.print()` (gated by `Platform.OS === 'web'`); on native it renders the same content as a scrollable read-only view with an inline note directing users to the web to print. Reviewer sign-off: no critical or high findings; M1 (debounce timer not cleared on unmount) fixed inline; M2 (`commitBudget`/`commitMode` bypass pattern) and all low findings parked as Phase-9 candidates. Feature doc: `docs/features/cost-and-print.md`.
 
+## Phase 9 — close-out
+
+Shipped 2026-04-25. Phase 9 turned the previously unused `trip_places.notes` column into a real journal surface and added a paired per-day notes field. The `0006_trip_day_notes.sql` migration adds `trip_days.notes text` (nullable) with no RLS change — the existing `trip_days_via_trip` policy inherits to the new column automatically. On the trip detail screen, a `PlaceNotesEditor` renders inline on each place row (debounced 500ms write via the existing `useUpdateTripPlace`; show-more/show-less toggle for notes longer than 120 characters), and a `DayNotesEditor` sits between the `DaySummaryCard` and the draggable itinerary for each day (collapsed by default, debounced 500ms write via the new `useUpdateTripDay` hook, upserts on `(trip_id, day_index)` because the optimizer does not pre-create day rows). Both editors share the new `src/lib/hooks/useDebouncedCallback.ts` utility (stale-closure-safe, cancels on unmount). The print route at `app/(app)/trip/[id]/print.tsx` renders both note types through a new in-repo Markdown renderer (`src/lib/markdown/render.ts`, linear-pass tokenizer, ~105 LOC, no new dependencies) supporting bold, italic, unordered lists, ordered lists, and links with a `http(s):/`/`mailto:` protocol allow-list; rendering is handled by `src/components/MarkdownText.tsx` using RN primitives. The M2 follow-up from Phase 8 is closed: `commitBudget` and `commitMode` on the trip detail screen now go through `useUpdateTrip(tripId).mutate(...)` after `UpdateTripPatch` was widened to include `daily_hours_budget` and `transport_mode`, removing the last raw `supabase.from('trips').update(...)` caller from the screen. Reviewer sign-off: no critical, high, or medium findings; 5 low parks (see `docs/reviews/phase-9.md`). Design decision recorded in ADR-0008 (`docs/adr/0008-notes-markdown-renderer.md`). Feature doc: `docs/features/notes-journal.md`.
+
 ## Phase 8 — Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view)
 
 **Goal**: Ship visible itinerary-utility polish that turns the existing optimizer output into something a user actually carries on a road trip: (a) a per-trip cost rollup driven by already-cached `trip_legs.distance_meters` × a user-set `cost_per_km` (no Google call), (b) a per-day summary card showing place count, total visit hours, estimated drive time and estimated cost, and (c) a printable A4 view of the itinerary (HTML + `@media print` stylesheet, no PDF library) reachable from a "Print itinerary" button on the trip detail screen.
@@ -1419,3 +1424,182 @@ Shipped 2026-04-25. Phase 8 turned the optimizer's already-cached `trip_legs` da
 - **Per-day map screenshots in print** — text-only print template; embedding a static map image would require a Google call and a key. Parked.
 - **Phases 2 / 3 / 5 / 6 status flips** — Phase 8 does not touch their rows; they stay 🚧 / partial as recorded.
 - **Phase 7 follow-ups** — M2 (parallel-mutation rollback) and the parked Phase 7 lows from `docs/reviews/phase-7.md` stay parked; not reopened in Phase 8 unless reviewer flags interaction with the new mutations.
+
+---
+
+## Phase 9 — Notes / journal expansion (inline place notes, per-day notes, Markdown in print) + M2 mutation cleanup
+
+**Goal**: Turn the unused `trip_places.notes` column into a real journal surface — inline edit on the trip detail screen with a "show more / show less" toggle, plus a new per-day notes field stored on `trip_days`, and a tiny Markdown renderer so both note types render with bold / italic / lists / links on the print page. Bundle the M2 follow-up from Phase 8 review (`commitBudget` / `commitMode` migrate to `useUpdateTrip`) so the trip detail screen stops bypassing TanStack Query for two stray fields.
+
+**Status**: ✅ Done — shipped 2026-04-25; reviewer sign-off (`docs/reviews/phase-9.md`); no critical/high/medium findings; 5 low parks.
+**Last updated**: 2026-04-25
+
+**Direction chosen**: Direction A (notes / journal expansion) + bundled M2 cleanup. (1) Notes are already persisted on `trip_places` and copied by `duplicate_trip` (ADR-0006), but have no editor UI today — the print page renders them, autocomplete creates a row with `notes: null`, and that's the entire current footprint. Adding an inline editor + per-day notes turns the Phase 8 print template into something a user actually fills in. (2) Builds directly on Phase 8: every printed itinerary already has a "notes" line per place; adding Markdown rendering + a per-day notes block lifts the print artifact from "list of places" to "actual journal". (3) Pure UI + one tiny additive migration (`trip_days.notes text` — RLS unchanged, inherits from existing `trip_days_via_trip` policy). No Google API calls. (4) The M2 cleanup is one step that extends `UpdateTripPatch` with `daily_hours_budget` + `transport_mode` and migrates the two raw `supabase.from('trips').update(...)` callers — natural to bundle since both touch the same trip detail screen as the notes affordances.
+
+**Entry criteria**:
+- Phase 8 close-out is current state; `useUpdateTrip(tripId)` exists with the `UpdateTripPatch` shape (`Partial<Pick<Trip, 'title' | 'currency' | 'cost_per_km'>>`)
+- `trip_places.notes text` and `useUpdateTripPlace({ ..., notes })` already exist (Phases 1 + 3); the print page already reads `place.notes` (Phase 8)
+- Local Supabase stack is reachable so the `0006_trip_day_notes.sql` migration can be applied (`npx supabase db reset`)
+- `app/(app)/trip/[id]/index.tsx` still contains the `commitBudget` / `commitMode` raw-Supabase pattern flagged as M2 in `docs/reviews/phase-8.md`
+- User has NOT requested Google-keys provisioning, EAS provisioning, or PAT rotation in this phase — Phase 9 must not depend on any of those
+
+**Phase exit criteria**:
+- A new `0006_trip_day_notes.sql` migration adds `notes text` (nullable) to `public.trip_days`; existing rows backfill `null` automatically; RLS unchanged (inherits `trip_days_via_trip`)
+- `TripDay` in `src/api/types.ts` has `notes: string | null`; a `useUpdateTripDay({ id, trip_id, notes })` hook (or equivalent extension to whatever currently writes `trip_days`) lives in `src/api/trip-days.ts` and invalidates the trip-detail cache
+- `UpdateTripPatch` in `src/api/trips.ts` widens to include `daily_hours_budget` + `transport_mode`; `commitBudget` and `commitMode` in `app/(app)/trip/[id]/index.tsx` switch from raw `supabase.from('trips').update(...)` to `updateTrip.mutate({ ... })` so the cache invalidates correctly (M2 closed)
+- The trip detail screen renders an inline notes editor on each `PlaceRow` (or via the existing `PlaceActionsSheet`, ui-specialist picks the cleaner surface): a multi-line `TextInput` capped at 2000 chars with a "Show more / Show less" toggle that collapses notes >120 chars to the first line; debounced write (500ms) via `useUpdateTripPlace`; saves the empty string as `null`
+- Each day section on the trip detail screen renders a per-day notes editor (collapsible, default-collapsed, 2000-char cap, debounced 500ms), backed by `useUpdateTripDay`; the editor shows a placeholder ("Add notes for this day") when empty
+- The print route renders place notes and per-day notes through a tiny in-repo Markdown renderer (`src/lib/markdown/render.ts` — supports bold `**x**`, italic `*x*`, unordered lists `- ...`, ordered lists `1. ...`, and links `[text](url)`; everything else passes through as plain text); zero new dependencies
+- Place notes / per-day notes survive `duplicate_trip` — confirmed by code-reading the existing RPC (Phase 7 already clones `trip_places.notes`); add `notes` to the `trip_days` clone if the existing `duplicate_trip` RPC clones day rows (backend-specialist verifies; if not, no change required because the per-day notes are tied to the source-trip days only)
+- All three platforms render the new notes editors and the print page's Markdown output without layout breaks (visual confirmation; native verification deferred to user as standard for this project)
+- `docs/features/overview.md` has a row for "Trip notes / journal (per-place + per-day, Markdown in print)" with status reflecting Phase 9 completion
+- A short ADR exists at `docs/adr/0008-notes-markdown-renderer.md` recording the decision to ship a tiny in-repo Markdown subset rather than pull `marked` / `react-native-markdown-display`
+
+**Critical path**: Step 9.1 → Step 9.2 → Step 9.3 → Step 9.4 → Step 9.6 → Step 9.7 → Step 9.8
+
+(Step 9.5 — Markdown renderer + print integration — parallels Step 9.4 on the same critical-path tier since they touch disjoint files. Step 9.6 — M2 cleanup — slots in as a small parallel branch off Step 9.3 because it depends only on the widened `UpdateTripPatch` and is independent of the notes UI work.)
+
+### Step 9.1 — ADR for in-repo Markdown subset
+- **Status**: ✅ Done
+- **Agent**: planner
+- **Size**: XS
+- **Task**: Author `docs/adr/0008-notes-markdown-renderer.md` recording: (1) notes are rendered through a ~80-line in-repo renderer at `src/lib/markdown/render.ts` rather than a library; (2) supported subset — bold `**x**`, italic `*x*`, unordered lists `- ...`, ordered lists `1. ...`, links `[text](url)` (rel="noopener" on web); everything else falls through as plain text; (3) rationale — `marked` is HTML-only (web), `react-native-markdown-display` is RN-only (native), and either choice forces a platform split or a CommonMark-compliant universal lib (>50KB) for what is fundamentally a free-form text field; the subset above covers the realistic note grammar (highlight, list, link to a maps URL); (4) consequences — no XSS surface from arbitrary HTML, ~80 LOC to maintain, manual extension whenever a user asks for a new construct; (5) alternatives considered — `marked` (rejected: web-only + DOM injection), `react-native-markdown-display` (rejected: native-only + 30KB), full `react-markdown` (rejected: web-only + heavy), no formatting at all (rejected: print page wants minimal styling). Standard ADR template (Context / Decision / Alternatives / Consequences). One screen max.
+- **Inputs**: This phase plan; the existing `docs/adr/README.md` template; cross-reference `docs/adr/0007-cost-rollup-client-side.md` for shape
+- **Expected output**: `docs/adr/0008-notes-markdown-renderer.md` exists; Step 9.5 references it when authoring `render.ts`
+- **Depends on**: None
+- **Parallel with**: (none — gates the design intent for 9.5, but takes <30 min)
+- **Platform check**: N/A (doc only)
+- **Risks**:
+  - [Low] If the renderer grows past ~150 LOC during 9.5 (table support, fenced code), the ADR's "tiny in-repo" framing weakens — Mitigation: ADR explicitly enumerates the closed grammar; anything outside is a follow-up
+- **Touched files**: `docs/adr/0008-notes-markdown-renderer.md`
+
+### Step 9.2 — Migration: `trip_days.notes`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Add `supabase/migrations/0006_trip_day_notes.sql` that: (1) adds `notes text` (nullable, no default) to `public.trip_days`; (2) does not touch RLS — the existing `trip_days_via_trip` policy gates the row; the new column inherits coverage; (3) does not add an index — notes are read on a single-row trip-detail query, never filtered on. Migration must apply cleanly via `npx supabase db reset`. Confirm by reading `supabase/migrations/0001_init.sql` that `trip_days` is the right table (per-day anchors, distinct from `trip_places`). **No tests.**
+- **Inputs**: ADR from Step 9.1 (only for context — the migration itself is independent); `0001_init.sql` for table shape
+- **Expected output**: `0006_trip_day_notes.sql` applies without error; `\d public.trip_days` shows the new `notes` column; `select notes from trip_days limit 1` returns `null` for existing rows
+- **Depends on**: None
+- **Parallel with**: Step 9.1 (different files; planner ADR + backend migration are disjoint)
+- **Platform check**: N/A (DB migration)
+- **Risks**:
+  - [Low] If the existing `duplicate_trip` RPC clones `trip_days` rows and explicitly enumerates columns, adding `notes` may need a one-line addition there too — Mitigation: backend-specialist greps for `trip_days` in `0002_rpcs.sql` + `0004_trip_lifecycle.sql`; if `duplicate_trip` does not clone `trip_days` (per ADR-0006 which only mentions `trip_places`), no change needed
+- **Touched files**: `supabase/migrations/0006_trip_day_notes.sql`, possibly `supabase/migrations/0007_duplicate_trip_day_notes.sql` (only if the existing RPC enumerates day columns and needs `notes` added)
+
+### Step 9.3 — Type + API extensions: `TripDay.notes`, `useUpdateTripDay`, widened `UpdateTripPatch`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: (a) Extend `TripDay` in `src/api/types.ts` with `notes: string | null`. (b) Create `src/api/trip-days.ts` exporting `useTripDays(tripId)` (read query) and `useUpdateTripDay()` mutation accepting `{ id, trip_id, notes }`, Zod-validated (`notes: z.string().max(2000).nullish()`). On success, invalidate `tripDaysKeys.forTrip(trip_id)` and the trip-detail cache. If `useTripDays` already exists somewhere in the codebase, extend the existing hook rather than creating a duplicate (backend-specialist greps first). Re-export from `src/api/index.ts`. (c) Widen `UpdateTripPatch` in `src/api/trips.ts` to `Partial<Pick<Trip, 'title' | 'currency' | 'cost_per_km' | 'daily_hours_budget' | 'transport_mode'>>` so the M2 cleanup in Step 9.6 has a typed home. Update the `useUpdateTrip` doc-comment to list the new fields. Run `tsc --noEmit` locally and fix any breakages caused by the type widening (likely zero — additive). **No tests.**
+- **Inputs**: Step 9.2 (column exists in DB); existing `tripsKeys` + `tripPlacesKeys` patterns in `src/api/trips.ts` and `src/api/trip-places.ts` for the new `tripDaysKeys` shape
+- **Expected output**: `useUpdateTripDay({ id, trip_id, notes: 'foo' })` writes to the DB and the trip-detail cache reflects the change after invalidation; `useUpdateTrip(id).mutate({ daily_hours_budget: 6 })` compiles and writes; `tsc --noEmit` is clean
+- **Depends on**: Step 9.2
+- **Parallel with**: Step 9.1 (Step 9.1's ADR is doc-only, can land first or last)
+- **Platform check**: All three (pure JS / TanStack Query)
+- **Risks**:
+  - [Low] If `trip_days` rows are not auto-created when the optimizer runs, an "update" against a non-existent row will silently no-op — Mitigation: backend-specialist confirms `trip_days` is upserted by the optimizer (Phase 2); if not, `useUpdateTripDay` upserts on `(trip_id, day_index)` instead
+  - [Low] Widening `UpdateTripPatch` may force callers to update if any caller depends on the narrow shape via `keyof` — Mitigation: keep the patch shape `Partial<...>` so existing callers compile unchanged
+- **Touched files**: `src/api/types.ts`, `src/api/trip-days.ts` (new or extended), `src/api/trips.ts`, `src/api/index.ts`
+
+### Step 9.4 — Inline place-notes editor with show-more / show-less toggle
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) Pick the cleanest surface for the per-place notes editor — either an expand row inside `app/(app)/trip/[id]/index.tsx` (preferred if the place row already has a stable expand affordance) OR a new "Notes" section inside `src/components/PlaceActionsSheet.tsx`. ui-specialist decides; document choice in a short header comment. (b) Render: multi-line `TextInput` (`multiline`, `numberOfLines={4}`, `maxLength={2000}`); when not focused and the persisted notes string is >120 chars, truncate to the first 120 chars + ellipsis with a "Show more" / "Show less" `Pressable` toggle. Debounce writes by 500ms via the same `useDebounce` pattern used for `cost_per_km` in Phase 8 (extract to `src/lib/hooks/useDebouncedCallback.ts` if not already shared — small util, 15 LOC). On unmount, flush pending timer (mirror Phase 8 M1 fix). (c) Save empty string as `null` (call `useUpdateTripPlace({ id, trip_id, notes: trimmed.length ? trimmed : null })`). (d) Accessibility — `accessibilityLabel="Notes for <place title>"`, `accessibilityRole="text"` on the truncated view, `accessibilityRole="button"` on the toggle. **No tests.**
+- **Inputs**: Step 9.3 (types updated, though notes shape didn't change here — `useUpdateTripPlace` already accepts `notes`); existing `useUpdateTripPlace` in `src/api/trip-places.ts`; existing `TextInput` styling tokens in `src/theme/`
+- **Expected output**: Each place row on the trip detail screen exposes an editable notes field; typing settles after 500ms with a single DB write; long notes collapse to one line by default; toggle expands them; native + web both compile and render
+- **Depends on**: Step 9.3
+- **Parallel with**: Step 9.5
+- **Platform check**: All three. `TextInput multiline` is universal in RN. No platform-split needed.
+- **Risks**:
+  - [Medium] Putting a per-place `TextInput` on every row of a long trip (50+ places) may cause keyboard / scroll issues on mobile (focused TextInput inside a `FlatList` requires `keyboardShouldPersistTaps="handled"` and care with `keyboardAvoidingView`) — Mitigation: ui-specialist verifies on web first (where keyboard is non-issue); for native, falls back to opening the editor inside `PlaceActionsSheet` if inline causes layout flicker
+  - [Medium] `maxLength={2000}` is a hard char limit but multi-byte chars (emoji, CJK) count as multiple code units in some RN versions — Mitigation: 2000 chars is generous; document the limit in the placeholder ("Up to 2000 characters")
+  - [Low] Show-more / show-less state is per-row local state; switching tabs and back resets it — Mitigation: acceptable; the persisted notes are the source of truth
+- **Touched files**: `app/(app)/trip/[id]/index.tsx`, possibly `src/components/PlaceActionsSheet.tsx`, possibly `src/lib/hooks/useDebouncedCallback.ts` (new — only if the Phase 8 debounce wasn't already extracted)
+
+### Step 9.5 — Per-day notes editor + tiny Markdown renderer + print integration
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) Add a per-day notes editor at the top of each day section in `app/(app)/trip/[id]/index.tsx` (under the Phase 8 `DaySummaryCard`): collapsed-by-default `Pressable` ("Add notes for this day" if empty, else first-line preview); when expanded, multi-line `TextInput` (same `useDebouncedCallback` pattern + unmount cleanup as 9.4) writing via `useUpdateTripDay` from Step 9.3. Editor accepts up to 2000 chars; saves empty as `null`. (b) Author `src/lib/markdown/render.ts` per ADR Step 9.1: a single function `renderMarkdown(input: string): MarkdownNode[]` returning a flat array of typed nodes (`{ kind: 'text' | 'bold' | 'italic' | 'link' | 'list-item-ul' | 'list-item-ol', text: string, href?: string, depth?: number }`). Plus a paired `<MarkdownText>` component in `src/components/MarkdownText.tsx` that walks the node array and renders RN `<Text>` / `<View>` primitives with appropriate `fontWeight` / `fontStyle` / link `onPress` (using `Linking.openURL` on native, `<a href>` on web — platform-split if needed, otherwise `Linking` works on both since RN Web maps it). Subset is fixed: `**bold**`, `*italic*`, `- ul item`, `1. ol item`, `[text](url)` — anything else falls through as literal text. ~80–120 LOC total. (c) Update `app/(app)/trip/[id]/print.tsx` to render `place.notes` and `day.notes` through `<MarkdownText>` instead of plain `<Text>`. Existing print layout otherwise unchanged. **No tests, no library deps.**
+- **Inputs**: Step 9.1 ADR (renderer grammar); Step 9.3 (`useUpdateTripDay`); Phase 8 `print.tsx` for the integration site
+- **Expected output**: Each day on the trip detail screen has a per-day notes editor that persists to `trip_days.notes`; the print page renders both place and day notes through `<MarkdownText>` with bold / italic / lists / links visible in browser print preview; native print route renders the same content (without `window.print`)
+- **Depends on**: Step 9.3
+- **Parallel with**: Step 9.4 (different primary files — day-level UI + new `src/lib/markdown/` + print page integration vs. place-level UI)
+- **Platform check**: All three. `Linking.openURL` is universal; `react-native-web` maps `<Text>` to `<span>` so `fontWeight` / `fontStyle` work on web. No platform-split needed for the renderer itself; the print page already has the `Platform.OS === 'web'` gate.
+- **Risks**:
+  - [Medium] Markdown renderer regex over user input is a classic source of catastrophic backtracking on adversarial inputs — Mitigation: linear-pass tokenizer (no nested unbounded quantifiers); ui-specialist writes the parser as a simple character-by-character walker, not a single mega-regex
+  - [Medium] Link `onPress` on web should use a real `<a href>` for accessibility (Ctrl-click open in new tab) — Mitigation: platform-split `<MarkdownText.web.tsx>` / `<MarkdownText.native.tsx>` only for the link node (keep tokenizer shared)
+  - [Low] Per-day notes editor duplicates the debounce pattern from 9.4 — Mitigation: ensure 9.4 extracts `useDebouncedCallback` first; if 9.5 lands first, ui-specialist extracts the shared util in the same diff
+- **Touched files**: `app/(app)/trip/[id]/index.tsx`, `app/(app)/trip/[id]/print.tsx`, `src/lib/markdown/render.ts` (new), `src/components/MarkdownText.tsx` (new — possibly platform-split as `.native.tsx` / `.web.tsx`), `src/components/index.ts` (re-export)
+
+### Step 9.6 — M2 cleanup: migrate `commitBudget` / `commitMode` to `useUpdateTrip`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: In `app/(app)/trip/[id]/index.tsx`, replace the two raw-Supabase writes flagged as M2 in `docs/reviews/phase-8.md`. Concretely: (a) hold an `updateTrip = useUpdateTrip(tripId)` reference at the top of the screen (it already exists for cost edits in Phase 8 — re-use that handle, do not double-instantiate); (b) `commitBudget(v)` becomes `setBudget(v); updateTrip.mutate({ daily_hours_budget: v });`; (c) `commitMode(v)` becomes `setMode(v); updateTrip.mutate({ transport_mode: v });`; (d) remove the now-unused `supabase.from('trips').update(...)` lines; (e) confirm via `tsc --noEmit` + a manual code-read that no other caller in the screen needs the removed pattern. Reference `docs/reviews/phase-8.md` lines 34–39 for the M2 description. **No tests.** **Note**: this step is backend-specialist (not ui-specialist) because the change is purely a server-state plumbing migration, not a UI surface change — the user-visible behaviour is unchanged.
+- **Inputs**: Step 9.3 (widened `UpdateTripPatch` includes `daily_hours_budget` + `transport_mode`); `docs/reviews/phase-8.md` M2 entry
+- **Expected output**: The two raw `supabase.from('trips').update(...)` lines are gone from `app/(app)/trip/[id]/index.tsx`; the screen uses `updateTrip.mutate({ ... })` for budget + transport-mode edits; `tsc --noEmit` is clean; the cost rollup + trip header recompute on budget/mode change because `useUpdateTrip` invalidates `tripsKeys.detail(tripId)`
+- **Depends on**: Step 9.3
+- **Parallel with**: Steps 9.4 + 9.5 (different code paths within the same file — coordinate merge order to avoid conflicts; if both 9.4 and 9.6 want to edit the same screen, ui-specialist takes 9.4 first, then backend-specialist rebases 9.6 on top)
+- **Platform check**: All three (pure server-state plumbing)
+- **Risks**:
+  - [Low] Merge conflict with Step 9.4 / 9.5 in `app/(app)/trip/[id]/index.tsx` — Mitigation: serialise the three steps' touches to that file by having backend-specialist do 9.6 last in the chain; the diff is small (~10 lines)
+  - [Low] If the budget slider currently fires `commitBudget` on every drag tick (not on release), the new mutation will issue a request per tick — Mitigation: backend-specialist checks the slider's onChange semantics; if it fires per tick, debounce 9.6 the same 500ms way as Phase 8's cost editor; otherwise leave as-is
+- **Touched files**: `app/(app)/trip/[id]/index.tsx`
+
+### Step 9.7 — Reviewer pass on Phase 9 changes
+- **Status**: ✅ Done
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read every diff introduced in Phase 9. Confirm: (1) the new `trip_days.notes` column inherits the existing `trip_days_via_trip` RLS policy; (2) `useUpdateTripDay` calls `.eq('user_id', userId)` defense-in-depth via the trip join, OR equivalently filters via `trip_id` against an authenticated cache (reviewer flags if missing); (3) the Markdown renderer in `src/lib/markdown/render.ts` does not introduce an XSS surface — concretely, link `href` values are not interpolated as `dangerouslySetInnerHTML`, and on web the renderer either uses `<a href>` directly (which React escapes) or `Linking.openURL` (which is safe); reviewer confirms no `dangerouslySetInnerHTML` appears anywhere in the diff; (4) the renderer does not enable `javascript:` URLs in links — `[text](url)` should reject any URL whose protocol is not `http(s):` or `mailto:`; reviewer confirms a protocol allow-list is present; (5) M2 cleanup correctly invalidates the trip detail cache on budget / mode change (just by virtue of `useUpdateTrip`'s `onSuccess` invalidation — confirm no regression); (6) no Google ToS regressions — notes are user-managed text, not Google place data, so no attribution change; the print page's "Powered by Google" attribution is still present from Phase 8; (7) no PII logged from the new code paths (notes, day notes); (8) the debounce timer cleanup pattern from Phase 8 M1 is replicated for the new TextInput debouncers in 9.4 / 9.5 (no `setTimeout` left dangling on unmount); (9) `useUpdateTripPlace` already exists with `notes` support — reviewer confirms 9.4 reuses it rather than spawning a parallel mutation. Write findings to `docs/reviews/phase-9.md` with critical / high / medium / low. **Tests are out of scope; reviewer reads code only, does not run tests or smokes.**
+- **Inputs**: All Phase 9 diffs; `docs/reviews/phase-8.md` for the M1 debounce pattern + M2 description
+- **Expected output**: `docs/reviews/phase-9.md` with findings; no critical or high blocks Step 9.8
+- **Depends on**: Steps 9.4, 9.5, 9.6
+- **Parallel with**: (none)
+- **Platform check**: N/A (review)
+- **Risks**:
+  - [Medium] If reviewer surfaces a critical XSS / `javascript:` URL bypass in the Markdown renderer, Phase 9 must loop back to ui-specialist — Mitigation: budget one fix loop; if the renderer needs a substantive rewrite, planner re-enters with a revised plan
+  - [Low] Reviewer may push back on inline place-notes editor causing a long-trip layout problem — Mitigation: parked unless confirmed by visual inspection
+- **Touched files**: `docs/reviews/phase-9.md`
+
+### Step 9.8 — Docs flip
+- **Status**: ✅ Done
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: (a) Add one row to `docs/features/overview.md`: "Trip notes / journal (per-place + per-day, Markdown in print)" → ✅ Done (web; native deferred to user smoke), Phase 9, doc `notes-journal.md`. (b) Create `docs/features/notes-journal.md` per the existing feature-doc template (intent / scope / API surface / data model / platforms verified table — leave iOS / Android boxes unticked, tick Web only). Include a short "Markdown subset" section listing the supported constructs (bold, italic, ul, ol, links) and a one-line note on the protocol allow-list (`http(s):`, `mailto:`). (c) Flip the Phase 9 row in `plan.md`'s top table to ✅ Done. (d) Append a one-paragraph "Phase 9 — close-out" entry under the Phase 8 close-out paragraph, summarising shipped surface (per-place notes editor, per-day notes editor + migration, in-repo Markdown renderer, print integration, M2 mutation cleanup). Cross-reference ADR-0008. Do NOT edit `CLAUDE.md` (planner project rule). Do NOT edit `docs/architecture.md` (planner project rule).
+- **Inputs**: Step 9.7 review (no critical / high)
+- **Expected output**: Feature doc reflects the new state; `plan.md` Phase 9 row reads ✅ Done; the new feature doc exists; close-out paragraph appended
+- **Depends on**: Step 9.7
+- **Parallel with**: (none)
+- **Platform check**: N/A (docs)
+- **Risks**:
+  - [Low] Existing feature-doc template may have evolved between Phase 8 and now — Mitigation: docs-specialist reads `docs/features/cost-and-print.md` (Phase 8) as the most recent template and matches its shape
+- **Touched files**: `plan.md`, `docs/features/overview.md`, `docs/features/notes-journal.md` (new)
+
+## ⚠ Blockers (Phase 9 — must be cleared before Step 9.2)
+
+1. **Local Supabase stack must be reachable** for the migration to apply (`npx supabase db reset`). Same precondition as Phase 8 Step 8.2; if the user has not run `supabase start` since the last phase, they need to before Step 9.2 lands.
+2. **Pre-existing blockers carried forward — NOT in scope for Phase 9**:
+   - Google Maps API keys — Phase 9 deliberately avoids any Google-keyed surface; notes are user-managed text content, no Google calls.
+   - Leaked Supabase PAT rotation — Phase 9 uses local Supabase only; cloud PAT is irrelevant.
+   - EAS account / Apple Developer / Google Play Developer — Phase 9 is web-first; native renders the same UI by design (notes editors are universal RN). No native build / signing work.
+
+## Phase 9 — non-goals (explicit)
+
+- **Tests** — no Jest, no Deno tests, no fast-check, no RLS integration tests, no `*.test.ts` / `*.spec.ts` files authored or modified. The `test-specialist` sub-agent remains removed for the duration of the project.
+- **Smokes** — no Playwright execution, no manual UI smoke checklists, no `docs/smoke/phase-9.md`.
+- **Coverage / CI changes** — Phase 5 deferred work stays deferred; the existing `.github/workflows/` is not modified.
+- **Google Maps work** — no Places API, no Routes API, no optimizer changes, no map polyline updates. Notes are user-managed text only.
+- **EAS / native builds** — no `eas.json` changes, no Apple / Google Play config, no native verification beyond visual confirmation by the implementing specialist.
+- **Native verification** — iOS / Android remain deferred to user smoke as standard for this project.
+- **Full CommonMark Markdown** — the renderer ships a closed grammar (bold, italic, ul, ol, link with `http(s):` / `mailto:` allow-list). Tables, fenced code, blockquotes, headings, images, raw HTML are all out of scope. Adding any construct is a one-step follow-up phase.
+- **Markdown library dependency** — no `marked`, no `react-native-markdown-display`, no `react-markdown`. ADR-0008 records the trade-off.
+- **Rich-text editor** — the editors are plain `TextInput` with a 2000-char cap; no toolbar, no preview pane, no slash-commands. The renderer only runs at print time.
+- **Notes search / filter** — notes are not indexed, not searchable from the trips list. Out of scope.
+- **Notes attachments / images** — text only; image upload is a separate (post-MVP) feature per `docs/features/overview.md`'s post-MVP brainstorm section.
+- **Multi-currency or per-leg cost rebalancing** — Phase 8 follow-ups (free-form ISO list, per-leg currencies, per-day map screenshots in print) stay parked.
+- **Phases 2 / 3 / 5 / 6 status flips** — Phase 9 does not touch their rows; they stay 🚧 / partial as recorded.
+- **Phase 7 follow-ups** — the parallel-mutation rollback finding from `docs/reviews/phase-7.md` and the Phase 7 lows stay parked; not reopened in Phase 9 unless reviewer flags interaction.
+- **Phase 8 low findings** — L1 (JPY rate label minor-unit), L2 (`_TripLegRef` workaround), L3 (`Intl.NumberFormat` constructor allocation), L4 (`inputMode` cast), L5 (empty-patch no-op comment) all stay parked from `docs/reviews/phase-8.md`. Phase 9 does not reopen them unless touched incidentally.

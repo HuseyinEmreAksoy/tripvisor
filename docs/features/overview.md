@@ -22,6 +22,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Trip lifecycle (archive / duplicate) | ✅ Done (web; native deferred to user smoke) | 7 | [trip-lifecycle.md](trip-lifecycle.md) |
 | Account settings (theme + delete account) | ✅ Done (web; native deferred to user smoke) | 7 | [settings.md](settings.md) |
 | Cost & itinerary visibility (rollup, daily summary, print) | ✅ Done (web; native deferred to user smoke) | 8 | [cost-and-print.md](cost-and-print.md) |
+| Trip notes / journal (per-place + per-day, Markdown in print) | ✅ Done (web; native deferred to user smoke) | 9 | [notes-journal.md](notes-journal.md) |
 
 Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 In progress.
 
