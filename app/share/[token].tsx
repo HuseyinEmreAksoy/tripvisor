@@ -22,9 +22,16 @@
  *     places: Array<{ id, user_title, lat, lng, day_index, order_in_day, visit_duration_minutes }>
  *     legs:   Array<{ id, day_index, from_place_id, to_place_id, duration_seconds, distance_meters, polyline }>
  *   }
+ *
+ * Open Graph / Twitter card meta tags (web only):
+ *   - Rendered by <SharedTripHead> once trip data is loaded so crawlers/unfurlers
+ *     see real trip data rather than loading-state placeholders.
+ *   - Follows the same require()-at-runtime pattern from app/(app)/trip/[id]/print.tsx
+ *     to keep expo-router/head out of the native bundle entirely.
+ *   - No og:image — "summary" card variant is used (no image required by Slack/Twitter).
  */
 import { useMemo } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { EmptyState } from '@/components/EmptyState';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
@@ -33,6 +40,82 @@ import { decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/co
 import { useTheme } from '@/theme';
 // Will resolve once backend-specialist lands src/api/share.ts
 import { useSharedTrip } from '@/api/share';
+
+// ── Open Graph / Twitter card head ───────────────────────────────────────────
+//
+// Web-only: injects per-trip meta tags for social unfurling (Slack, iMessage,
+// Twitter, Discord, etc.).  Follows the runtime-require pattern from print.tsx
+// so expo-router/head is never evaluated in the native bundle.
+//
+// Rendered only once `shared` data is available — we never emit meta tags in
+// loading or error states, so crawlers fall back cleanly to the root-layout
+// baseline tags rather than reading misleading or empty values.
+
+function buildSummary(
+  places: SharedPlace[],
+  trip: SharedTripMeta,
+): string {
+  const placeCount = places.length;
+
+  // Format daily hours budget: no trailing ".0" for whole numbers.
+  const hours = trip.daily_hours_budget;
+  const dailyHours = Number.isInteger(hours)
+    ? `${hours}h`
+    : `${hours.toFixed(1)}h`;
+
+  let summary: string;
+
+  if (placeCount === 0) {
+    summary = `Empty trip · ${dailyHours}/day`;
+  } else if (trip.start_date && trip.end_date) {
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const start = new Date(trip.start_date).getTime();
+    const end = new Date(trip.end_date).getTime();
+    // Inclusive day count — floor in case of floating-point dust.
+    const dayCount = Math.max(1, Math.floor((end - start) / msPerDay) + 1);
+    summary = `${dayCount}-day trip · ${placeCount} place${placeCount === 1 ? '' : 's'} · ${dailyHours}/day`;
+  } else {
+    summary = `${placeCount} place${placeCount === 1 ? '' : 's'} · ${dailyHours}/day`;
+  }
+
+  // Hard-cap at 200 chars (the og:description limit enforced here for safety).
+  return summary.length > 200 ? summary.slice(0, 197) + '...' : summary;
+}
+
+interface SharedTripHeadProps {
+  trip: SharedTripMeta;
+  places: SharedPlace[];
+}
+
+function SharedTripHead({ trip, places }: SharedTripHeadProps) {
+  // Only mount on web; returning null on native means the require() below is
+  // never reached, so expo-router/head stays out of the native bundle.
+  if (Platform.OS !== 'web') return null;
+
+  const tripTitle = trip.title || 'Untitled trip';
+  const summary = buildSummary(places, trip);
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Head } = require('expo-router/head') as { Head: React.ComponentType<{ children: React.ReactNode }> };
+
+  return (
+    <Head>
+      <title>{tripTitle} · Tripvisor</title>
+      <meta name="description" content={summary} />
+
+      {/* Open Graph */}
+      <meta property="og:title" content={tripTitle} />
+      <meta property="og:description" content={summary} />
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Tripvisor" />
+
+      {/* Twitter card — "summary" variant (no og:image required) */}
+      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:title" content={tripTitle} />
+      <meta name="twitter:description" content={summary} />
+    </Head>
+  );
+}
 
 export default function SharedTripView() {
   const { token } = useLocalSearchParams<{ token: string }>();
@@ -52,6 +135,8 @@ export default function SharedTripView() {
   }
 
   // ── Error / not found (revoked or deleted) ───────────────────────────────
+  // No <SharedTripHead> here — we deliberately fall back to the root-layout
+  // baseline tags rather than advertising a deleted or invalid trip.
   if (isError || !shared) {
     return (
       <View style={[styles.centered, { backgroundColor: t.colors.bg, padding: t.spacing.xl }]}>
@@ -66,11 +151,15 @@ export default function SharedTripView() {
   const { trip, places, legs } = shared;
 
   return (
-    <SharedTripContent
-      trip={trip}
-      places={places}
-      legs={legs}
-    />
+    <>
+      {/* Per-trip OG/Twitter meta tags — web only, no-op on native */}
+      <SharedTripHead trip={trip} places={places} />
+      <SharedTripContent
+        trip={trip}
+        places={places}
+        legs={legs}
+      />
+    </>
   );
 }
 

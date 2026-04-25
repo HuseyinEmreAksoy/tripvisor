@@ -1,14 +1,13 @@
 # share
 
-**Status**: 🚧 Code complete · awaiting native smoke
+**Status**: ✅ Done — shipped Phase 4 (core); Phase 14 added rich unfurl (2026-04-25).
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: trip-crud, optimization, map
 
 ## Platforms verified
-- ☐ iOS
-- ☐ Android
-- ☐ Web
-(Check a box only after smoke-testing on that platform.)
+- ☐ iOS (deferred to user smoke; Head component is a web-only no-op — no native surface changed in Phase 14)
+- ☐ Android (deferred to user smoke; same reason as iOS)
+- ✅ Web (Playwright E2E Phase 4; Phase 14 unfurl self-verified by ui-specialist)
 
 ## User story
 As a trip planner, I want to send a read-only link to a friend so they can view my itinerary without needing an account.
@@ -46,6 +45,39 @@ As a trip planner, I want to send a read-only link to a friend so they can view 
 - Component: `app/share/[token].tsx` renders no edit controls; read-only badge present ✅
 - E2E (Playwright): `e2e/web/phase-4-polish.spec.ts` Check 1 (create + open share link in anonymous context) + Check 2 (revoke returns 404) — using `page.getByLabel(/share url:/i)` ✅
 - Manual native smoke (iOS + Android): create link on device, open in browser, open via deep link — deferred to user
+
+## Phase 14 — Rich unfurl (OG / Twitter meta tags)
+
+**Shipped**: 2026-04-25
+
+When a `/share/<token>` URL is pasted into Slack, Discord, iMessage (iOS 16+), Twitter/X, WhatsApp, or Telegram, it now unfurls with a title and description instead of a bare URL.
+
+### Mechanism
+
+Two components added, both web-only via `Platform.OS !== 'web'` early-return + runtime `require('expo-router/head')` (same pattern as `app/(app)/trip/[id]/print.tsx:PrintHead`):
+
+- `SharedTripHead` in `app/share/[token].tsx` — renders 9 meta tags (`<title>`, `og:title`, `og:description`, `og:type`, `og:site_name`, `twitter:card`, `twitter:title`, `twitter:description`, `name="description"`) once `shared` data is loaded. Loading/error states emit nothing; the root fallback applies.
+- `RootHead` in `app/_layout.tsx` — baseline tags (`name="description"`, `og:site_name`, `og:type`, `twitter:card`) on every web route. Per-route Heads override these for the keys they specify.
+
+### Summary string format
+
+Used as `og:description` / `twitter:description`. Hard-capped at 200 chars.
+
+| Condition | Format |
+|---|---|
+| 0 places | `"Empty trip · {h}h/day"` |
+| Has start + end dates | `"{N}-day trip · {placeCount} place(s) · {h}h/day"` |
+| No dates | `"{placeCount} place(s) · {h}h/day"` |
+
+Daily hours: integer prints as `"8h"`, fractional as `"7.5h"`. N = inclusive day count.
+
+### No `og:image`
+
+Per-trip card image generation is out of scope for this phase.
+
+### Unfurl caveat
+
+Tags are injected client-side by `react-helmet-async` (under `expo-router/head`) and are not in the initial static HTML. All major unfurlers (Slack, Discord, Twitter/X, iMessage iOS 16+, WhatsApp, Telegram) execute JavaScript before scraping, so this is fine in practice. Non-JS bots (legacy Facebook crawler, plain `curl`) see only the static document title. True pre-rendered tags require SSR or per-trip static export — out of scope.
 
 ## ADR
 - [ADR-0002 — Share-link route shape](../adr/0002-share-link-shape.md)

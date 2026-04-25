@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 13 — Done (web; native deferred)
+**Current phase**: Phase 14 — Done (web; native unaffected)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -21,6 +21,7 @@
 | 11 | Trips list polish (search + sort) + Phase 10 L2 fix | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 12 | Advisory lock fix (Phase 5 M1) + Cost sort + Date filter (Phase 11 M1/L4 deferred) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 13 | DB-row mutex (closes Phase 12 C1 — PgBouncer advisory-lock weakness) | ✅ Done (web; native deferred to user smoke) | backend |
+| 14 | Share link OG/Twitter meta tags (rich unfurl) | ✅ Done (web verified; native unaffected — Head is web-only no-op) | ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1883,3 +1884,30 @@ Closed Phase 12 C1: the session-scoped `pg_try_advisory_lock` / `pg_advisory_unl
 **Process**: no formal reviewer pass — scope was one backend file plus one migration. Backend-specialist self-verified via `npx supabase db reset` (clean), `\d trips` (new column present), `\df` (new RPCs present, old ones dropped), behavioral claim/release/stale-recovery test, and `?ping` check.
 
 **Feature doc**: `docs/features/optimization.md` (APIs + Known limitations sections updated).
+
+---
+
+## Phase 14 — Share link OG/Twitter meta tags
+
+**Status**: Done — shipped 2026-04-25; web verified; native unaffected (Head is web-only no-op).
+**Last updated**: 2026-04-25
+
+Rich unfurl support for public share links. Previously, pasting a `/share/<token>` URL into Slack, Discord, iMessage (iOS 16+), Twitter/X, WhatsApp, or Telegram produced a bare URL with no preview. Phase 14 injects the necessary `og:*` and `twitter:*` meta tags on the share route and a baseline fallback on the root layout.
+
+**Files changed**:
+- `app/share/[token].tsx` — added `buildSummary(places, trip)` helper and `SharedTripHead` component. Renders 9 meta tags (`<title>`, `og:title`, `og:description`, `og:type`, `og:site_name`, `twitter:card`, `twitter:title`, `twitter:description`, `name="description"`) only after `shared` data is loaded. Loading and error states render no Head — the root-layout fallback applies. No `og:image` (per-trip card image generation is out of scope for this phase).
+- `app/_layout.tsx` — added `RootHead` component that injects baseline meta tags (`name="description"`, `og:site_name`, `og:type`, `twitter:card`) on every web route. Per-route Heads (currently only the share page's) override these for the keys they specify.
+
+**Summary string format** (used in `og:description` / `twitter:description`):
+- 0 places: `"Empty trip · {h}h/day"`
+- Has start+end dates: `"{N}-day trip · {placeCount} place(s) · {h}h/day"` (N = inclusive day count)
+- Otherwise: `"{placeCount} place(s) · {h}h/day"`
+- Daily hours: integer renders `"8h"`, fractional renders `"7.5h"`. Hard-capped at 200 chars.
+
+**Implementation pattern**: same `Platform.OS !== 'web'` early-return + runtime `require('expo-router/head')` approach used by `app/(app)/trip/[id]/print.tsx:PrintHead`. Keeps the import out of the native bundle entirely.
+
+**Unfurl caveat**: tags are injected client-side via `react-helmet-async` (under `expo-router/head`). They are not present in the initial static HTML of `expo export --platform web` output. In practice this is fine: Slack, Discord, Twitter/X, iMessage (iOS 16+), WhatsApp, and Telegram all execute JavaScript before scraping meta tags. The narrow class of non-JS bots (legacy Facebook crawler, plain `curl`) will see only the static document title. True pre-rendered tags would require SSR or per-trip static export — explicitly out of scope for this phase.
+
+**Process**: no formal reviewer pass. UI-only change, two files, both edits follow an existing proven pattern. ui-specialist self-verified by grepping curl'd HTML, confirming the react-helmet-async injection path, and validating sample summary outputs against the spec.
+
+**Feature doc**: `docs/features/share.md` (Phase 14 unfurl mechanism section added).

@@ -12,6 +12,7 @@
 //      persisted — it stays in-memory only.
 
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
@@ -23,6 +24,34 @@ import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider } from '@/theme';
 import { shouldDehydrateQuery } from '@/api/offline';
 import { initSentry } from '@/lib/sentry';
+
+// ── Baseline Open Graph / meta tags (web only) ────────────────────────────────
+//
+// Rendered on every route. Per-route Head blocks (e.g. the share page) will
+// override the specific keys they care about (og:title, og:description, etc.)
+// because expo-router merges Head tags and later/deeper route Heads win for
+// duplicate keys.
+//
+// The runtime-require pattern keeps expo-router/head out of the native bundle —
+// same approach as app/(app)/trip/[id]/print.tsx:PrintHead.
+function RootHead() {
+  if (Platform.OS !== 'web') return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Head } = require('expo-router/head') as { Head: React.ComponentType<{ children: React.ReactNode }> };
+
+  return (
+    <Head>
+      <meta
+        name="description"
+        content="Tripvisor — plan multi-day holiday routes with optimized day splits, place reviews, and shareable itineraries."
+      />
+      <meta property="og:site_name" content="Tripvisor" />
+      <meta property="og:type" content="website" />
+      <meta name="twitter:card" content="summary" />
+    </Head>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,6 +94,8 @@ export default function RootLayout() {
               buster: 'phase-4-allowlist-v1',
             }}
           >
+            {/* Baseline OG/meta fallback for all routes — web only, no-op on native */}
+            <RootHead />
             <StatusBar style="auto" />
             <Stack screenOptions={{ headerShown: false }} />
           </PersistQueryClientProvider>

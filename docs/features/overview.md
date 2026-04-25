@@ -14,7 +14,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
 | Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
-| Shareable read-only link | 🚧 Code complete · awaiting native smoke | 4 | [share.md](share.md) |
+| Shareable read-only link | ✅ Done (web verified; iOS/Android deferred to user smoke — Head is web-only no-op, no native re-verification needed for Phase 14 unfurl) | 4, 14 | [share.md](share.md) |
 | .ics calendar export | 🚧 Code complete · awaiting native smoke | 4 | [ics-export.md](ics-export.md) |
 | Sentry error tracking | 🚧 Code complete · awaiting native smoke | 4 | [sentry.md](sentry.md) |
 | Empty states (UX polish) | 🚧 Code complete · awaiting native smoke | 4 | See Phase 4 changelog in [plan.md](../../plan.md) |
