@@ -48,6 +48,22 @@ import {
   type TripLeg,
   type TripPlace,
 } from '@/api';
+import { useTripExpenseRollup, useTripExpenses } from '@/api/trip-expenses';
+import { useTripAccommodations, useDeleteTripAccommodation } from '@/api/trip-accommodations';
+import { useTripRole } from '@/hooks/useTripRole';
+// Budget components (Phase 21 Step 21.10)
+import { BudgetCard } from '@/components/budget/BudgetCard';
+import { BudgetEditSheet } from '@/components/budget/BudgetEditSheet';
+import { CategoryBreakdown } from '@/components/budget/CategoryBreakdown';
+import { ExpenseList } from '@/components/budget/ExpenseList';
+import { ExpenseEditSheet } from '@/components/budget/ExpenseEditSheet';
+// Accommodation components (Phase 21 Step 21.13)
+import { AccommodationList } from '@/components/accommodation/AccommodationList';
+import { AccommodationEditSheet } from '@/components/accommodation/AccommodationEditSheet';
+import { StayingAtPill } from '@/components/accommodation/StayingAtPill';
+import { useDeleteTripExpense } from '@/api';
+import type { TripExpense } from '@/api/types';
+import type { TripAccommodation } from '@/api/types';
 
 type TabKey = 'map' | 'itinerary' | 'settings';
 
@@ -68,6 +84,24 @@ export default function TripDetail() {
   const optimize = useOptimizeTrip();
   const optimizeMutate = optimize.mutate;
   const deleteTrip = useDeleteTrip();
+
+  // Phase 21 Step 21.10/21.11: Role-gating for budget + accommodation + collaborators.
+  const { canEditTrip, role: tripRole } = useTripRole(id);
+  const isOwner = tripRole === 'owner';
+
+  // Accommodations at TripDetail level so ItineraryTab's StayingAtPill can consume them.
+  // The SettingsTab also calls useTripAccommodations internally; TanStack Query dedupes
+  // the request, so there's zero extra network cost for having it here too.
+  const { data: tripAccommodations = [] } = useTripAccommodations(id);
+
+  // Number of assigned days in the trip — used for the expense day picker.
+  const tripDayCount = useMemo(() => {
+    if (!trip?.start_date || !trip?.end_date) return 0;
+    const start = new Date(trip.start_date);
+    const end = new Date(trip.end_date);
+    const diff = Math.round((end.getTime() - start.getTime()) / 86400000);
+    return Math.max(0, diff + 1);
+  }, [trip?.start_date, trip?.end_date]);
 
   // Auto-optimize (debounced 500ms) when places or trip settings change meaningfully.
   // Includes visit_duration_minutes so duration edits trigger re-split.
@@ -112,38 +146,46 @@ export default function TripDetail() {
 
   // ── Shared page header (title, meta, cost rollup) ────────────────────────
   const pageHeader = (
-    <View style={{ padding: t.spacing.lg, gap: t.spacing.xs }}>
-      <BackButton onPress={() => router.back()} label="Trips" />
-      <View style={styles.titleRow}>
-        <Heading level={1}>{trip.title}</Heading>
-        {/* Print button — navigates to print route on all platforms */}
-        <Button
-          label="Print itinerary"
-          variant="secondary"
-          fullWidth={false}
-          onPress={() => router.push(`/trip/${trip.id}/print` as never)}
-          accessibilityLabel="Print itinerary"
-        />
-      </View>
-      <View style={styles.metaRow}>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h plan/day ·{' '}
-          {trip.transport_mode}
-        </Text>
-        {optimize.isPending ? (
-          <StatusPill tone="info" label="Optimizing…" loading />
-        ) : optimize.error ? (
-          (() => {
-            const { tone, label } = pillForOptimizeError(optimize.error);
-            return <StatusPill tone={tone} label={label} />;
-          })()
-        ) : places.length < 2 ? (
-          <StatusPill tone="info" label="Add places to optimize" />
-        ) : null}
-      </View>
+    <View style={{ backgroundColor: t.colors.gradientSubtle }}>
+      <View style={{ padding: t.spacing.lg, gap: t.spacing.sm }}>
+        <BackButton onPress={() => router.back()} label="Trips" />
+        <View style={styles.titleRow}>
+          <Heading level={1}>{trip.title}</Heading>
+          <Button
+            label="🖨️ Print"
+            variant="secondary"
+            fullWidth={false}
+            onPress={() => router.push(`/trip/${trip.id}/print` as never)}
+            accessibilityLabel="Print itinerary"
+          />
+        </View>
+        <View style={styles.metaRow}>
+          <View style={{
+            backgroundColor: t.colors.cardBgSolid,
+            borderRadius: t.radius.pill,
+            paddingHorizontal: t.spacing.md,
+            paddingVertical: t.spacing.xs,
+            ...t.shadows.sm(t.colors.shadowColor),
+          }}>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '500' }]}>
+              📅 {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day · {trip.transport_mode}
+            </Text>
+          </View>
+          {optimize.isPending ? (
+            <StatusPill tone="info" label="Optimizing…" loading />
+          ) : optimize.error ? (
+            (() => {
+              const { tone, label } = pillForOptimizeError(optimize.error);
+              return <StatusPill tone={tone} label={label} />;
+            })()
+          ) : places.length < 2 ? (
+            <StatusPill tone="info" label="Add places to optimize" />
+          ) : null}
+        </View>
 
-      {/* ── Cost rollup card (Step 8.4) ───────────────────────────────── */}
-      <TripCostRollup trip={trip} legs={legs} />
+        {/* Cost rollup card */}
+        <TripCostRollup trip={trip} legs={legs} />
+      </View>
     </View>
   );
 
@@ -179,20 +221,26 @@ export default function TripDetail() {
           <>
             <SettingsTab
               tripId={trip.id}
+              tripStartDate={trip.start_date}
               dailyHoursBudget={trip.daily_hours_budget}
               transportMode={trip.transport_mode}
               currency={trip.currency}
               costPerKm={trip.cost_per_km}
               hasPlaces={places.length > 0}
+              tripDayCount={tripDayCount}
+              canEdit={canEditTrip}
+              isOwner={isOwner}
               onDelete={async () => {
                 await deleteTrip.mutateAsync(trip.id);
                 router.replace('/trips');
               }}
               deleting={deleteTrip.isPending}
             />
-            <View style={{ padding: t.spacing.lg }}>
-              <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-            </View>
+            {canEditTrip ? (
+              <View style={{ padding: t.spacing.lg }}>
+                <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
+              </View>
+            ) : null}
           </>
         ) : (
           /*
@@ -218,11 +266,14 @@ export default function TripDetail() {
                 places={places}
                 legs={legs}
                 trip={trip}
+                accommodations={tripAccommodations}
                 onOpen={(gid) => router.push(`/place/${gid}`)}
               />
-              <View style={{ padding: t.spacing.lg, borderTopWidth: 1, borderTopColor: t.colors.border }}>
-                <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-              </View>
+              {canEditTrip ? (
+                <View style={{ padding: t.spacing.lg, borderTopWidth: 1, borderTopColor: t.colors.border }}>
+                  <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
+                </View>
+              ) : null}
             </View>
           </View>
         )}
@@ -253,16 +304,21 @@ export default function TripDetail() {
           places={places}
           legs={legs}
           trip={trip}
+          accommodations={tripAccommodations}
           onOpen={(gid) => router.push(`/place/${gid}`)}
         />
       ) : (
         <SettingsTab
           tripId={trip.id}
+          tripStartDate={trip.start_date}
           dailyHoursBudget={trip.daily_hours_budget}
           transportMode={trip.transport_mode}
           currency={trip.currency}
           costPerKm={trip.cost_per_km}
           hasPlaces={places.length > 0}
+          tripDayCount={tripDayCount}
+          canEdit={canEditTrip}
+          isOwner={isOwner}
           onDelete={async () => {
             await deleteTrip.mutateAsync(trip.id);
             router.replace('/trips');
@@ -271,9 +327,11 @@ export default function TripDetail() {
         />
       )}
 
-      <View style={{ padding: t.spacing.lg }}>
-        <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-      </View>
+      {canEditTrip ? (
+        <View style={{ padding: t.spacing.lg }}>
+          <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
+        </View>
+      ) : null}
     </Screen>
   );
 }
@@ -461,12 +519,14 @@ function ItineraryTab({
   places,
   legs,
   trip,
+  accommodations,
   onOpen,
 }: {
   tripId: string;
   places: TripPlace[];
   legs: TripLeg[];
   trip: import('@/api').Trip;
+  accommodations: TripAccommodation[];
   onOpen: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
@@ -520,10 +580,19 @@ function ItineraryTab({
       >
         {byDay.map((section) => (
           <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
-            <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex) }]}>
-              <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
-                {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
-              </Text>
+            <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex), backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md, paddingHorizontal: t.spacing.md, paddingVertical: t.spacing.sm }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' }}>
+                <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
+                  {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
+                </Text>
+                {section.dayIndex >= 0 ? (
+                  <StayingAtPill
+                    dayIndex={section.dayIndex}
+                    tripStartDate={trip.start_date}
+                    accommodations={accommodations}
+                  />
+                ) : null}
+              </View>
             </View>
 
             {/* ── Per-day summary strip (Step 8.4) — only for scheduled days */}
@@ -732,10 +801,13 @@ function PlaceRow({
           styles.placeCard,
           {
             borderColor: t.colors.border,
-            borderRadius: t.radius.md,
-            backgroundColor: t.colors.bgElevated,
+            borderRadius: t.radius.lg,
+            backgroundColor: t.colors.cardBgSolid,
             padding: t.spacing.md,
             opacity: dragging ? 0.85 : 1,
+            borderLeftWidth: 4,
+            borderLeftColor: dayColor(place.day_index ?? -1),
+            ...t.shadows.sm(t.colors.shadowColor),
           },
         ]}
       >
@@ -878,26 +950,51 @@ const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
 
 function SettingsTab({
   tripId,
+  tripStartDate,
   dailyHoursBudget,
   transportMode,
   currency,
   costPerKm,
   hasPlaces,
+  tripDayCount,
+  canEdit,
+  isOwner,
   onDelete,
   deleting,
 }: {
   tripId: string;
+  tripStartDate: string | null;
   dailyHoursBudget: number;
   transportMode: TransportMode;
   currency: TripCurrency;
   costPerKm: number;
   hasPlaces: boolean;
+  tripDayCount: number;
+  canEdit: boolean;
+  isOwner: boolean;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const t = useTheme();
+  const router = useRouter();
   const [budget, setBudget] = useState(dailyHoursBudget);
   const [mode, setMode] = useState<TransportMode>(transportMode);
+
+  // ── Budget state (Phase 21 Step 21.10) ──────────────────────────────────────
+  const rollup = useTripExpenseRollup(tripId);
+  // useTripExpenses is already subscribed by useTripExpenseRollup; this picks
+  // up from the same cache key — zero extra network requests.
+  const { data: expenses = [] } = useTripExpenses(tripId);
+  const [budgetSheetOpen, setBudgetSheetOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<TripExpense | null>(null);
+  const [expenseSheetOpen, setExpenseSheetOpen] = useState(false);
+  const deleteExpense = useDeleteTripExpense();
+
+  // ── Accommodation state (Phase 21 Step 21.13) ───────────────────────────────
+  const { data: accommodations = [] } = useTripAccommodations(tripId);
+  const deleteAccommodation = useDeleteTripAccommodation();
+  const [editingAccommodation, setEditingAccommodation] = useState<TripAccommodation | null>(null);
+  const [accommodationSheetOpen, setAccommodationSheetOpen] = useState(false);
 
   // ICS export state
   const downloadIcs = useDownloadTripIcs(tripId);
@@ -1061,9 +1158,104 @@ function SettingsTab({
         ) : null}
       </View>
 
+      {/* ── Budget (Phase 21 Step 21.10) ────────────────────────────────── */}
+      <SectionHeading label="Budget" t={t} />
+      <BudgetCard
+        rollup={rollup}
+        onSetBudget={() => setBudgetSheetOpen(true)}
+        canEdit={canEdit}
+      />
+      <CategoryBreakdown rollup={rollup} />
+      <ExpenseList
+        expenses={expenses}
+        tripId={tripId}
+        canEdit={canEdit}
+        onAdd={() => {
+          setEditingExpense(null);
+          setExpenseSheetOpen(true);
+        }}
+        onEdit={(expense) => {
+          setEditingExpense(expense);
+          setExpenseSheetOpen(true);
+        }}
+        onDelete={(expense) => {
+          deleteExpense.mutate({ id: expense.id, trip_id: tripId });
+        }}
+      />
+
+      {/* ── Accommodation (Phase 21 Step 21.13) ─────────────────────────── */}
+      <SectionHeading label="Accommodation" t={t} />
+      <AccommodationList
+        accommodations={accommodations}
+        tripStartDate={tripStartDate}
+        canEdit={canEdit}
+        onAdd={() => {
+          setEditingAccommodation(null);
+          setAccommodationSheetOpen(true);
+        }}
+        onEdit={(acc) => {
+          setEditingAccommodation(acc);
+          setAccommodationSheetOpen(true);
+        }}
+        onDelete={(acc) => {
+          deleteAccommodation.mutate({ id: acc.id, trip_id: tripId });
+        }}
+      />
+
+      {/* ── Collaborators link ───────────────────────────────────────────── */}
+      <SectionHeading label="Collaboration" t={t} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Manage collaborators"
+        onPress={() => router.push(`/trip/${tripId}/collaborators` as never)}
+        style={({ pressed }) => [
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+            borderColor: t.colors.border,
+            borderRadius: t.radius.md,
+            borderWidth: 1,
+            padding: t.spacing.md,
+          },
+        ]}
+      >
+        <View style={{ gap: 2 }}>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+            Manage collaborators
+          </Text>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            {isOwner ? 'Invite others to view or edit this trip' : 'View who has access to this trip'}
+          </Text>
+        </View>
+        <Text style={{ fontSize: 18, color: t.colors.textMuted }}>›</Text>
+      </Pressable>
+
       {/* ── Share ───────────────────────────────────────────────────────── */}
       <SectionHeading label="Share" t={t} />
       <ShareLinkCard tripId={tripId} />
+
+      {/* Budget + Accommodation edit sheets */}
+      <BudgetEditSheet
+        tripId={tripId}
+        currentBudget={rollup.budget}
+        visible={budgetSheetOpen}
+        onClose={() => setBudgetSheetOpen(false)}
+      />
+      <ExpenseEditSheet
+        tripId={tripId}
+        expense={editingExpense}
+        visible={expenseSheetOpen}
+        onClose={() => setExpenseSheetOpen(false)}
+        tripDayCount={tripDayCount}
+      />
+      <AccommodationEditSheet
+        tripId={tripId}
+        accommodation={editingAccommodation}
+        visible={accommodationSheetOpen}
+        onClose={() => setAccommodationSheetOpen(false)}
+      />
 
       {/* ── Calendar export ─────────────────────────────────────────────── */}
       <SectionHeading label="Export" t={t} />

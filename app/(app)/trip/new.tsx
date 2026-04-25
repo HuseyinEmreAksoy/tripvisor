@@ -1,16 +1,9 @@
 /**
- * New trip screen — visual redesign (Phase 20, Step 1 + Step 5).
- *
- * Changes vs. previous version:
- *  - Added back button (Step 2) for users who navigate here and change their mind.
- *  - Added a destination-pin accent glyph beside the heading (Step 1).
- *  - Supporting copy explains what comes next so the form feels purposeful.
- *  - "Daily hours budget" → "Daily plan time" with a clearer hint (Step 5).
- *  - Transport mode selector promoted from SettingsTab into creation flow
- *    so users set it once upfront (design intention preserved from original).
+ * New trip screen — Redesigned with gradient banner, visual transport mode selector,
+ * animated form fields, and refined layout.
  */
 import { useRouter } from 'expo-router';
-import { ScrollView, Text, View } from 'react-native';
+import { Pressable, Platform, ScrollView, Text, View, type ViewStyle } from 'react-native';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { BackButton, Button, Heading, Screen, TextField } from '@/components';
@@ -36,6 +29,12 @@ type FormValues = z.infer<typeof Schema>;
 const detectedTz =
   (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || null;
 
+const TRANSPORT_OPTIONS: Array<{ value: 'driving' | 'walking' | 'transit'; icon: string; label: string }> = [
+  { value: 'driving', icon: '🚗', label: 'Drive' },
+  { value: 'walking', icon: '🚶', label: 'Walk' },
+  { value: 'transit', icon: '🚆', label: 'Transit' },
+];
+
 export default function NewTrip() {
   const t = useTheme();
   const router = useRouter();
@@ -46,6 +45,7 @@ export default function NewTrip() {
     handleSubmit,
     formState: { errors },
     setError,
+    watch,
   } = useForm<FormValues>({
     defaultValues: {
       title: '',
@@ -56,6 +56,8 @@ export default function NewTrip() {
     },
     mode: 'onBlur',
   });
+
+  const currentTransport = watch('transport_mode');
 
   const onSubmit = async (values: FormValues) => {
     const parsed = Schema.safeParse(values);
@@ -82,12 +84,19 @@ export default function NewTrip() {
         {/* ── Back affordance ───────────────────────────────────────────── */}
         <BackButton onPress={() => router.back()} label="My trips" />
 
-        {/* ── Heading + accent ─────────────────────────────────────────── */}
-        <View style={{ gap: t.spacing.xs }}>
+        {/* ── Gradient banner ──────────────────────────────────────────── */}
+        <View
+          style={{
+            backgroundColor: t.colors.gradientSubtle,
+            borderRadius: t.radius.xl,
+            padding: t.spacing.xl,
+            gap: t.spacing.sm,
+            ...t.shadows.sm(t.colors.shadowColor),
+          }}
+        >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm }}>
-            {/* Decorative map-pin accent next to the title — a11y hidden */}
             <Text
-              style={{ fontSize: 24 }}
+              style={{ fontSize: 32 }}
               accessibilityElementsHidden
               importantForAccessibility="no"
               aria-hidden
@@ -96,7 +105,7 @@ export default function NewTrip() {
             </Text>
             <Heading level={1}>Plan your trip</Heading>
           </View>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+          <Text style={[t.typography.body, { color: t.colors.textMuted, lineHeight: 24 }]}>
             Give your trip a name and dates. We'll help you build the perfect day-by-day itinerary.
           </Text>
         </View>
@@ -144,7 +153,7 @@ export default function NewTrip() {
           )}
         />
 
-        {/* ── Daily plan time (Step 5 — time-first terminology) ─────────── */}
+        {/* ── Daily plan time ──────────────────────────────────────────── */}
         <Controller
           control={control}
           name="daily_hours_budget"
@@ -162,16 +171,75 @@ export default function NewTrip() {
           )}
         />
 
+        {/* ── Transport mode — visual icon selector ────────────────────── */}
+        <Controller
+          control={control}
+          name="transport_mode"
+          render={({ field: { onChange } }) => (
+            <View style={{ gap: t.spacing.xs }}>
+              <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                Travel mode
+              </Text>
+              <View style={{ flexDirection: 'row', gap: t.spacing.sm }}>
+                {TRANSPORT_OPTIONS.map((opt) => {
+                  const active = opt.value === currentTransport;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={opt.label}
+                      onPress={() => onChange(opt.value)}
+                      style={({ pressed }) => [
+                        {
+                          flex: 1,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          paddingVertical: t.spacing.md,
+                          gap: 4,
+                          borderWidth: 2,
+                          borderColor: active ? t.colors.primary : t.colors.border,
+                          borderRadius: t.radius.lg,
+                          backgroundColor: active ? t.colors.gradientSubtle : t.colors.cardBgSolid,
+                          ...(active ? t.shadows.glow(t.colors.glowPrimary) : t.shadows.sm(t.colors.shadowColor)),
+                        },
+                        pressed && { opacity: 0.8 },
+                        Platform.OS === 'web' && ({
+                          transition: 'all 0.2s ease',
+                          cursor: 'pointer',
+                        } as ViewStyle),
+                      ]}
+                    >
+                      <Text style={{ fontSize: 28 }}>{opt.icon}</Text>
+                      <Text
+                        style={[
+                          t.typography.caption,
+                          {
+                            color: active ? t.colors.primary : t.colors.text,
+                            fontWeight: active ? '700' : '500',
+                          },
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        />
+
         {detectedTz ? (
           <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-            Detected time zone: {detectedTz}
+            🌍 Detected time zone: {detectedTz}
           </Text>
         ) : null}
 
         {/* ── Actions ───────────────────────────────────────────────────── */}
         <View style={{ gap: t.spacing.sm, marginTop: t.spacing.md }}>
           <Button
-            label="Create trip"
+            label="🚀 Create trip"
             onPress={handleSubmit(onSubmit)}
             loading={createTrip.isPending}
           />

@@ -1,18 +1,17 @@
 /**
- * ShareLinkCard — shows a trip's active share link (if one exists) with
- * copy-to-clipboard and revoke controls, or a "Create share link" button.
+ * ShareLinkCard — shows the trip's two sharing options:
  *
- * Consumed by the Settings tab of app/(app)/trip/[id]/index.tsx.
+ * 1. Public link (Phase 19):
+ *    "Anyone with the link can view" — anonymous, token-based, read-only.
+ *    Controls: create / copy / revoke.
  *
- * State strategy:
- *   The backend only provides useCreateShareLink (returns token on create) and
- *   useRevokeShareLink. There is no "get current active token" query because tokens
- *   are single-reveal for security (the owner sees the token once on creation).
- *   We persist the token in component state after a successful create, and clear
- *   it on revoke. The token also resets if the component unmounts (user navigates
- *   away), consistent with single-reveal security intent.
- *   REVIEWER: If the backend adds a useActiveShareLink query later, swap in that
- *   hook here for persistence across unmounts.
+ * 2. Invite collaborator (Phase 21 Step 21.12):
+ *    "Invite a specific person by email" — authenticated, role-gated.
+ *    Tapping navigates to /trip/[id]/collaborators.
+ *
+ * The two sections are visually separated with distinct labels so users
+ * understand the distinction between anonymous public-link sharing and
+ * specific-person invitation-based collaboration.
  *
  * URL shape:
  *   Web:    window.location.origin + '/share/' + token  (always has an origin)
@@ -23,6 +22,7 @@
  */
 import { useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Button } from './Button';
 import { useTheme } from '@/theme';
 import { copyToClipboard } from '@/lib/clipboard';
@@ -56,6 +56,7 @@ function buildShareUrl(token: string): { url: string; usingDeepLink: boolean } {
 
 export function ShareLinkCard({ tripId }: ShareLinkCardProps) {
   const t = useTheme();
+  const router = useRouter();
 
   // Token lives here after a successful create and is cleared on revoke.
   const [token, setToken] = useState<string | null>(null);
@@ -88,103 +89,173 @@ export function ShareLinkCard({ tripId }: ShareLinkCardProps) {
   }
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          borderColor: t.colors.border,
-          borderRadius: t.radius.md,
-          backgroundColor: t.colors.bgElevated,
-          padding: t.spacing.lg,
-          gap: t.spacing.md,
-        },
-      ]}
-      accessible
-      accessibilityLabel="Share link"
-    >
-      {shareUrl ? (
-        <>
-          {/* URL display */}
-          <View
-            style={[
-              styles.urlBox,
-              {
-                borderColor: t.colors.border,
-                borderRadius: t.radius.sm,
-                backgroundColor: t.colors.bg,
-                padding: t.spacing.sm,
-              },
-            ]}
-            accessible
-            accessibilityLabel={`Share URL: ${shareUrl}`}
+    <View style={{ gap: t.spacing.lg }}>
+      {/* ── Section 1: Public link ──────────────────────────────────────── */}
+      <View
+        style={[
+          styles.card,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.xl,
+            backgroundColor: t.colors.cardBgSolid,
+            padding: t.spacing.lg,
+            gap: t.spacing.md,
+            ...t.shadows.sm(t.colors.shadowColor),
+          },
+        ]}
+        accessible
+        accessibilityLabel="Public link sharing"
+      >
+        {/* Section label */}
+        <View style={styles.labelRow}>
+          <Text
+            style={{ fontSize: 18 }}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            aria-hidden
           >
-            <Text
-              style={[t.typography.caption, { color: t.colors.textMuted }]}
-              numberOfLines={2}
-              selectable
-            >
-              {shareUrl}
-            </Text>
-          </View>
-          {/* Deep-link fallback warning — only shown when EXPO_PUBLIC_APP_URL is unset on native */}
-          {usingDeepLink ? (
-            <Text
-              style={[t.typography.caption, { color: t.colors.textMuted }]}
-              accessibilityLiveRegion="polite"
-            >
-              Deep-link URL only — set EXPO_PUBLIC_APP_URL in .env for a public web URL.
-            </Text>
-          ) : null}
-
-          {/* Copy + Revoke */}
-          <View style={{ gap: t.spacing.sm }}>
-            <Button
-              label={copied ? 'Copied!' : 'Copy link'}
-              variant="secondary"
-              onPress={handleCopy}
-              disabled={copied}
-              accessibilityLabel={copied ? 'Link copied to clipboard' : 'Copy share link to clipboard'}
-            />
-            <Button
-              label="Revoke link"
-              variant="danger"
-              onPress={handleRevoke}
-              loading={revokeLink.isPending}
-              accessibilityLabel="Revoke share link — anyone with the link will lose access"
-            />
-          </View>
-
-          {revokeLink.isError ? (
-            <Text
-              style={[t.typography.caption, { color: t.colors.danger }]}
-              accessibilityLiveRegion="polite"
-            >
-              Could not revoke link — try again.
-            </Text>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            Anyone with the link can view your itinerary (read-only). No sign-in required.
+            🔗
           </Text>
-          <Button
-            label="Create share link"
-            variant="secondary"
-            onPress={handleCreate}
-            loading={createLink.isPending}
-            accessibilityLabel="Create a read-only share link for this trip"
-          />
-          {createLink.isError ? (
-            <Text
-              style={[t.typography.caption, { color: t.colors.danger }]}
-              accessibilityLiveRegion="polite"
-            >
-              Could not create link — try again.
+          <View style={{ flex: 1 }}>
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+              Public link
             </Text>
-          ) : null}
-        </>
-      )}
+            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+              Anyone with the link can view
+            </Text>
+          </View>
+        </View>
+
+        {shareUrl ? (
+          <>
+            {/* URL display */}
+            <View
+              style={[
+                styles.urlBox,
+                {
+                  borderColor: t.colors.border,
+                  borderRadius: t.radius.md,
+                  backgroundColor: t.colors.bgMuted,
+                  padding: t.spacing.md,
+                },
+              ]}
+              accessible
+              accessibilityLabel={`Share URL: ${shareUrl}`}
+            >
+              <Text
+                style={[t.typography.caption, { color: t.colors.textMuted }]}
+                numberOfLines={2}
+                selectable
+              >
+                {shareUrl}
+              </Text>
+            </View>
+            {/* Deep-link fallback warning — only shown when EXPO_PUBLIC_APP_URL is unset on native */}
+            {usingDeepLink ? (
+              <Text
+                style={[t.typography.caption, { color: t.colors.textMuted }]}
+                accessibilityLiveRegion="polite"
+              >
+                Deep-link URL only — set EXPO_PUBLIC_APP_URL in .env for a public web URL.
+              </Text>
+            ) : null}
+
+            {/* Copy + Revoke */}
+            <View style={{ gap: t.spacing.sm }}>
+              <Button
+                label={copied ? 'Copied!' : 'Copy link'}
+                variant="secondary"
+                onPress={handleCopy}
+                disabled={copied}
+                accessibilityLabel={copied ? 'Link copied to clipboard' : 'Copy share link to clipboard'}
+              />
+              <Button
+                label="Revoke link"
+                variant="danger"
+                onPress={handleRevoke}
+                loading={revokeLink.isPending}
+                accessibilityLabel="Revoke share link — anyone with the link will lose access"
+              />
+            </View>
+
+            {revokeLink.isError ? (
+              <Text
+                style={[t.typography.caption, { color: t.colors.danger }]}
+                accessibilityLiveRegion="polite"
+              >
+                Could not revoke link — try again.
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+              Anyone with the link can view your itinerary — read-only, no sign-in required.
+            </Text>
+            <Button
+              label="Create share link"
+              variant="secondary"
+              onPress={handleCreate}
+              loading={createLink.isPending}
+              accessibilityLabel="Create a read-only share link for this trip"
+            />
+            {createLink.isError ? (
+              <Text
+                style={[t.typography.caption, { color: t.colors.danger }]}
+                accessibilityLiveRegion="polite"
+              >
+                Could not create link — try again.
+              </Text>
+            ) : null}
+          </>
+        )}
+      </View>
+
+      {/* ── Section 2: Invite collaborator ──────────────────────────────── */}
+      <View
+        style={[
+          styles.card,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.xl,
+            backgroundColor: t.colors.cardBgSolid,
+            padding: t.spacing.lg,
+            gap: t.spacing.md,
+            ...t.shadows.sm(t.colors.shadowColor),
+          },
+        ]}
+        accessible
+        accessibilityLabel="Invite a specific collaborator by email"
+      >
+        {/* Section label */}
+        <View style={styles.labelRow}>
+          <Text
+            style={{ fontSize: 18 }}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            aria-hidden
+          >
+            👥
+          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+              Invite collaborator
+            </Text>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+              Invite a specific person by email
+            </Text>
+          </View>
+        </View>
+        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+          Collaborators sign in to access the trip. Assign them viewer or editor access.
+        </Text>
+        <Button
+          label="Manage collaborators"
+          variant="secondary"
+          onPress={() => router.push(`/trip/${tripId}/collaborators` as never)}
+          accessibilityLabel="Go to manage collaborators screen to invite someone by email"
+        />
+      </View>
     </View>
   );
 }
@@ -192,4 +263,9 @@ export function ShareLinkCard({ tripId }: ShareLinkCardProps) {
 const styles = StyleSheet.create({
   card: { borderWidth: 1 },
   urlBox: { borderWidth: 1 },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
 });

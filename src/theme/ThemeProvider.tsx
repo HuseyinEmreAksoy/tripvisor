@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { Appearance, Platform, useColorScheme } from 'react-native';
 import { storageAdapter } from '@/api/storage';
-import { radius, spacing, themes, typography, type Colors, type ThemeName } from './tokens';
+import { radius, shadows, spacing, themes, typography, type Colors, type ThemeName } from './tokens';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -20,6 +20,7 @@ export interface Theme {
   spacing: typeof spacing;
   radius: typeof radius;
   typography: typeof typography;
+  shadows: typeof shadows;
 }
 
 // ─── Internal context shape ───────────────────────────────────────────────────
@@ -107,6 +108,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         spacing,
         radius,
         typography,
+        shadows,
       },
       mode,
       setMode,
@@ -114,7 +116,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       override: mode === 'system' ? null : mode,
       setOverride: (n) => setMode(n === null ? 'system' : n),
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, systemScheme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

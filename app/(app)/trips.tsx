@@ -51,6 +51,7 @@ import {
   useDeleteTrip,
   useAllTripLegs,
 } from '@/api';
+import { useCollaboratedTrips } from '@/api/trip-collaborators';
 import { useTheme } from '@/theme';
 import { BREAKPOINTS, useBreakpoint } from '@/hooks/useBreakpoint';
 import { confirmDestructive } from '@/lib/confirm';
@@ -144,6 +145,10 @@ export default function TripsList() {
     archived: tab === 'archived',
   });
 
+  // "Shared with me" — trips the current user collaborates on (accepted only).
+  // Only shown on the 'active' tab (archived collaborator trips aren't surfaced).
+  const { data: collaboratedTrips = [] } = useCollaboratedTrips();
+
   const activeTripsIds = useMemo(
     () => (sortKey === 'cost' ? (trips ?? []).map((trip) => trip.id) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -220,10 +225,13 @@ export default function TripsList() {
     settingsBtn: {
       paddingHorizontal: t.spacing.md,
       paddingVertical: t.spacing.sm,
+      backgroundColor: t.colors.gradientSubtle,
+      borderRadius: t.radius.lg,
     },
     settingsBtnText: {
       ...(t.typography.bodyStrong as object),
       color: t.colors.primary,
+      fontSize: 14,
     },
     searchRow: {
       flexDirection: 'row',
@@ -235,11 +243,16 @@ export default function TripsList() {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: t.colors.bgElevated,
-      borderWidth: 1,
+      borderWidth: 1.5,
       borderColor: t.colors.border,
-      borderRadius: t.radius.md,
-      paddingHorizontal: t.spacing.md,
-      height: 40,
+      borderRadius: t.radius.pill,
+      paddingHorizontal: t.spacing.lg,
+      height: 44,
+      ...t.shadows.sm(t.colors.shadowColor),
+    },
+    searchIcon: {
+      fontSize: 16,
+      marginRight: t.spacing.sm,
     },
     searchInput: {
       flex: 1,
@@ -260,27 +273,29 @@ export default function TripsList() {
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: t.colors.bgElevated,
-      borderWidth: 1,
+      borderWidth: 1.5,
       borderColor: t.colors.border,
-      borderRadius: t.radius.md,
-      paddingHorizontal: t.spacing.sm,
-      height: 40,
-      minWidth: 40,
+      borderRadius: t.radius.pill,
+      paddingHorizontal: t.spacing.md,
+      height: 44,
+      minWidth: 44,
+      ...t.shadows.sm(t.colors.shadowColor),
     },
     sortBtnText: {
       ...(t.typography.caption as object),
       color: t.colors.text,
       fontSize: 11,
+      fontWeight: '600',
       textAlign: 'center',
     },
     filterBtn: {
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 1,
-      borderRadius: t.radius.md,
-      paddingHorizontal: t.spacing.sm,
-      height: 40,
-      minWidth: 40,
+      borderWidth: 1.5,
+      borderRadius: t.radius.pill,
+      paddingHorizontal: t.spacing.md,
+      height: 44,
+      minWidth: 44,
     },
     noResultsWrap: {
       padding: t.spacing.lg,
@@ -307,13 +322,14 @@ export default function TripsList() {
           hitSlop={8}
           style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
         >
-          <Text style={s.settingsBtnText}>Settings</Text>
+          <Text style={[s.settingsBtnText]}>⚙️ Settings</Text>
         </Pressable>
       </View>
 
       {/* ─── Search + Sort + Filter row ──────────────────────────────── */}
       <View style={s.searchRow}>
         <View style={s.searchWrap}>
+          <Text style={s.searchIcon} accessibilityElementsHidden aria-hidden>🔍</Text>
           <TextInput
             ref={searchRef}
             value={searchText}
@@ -483,6 +499,38 @@ export default function TripsList() {
                 <Button label="New trip" onPress={() => router.push('/trip/new')} />
               </View>
             ) : null}
+
+            {/* Shared with me — desktop: rendered below owned trips in same centred container */}
+            {tab === 'active' && collaboratedTrips.length > 0 ? (
+              <View style={{ marginTop: t.spacing.xl, width: '100%', gap: t.spacing.md }}>
+                <Text
+                  style={[t.typography.subtitle, { color: t.colors.text }]}
+                  accessibilityRole="header"
+                  aria-level={2}
+                >
+                  Shared with me
+                </Text>
+                <View style={[desktopStyles.grid, { gap: t.spacing.md }]}>
+                  {collaboratedTrips.map((item) => (
+                    <View
+                      key={item.id}
+                      style={[
+                        desktopStyles.gridItem,
+                        { width: `${(100 / columns).toFixed(4)}%` as unknown as number },
+                      ]}
+                    >
+                      <View style={{ position: 'relative' }}>
+                        <TripCard
+                          trip={item}
+                          onPress={() => router.push(`/trip/${item.id}`)}
+                        />
+                        <SharedBadge />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
           </ScrollView>
         )}
 
@@ -550,8 +598,29 @@ export default function TripsList() {
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
           ListFooterComponent={
             tab === 'active' ? (
-              <View style={{ marginTop: t.spacing.lg }}>
+              <View style={{ marginTop: t.spacing.lg, gap: t.spacing.lg }}>
                 <Button label="New trip" onPress={() => router.push('/trip/new')} />
+                {/* Shared with me — mobile: rendered below the new-trip button */}
+                {collaboratedTrips.length > 0 ? (
+                  <View style={{ gap: t.spacing.md }}>
+                    <Text
+                      style={[t.typography.subtitle, { color: t.colors.text }]}
+                      accessibilityRole="header"
+                      aria-level={2}
+                    >
+                      Shared with me
+                    </Text>
+                    {collaboratedTrips.map((item) => (
+                      <View key={item.id} style={{ position: 'relative' }}>
+                        <TripCard
+                          trip={item}
+                          onPress={() => router.push(`/trip/${item.id}`)}
+                        />
+                        <SharedBadge />
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             ) : null
           }
@@ -569,6 +638,43 @@ export default function TripsList() {
     </Screen>
   );
 }
+
+// ── SharedBadge ──────────────────────────────────────────────────────────────
+// Overlaid on the top-right of a collaborator trip card.
+// Uses position absolute on web (which works in RN Web) to avoid changing TripCard.
+function SharedBadge() {
+  const t = useTheme();
+  return (
+    <View
+      style={[
+        sharedBadgeStyles.badge,
+        {
+          backgroundColor: t.colors.bgMuted,
+          borderColor: t.colors.border,
+          borderRadius: t.radius.pill,
+        },
+      ]}
+      accessible
+      accessibilityLabel="Shared with me"
+    >
+      <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
+        Shared with me
+      </Text>
+    </View>
+  );
+}
+
+const sharedBadgeStyles = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    zIndex: 1,
+  },
+});
 
 // ── Desktop-specific static styles ───────────────────────────────────────────
 // These don't depend on the theme so they can be static.

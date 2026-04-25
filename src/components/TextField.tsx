@@ -1,5 +1,8 @@
-import { forwardRef } from 'react';
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+/**
+ * TextField — Redesigned with animated focus ring, refined border, improved typography.
+ */
+import { forwardRef, useState } from 'react';
+import { Platform, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 
 interface TextFieldProps extends Omit<TextInputProps, 'style'> {
@@ -9,41 +12,85 @@ interface TextFieldProps extends Omit<TextInputProps, 'style'> {
 }
 
 export const TextField = forwardRef<TextInput, TextFieldProps>(function TextField(
-  { label, error, hint, ...rest },
+  { label, error, hint, onFocus, onBlur, ...rest },
   ref,
 ) {
   const t = useTheme();
+  const [focused, setFocused] = useState(false);
+
+  const borderColor = error
+    ? t.colors.danger
+    : focused
+      ? t.colors.primary
+      : t.colors.border;
+
   return (
     <View style={styles.wrapper}>
-      <Text style={[t.typography.caption, { color: t.colors.textMuted, marginBottom: 4 }]}>
-        {label}
-      </Text>
-      <TextInput
-        ref={ref}
-        accessibilityLabel={label}
-        placeholderTextColor={t.colors.textMuted}
+      <Text
         style={[
-          t.typography.body,
-          styles.input,
+          t.typography.caption,
           {
-            color: t.colors.text,
-            backgroundColor: t.colors.bgElevated,
-            borderColor: error ? t.colors.danger : t.colors.border,
-            borderRadius: t.radius.md,
-            paddingHorizontal: t.spacing.md,
+            color: focused ? t.colors.primary : t.colors.textMuted,
+            marginBottom: 6,
+            fontWeight: '600',
+            letterSpacing: 0.3,
           },
         ]}
-        {...rest}
-      />
+      >
+        {label}
+      </Text>
+      <View
+        style={[
+          styles.inputContainer,
+          {
+            borderColor,
+            borderRadius: t.radius.lg,
+            backgroundColor: t.colors.bgElevated,
+            ...t.shadows.sm(t.colors.shadowColor),
+            ...(focused
+              ? {
+                borderWidth: 2,
+                ...t.shadows.glow(t.colors.glowPrimary),
+              }
+              : { borderWidth: 1.5 }),
+          },
+          Platform.OS === 'web' && ({
+            transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+          } as ViewStyle),
+        ]}
+      >
+        <TextInput
+          ref={ref}
+          accessibilityLabel={label}
+          placeholderTextColor={t.colors.textMuted}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
+          style={[
+            t.typography.body,
+            styles.input,
+            {
+              color: t.colors.text,
+              paddingHorizontal: t.spacing.lg,
+            },
+          ]}
+          {...rest}
+        />
+      </View>
       {error ? (
         <Text
           accessibilityLiveRegion="polite"
-          style={[t.typography.small, { color: t.colors.danger, marginTop: 4 }]}
+          style={[t.typography.small, { color: t.colors.danger, marginTop: 6, fontWeight: '500' }]}
         >
-          {error}
+          ⚠ {error}
         </Text>
       ) : hint ? (
-        <Text style={[t.typography.small, { color: t.colors.textMuted, marginTop: 4 }]}>
+        <Text style={[t.typography.small, { color: t.colors.textMuted, marginTop: 6 }]}>
           {hint}
         </Text>
       ) : null}
@@ -53,5 +100,10 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
 
 const styles = StyleSheet.create({
   wrapper: { alignSelf: 'stretch' },
-  input: { height: 48, borderWidth: 1 },
+  inputContainer: {
+    overflow: 'hidden',
+  },
+  input: {
+    height: 50,
+  },
 });

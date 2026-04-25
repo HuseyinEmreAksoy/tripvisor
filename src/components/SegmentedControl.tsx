@@ -1,4 +1,7 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+/**
+ * SegmentedControl — Redesigned with glassmorphism track, gradient active segment, smooth transition.
+ */
+import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 
 interface Props<T extends string> {
@@ -13,12 +16,17 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
   return (
     <View style={{ gap: t.spacing.xs }}>
       {label ? (
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{label}</Text>
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>{label}</Text>
       ) : null}
       <View
         style={[
           styles.row,
-          { borderColor: t.colors.border, borderRadius: t.radius.md, backgroundColor: t.colors.bgElevated },
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.lg,
+            backgroundColor: t.colors.bgMuted,
+            ...t.shadows.sm(t.colors.shadowColor),
+          },
         ]}
         accessibilityRole="radiogroup"
       >
@@ -31,17 +39,27 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
               accessibilityState={{ selected: active }}
               accessibilityLabel={opt.label}
               onPress={() => onChange(opt.value)}
-              style={[
+              style={({ pressed }) => [
                 styles.opt,
                 {
                   backgroundColor: active ? t.colors.primary : 'transparent',
+                  borderRadius: t.radius.md,
+                  ...(active ? t.shadows.sm(t.colors.glowPrimary) : {}),
                 },
+                pressed && !active && { backgroundColor: t.colors.gradientSubtle },
+                Platform.OS === 'web' && ({
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
+                } as ViewStyle),
               ]}
             >
               <Text
                 style={[
                   t.typography.bodyStrong,
-                  { color: active ? t.colors.primaryText : t.colors.text },
+                  {
+                    color: active ? t.colors.primaryText : t.colors.text,
+                    fontSize: 14,
+                  },
                 ]}
               >
                 {opt.label}
@@ -66,6 +84,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
-    borderRadius: 6,
   },
 });

@@ -1,26 +1,20 @@
 /**
- * Settings screen
- *
- * Reachable via the "Settings" link in the trips list header.
- * Provides: email display, theme picker (Light / Dark / System),
- * sign-out, and delete account (with destructive confirm + Edge Function call).
- *
- * Server state: session email from useSession() (TanStack Query).
- * Theme state: useThemeControls() from ThemeProvider.
+ * Settings screen — Redesigned with profile section, visual theme picker,
+ * grouped action cards, and improved layout.
  */
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { BackButton, Button, Heading, Screen, SegmentedControl } from '@/components';
+import { BackButton, Button, Heading, Screen } from '@/components';
 import { useSession, useSignOut, useExportAccount, supabase } from '@/api';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 
-const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
+const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: string }> = [
+  { value: 'light', label: 'Light', icon: '☀️' },
+  { value: 'dark', label: 'Dark', icon: '🌙' },
+  { value: 'system', label: 'System', icon: '🔄' },
 ];
 
 export default function SettingsScreen() {
@@ -36,10 +30,9 @@ export default function SettingsScreen() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const email = session?.user?.email ?? '—';
+  const initial = email[0]?.toUpperCase() ?? '?';
 
   const handleSignOut = () => {
-    // The auth gate in (app)/_layout.tsx detects the cleared session and
-    // redirects to /login automatically — no manual navigation needed here.
     signOut.mutate();
   };
 
@@ -61,17 +54,11 @@ export default function SettingsScreen() {
       });
 
       if (error) {
-        // Surface to the user inline; do not throw so we stay in this screen.
         setDeleteError(error.message ?? 'Failed to delete account. Please try again.');
         return;
       }
 
-      // Sign out FIRST so the local JWT is gone before anything tries to
-      // re-fetch with a now-invalid token (M1 from review). Awaiting the
-      // mutation resolution avoids a flicker of 401 errors between
-      // server-side auth-delete and the local session being cleared.
       await signOut.mutateAsync();
-      // Drop all cached data so the next user sees a clean slate.
       qc.clear();
     } catch (err) {
       setDeleteError(
@@ -83,11 +70,10 @@ export default function SettingsScreen() {
   };
 
   const handleExport = () => {
-    exportAccount.reset(); // clear any prior error before retrying
+    exportAccount.reset();
     exportAccount.mutate();
   };
 
-  // While deleting or exporting, block the whole screen from further interaction.
   const screenDisabled = isDeleting || signOut.isPending || exportAccount.isPending;
 
   return (
@@ -95,57 +81,152 @@ export default function SettingsScreen() {
       <BackButton onPress={() => router.back()} label="Trips" />
       <Heading level={1}>Settings</Heading>
 
-      {/* ─── Email row ─────────────────────────────────────────────────── */}
+      {/* ─── Profile section ─────────────────────────────────────────── */}
       <View
-        style={{
-          borderWidth: 1,
-          borderColor: t.colors.border,
-          borderRadius: t.radius.md,
-          paddingVertical: t.spacing.md,
-          paddingHorizontal: t.spacing.lg,
-          backgroundColor: t.colors.bgElevated,
-          gap: t.spacing.xs,
-        }}
+        style={[
+          styles.profileCard,
+          {
+            borderRadius: t.radius.xl,
+            backgroundColor: t.colors.cardBgSolid,
+            borderWidth: 1,
+            borderColor: t.colors.border,
+            padding: t.spacing.lg,
+            ...t.shadows.sm(t.colors.shadowColor),
+          },
+        ]}
       >
-        <Text
-          style={[t.typography.caption, { color: t.colors.textMuted }]}
-          accessibilityRole="none"
+        {/* Avatar with gradient ring */}
+        <View
+          style={[
+            styles.avatarRing,
+            {
+              backgroundColor: t.colors.primary,
+              borderRadius: t.radius.pill,
+            },
+          ]}
         >
-          Signed in as
-        </Text>
-        <Text
-          style={[t.typography.body, { color: t.colors.text }]}
-          accessibilityLabel={`Email: ${email}`}
-          accessibilityRole="text"
-          selectable
-        >
-          {email}
-        </Text>
+          <Text style={styles.avatarText}>{initial}</Text>
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text
+            style={[t.typography.caption, { color: t.colors.textMuted }]}
+            accessibilityRole="none"
+          >
+            Signed in as
+          </Text>
+          <Text
+            style={[t.typography.bodyStrong, { color: t.colors.text }]}
+            accessibilityLabel={`Email: ${email}`}
+            accessibilityRole="text"
+            selectable
+          >
+            {email}
+          </Text>
+        </View>
       </View>
 
-      {/* ─── Theme picker ──────────────────────────────────────────────── */}
-      <SegmentedControl
-        label="Appearance"
-        value={mode}
-        options={THEME_OPTIONS}
-        onChange={setMode}
-      />
+      {/* ─── Theme picker — visual cards ──────────────────────────────── */}
+      <View style={{ gap: t.spacing.xs }}>
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+          Appearance
+        </Text>
+        <View style={styles.themeRow}>
+          {THEME_OPTIONS.map((opt) => {
+            const active = opt.value === mode;
+            return (
+              <Pressable
+                key={opt.value}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={opt.label}
+                onPress={() => setMode(opt.value)}
+                style={({ pressed }) => [
+                  styles.themeCard,
+                  {
+                    backgroundColor: active ? t.colors.gradientSubtle : t.colors.cardBgSolid,
+                    borderColor: active ? t.colors.primary : t.colors.border,
+                    borderRadius: t.radius.lg,
+                    ...(active ? t.shadows.glow(t.colors.glowPrimary) : t.shadows.sm(t.colors.shadowColor)),
+                  },
+                  pressed && { opacity: 0.8 },
+                  Platform.OS === 'web' && ({
+                    transition: 'all 0.2s ease',
+                    cursor: 'pointer',
+                  } as ViewStyle),
+                ]}
+              >
+                <Text style={styles.themeIcon}>{opt.icon}</Text>
+                <Text
+                  style={[
+                    t.typography.caption,
+                    {
+                      color: active ? t.colors.primary : t.colors.text,
+                      fontWeight: active ? '700' : '500',
+                    },
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
 
       {/* ─── Spacer ────────────────────────────────────────────────────── */}
       <View style={{ flex: 1 }} />
 
-      {/* ─── Export my data ────────────────────────────────────────────── */}
-      <Button
-        variant="secondary"
-        label="Export my data"
-        onPress={handleExport}
-        loading={exportAccount.isPending}
-        disabled={screenDisabled || exportAccount.isPending}
-        accessibilityLabel="Export my data as JSON"
-        accessibilityHint="Downloads a JSON file with all your trips and places."
-      />
+      {/* ─── Actions card ──────────────────────────────────────────────── */}
+      <View
+        style={[
+          styles.actionsCard,
+          {
+            borderRadius: t.radius.xl,
+            backgroundColor: t.colors.cardBgSolid,
+            borderWidth: 1,
+            borderColor: t.colors.border,
+            ...t.shadows.sm(t.colors.shadowColor),
+            overflow: 'hidden',
+          },
+        ]}
+      >
+        {/* Export */}
+        <Button
+          variant="ghost"
+          label="📦 Export my data"
+          onPress={handleExport}
+          loading={exportAccount.isPending}
+          disabled={screenDisabled || exportAccount.isPending}
+          accessibilityLabel="Export my data as JSON"
+          accessibilityHint="Downloads a JSON file with all your trips and places."
+        />
 
-      {/* ─── Export error ──────────────────────────────────────────────── */}
+        <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
+
+        {/* Sign out */}
+        <Button
+          variant="ghost"
+          label="🚪 Sign out"
+          onPress={handleSignOut}
+          loading={signOut.isPending}
+          disabled={screenDisabled}
+        />
+
+        <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
+
+        {/* Delete account */}
+        <Button
+          variant="danger"
+          label="🗑️ Delete account"
+          onPress={handleDeleteAccount}
+          loading={isDeleting}
+          disabled={screenDisabled}
+          accessibilityLabel="Delete account permanently"
+          accessibilityHint="Requires confirmation. Permanently removes your account and all trips."
+        />
+      </View>
+
+      {/* ─── Inline errors ─────────────────────────────────────────────── */}
       {exportAccount.error ? (
         <Text
           style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
@@ -156,34 +237,10 @@ export default function SettingsScreen() {
         </Text>
       ) : null}
 
-      {/* ─── Sign out ──────────────────────────────────────────────────── */}
-      <Button
-        variant="secondary"
-        label="Sign out"
-        onPress={handleSignOut}
-        loading={signOut.isPending}
-        disabled={screenDisabled}
-      />
-
-      {/* ─── Delete account ────────────────────────────────────────────── */}
-      <Button
-        variant="danger"
-        label="Delete account"
-        onPress={handleDeleteAccount}
-        loading={isDeleting}
-        disabled={screenDisabled}
-        accessibilityLabel="Delete account permanently"
-        accessibilityHint="Requires confirmation. Permanently removes your account and all trips."
-      />
-
-      {/* ─── Inline delete error ───────────────────────────────────────── */}
       {deleteError ? (
         <Text
           style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
           accessibilityRole="alert"
-          // accessibilityLiveRegion="polite" surfaces the error to screen readers on web
-          // without requiring focus movement. On native, accessibilityRole="alert"
-          // triggers the equivalent OS-level announcement.
           accessibilityLiveRegion="polite"
         >
           {deleteError}
@@ -192,3 +249,42 @@ export default function SettingsScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  profileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  avatarRing: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  themeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  themeCard: {
+    flex: 1,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    gap: 6,
+  },
+  themeIcon: {
+    fontSize: 24,
+  },
+  actionsCard: {},
+  divider: {
+    height: 1,
+    marginHorizontal: 16,
+  },
+});

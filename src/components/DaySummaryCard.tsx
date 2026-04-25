@@ -67,11 +67,11 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
   const formattedCost =
     derived.cost !== null
       ? new Intl.NumberFormat(undefined, {
-          style: 'currency',
-          currency: trip.currency,
-          maximumFractionDigits: 0,
-          minimumFractionDigits: 0,
-        }).format(derived.cost)
+        style: 'currency',
+        currency: trip.currency,
+        maximumFractionDigits: 0,
+        minimumFractionDigits: 0,
+      }).format(derived.cost)
       : '—';
 
   const formattedDistance =
@@ -97,9 +97,12 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
       style={[
         styles.card,
         {
-          backgroundColor: t.colors.bgMuted,
-          borderRadius: t.radius.sm,
-          padding: t.spacing.sm,
+          backgroundColor: t.colors.cardBgSolid,
+          borderRadius: t.radius.lg,
+          padding: t.spacing.md,
+          borderWidth: 1,
+          borderColor: t.colors.border,
+          ...t.shadows.sm(t.colors.shadowColor),
         },
       ]}
       accessible
@@ -159,7 +162,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 6,
     alignItems: 'center',
   },
   chip: {},

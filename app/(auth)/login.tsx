@@ -91,9 +91,9 @@ export default function Login() {
             ✈️
           </Text>
           <Heading level={1}>Check your inbox</Heading>
-          <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
+          <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center', lineHeight: 24 }]}>
             We sent a magic link to{' '}
-            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+            <Text style={[t.typography.bodyStrong, { color: t.colors.primary }]}>
               {submittedEmail}
             </Text>
             . Tap it to sign in — no password needed.
@@ -135,10 +135,18 @@ export default function Login() {
               Your trip,{'\n'}perfectly planned.
             </Text>
             <Text
-              style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm }]}
+              style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}
             >
               Add destinations, optimise your days, share with your crew.
             </Text>
+            {/* Value prop chips */}
+            <View style={styles.chipRow}>
+              {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
+                <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
+                  <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         </View>
 
@@ -149,7 +157,7 @@ export default function Login() {
               styles.desktopFormInner,
               {
                 padding: t.spacing.xxl,
-                gap: t.spacing.md,
+                gap: t.spacing.lg,
               },
             ]}
             keyboardShouldPersistTaps="handled"
@@ -242,9 +250,17 @@ export default function Login() {
           <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>
             Your trip,{'\n'}perfectly planned.
           </Text>
-          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm }]}>
+          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
             Add destinations, optimise your days, share with your crew.
           </Text>
+          {/* Value prop chips */}
+          <View style={styles.chipRow}>
+            {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
+              <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
+                <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
+              </View>
+            ))}
+          </View>
         </View>
       </View>
 
@@ -255,7 +271,7 @@ export default function Login() {
           {
             backgroundColor: t.colors.bg,
             padding: t.spacing.xl,
-            gap: t.spacing.md,
+            gap: t.spacing.lg,
           },
         ]}
         keyboardShouldPersistTaps="handled"
@@ -322,22 +338,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   desktopHero: {
-    // Left column: fills half the viewport.
     flex: 1,
     overflow: 'hidden',
   },
   desktopHeroCopy: {
-    // Push copy to the bottom third of the hero column.
     flex: 1,
     justifyContent: 'flex-end',
   },
   desktopFormOuter: {
-    // Right column: fixed-width panel, vertically centred form inside.
-    width: 480,
+    width: 520,
     justifyContent: 'center',
   },
   desktopFormInner: {
-    // Form content is constrained to 440px and centred within the 480px panel.
     width: '100%',
     maxWidth: 440,
     alignSelf: 'center',
@@ -348,37 +360,43 @@ const styles = StyleSheet.create({
   // ── Mobile / tablet stacked ───────────────────────────────────────────────
   heroContainer: {
     flex: 1,
-    // Hero takes ~55% of viewport; the form card takes the rest.
-    // On very small screens (iPhone SE = 568pt) min is capped so the form fits.
-    minHeight: 220,
-    maxHeight: 340,
+    minHeight: 240,
+    maxHeight: 360,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
   heroCopy: {
-    // Sits at the bottom of the hero over the scrim.
     justifyContent: 'flex-end',
   },
   heroTitle: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
   formCard: {
-    // Slight top-radius makes the card feel lifted above the hero.
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    marginTop: -20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
     flexGrow: 1,
   },
   confirmCard: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 20,
+    gap: 24,
   },
   confirmIcon: {
-    fontSize: 48,
+    fontSize: 56,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+    flexWrap: 'wrap',
+  },
+  valueChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
 });

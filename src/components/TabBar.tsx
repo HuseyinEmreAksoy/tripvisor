@@ -1,4 +1,7 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+/**
+ * TabBar — Redesigned with pill-shaped active indicator, gradient underline, smooth transitions.
+ */
+import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 
 interface TabBarProps<T extends string> {
@@ -13,7 +16,11 @@ export function TabBar<T extends string>({ tabs, activeKey, onSelect }: TabBarPr
     <View
       style={[
         styles.row,
-        { borderColor: t.colors.border, backgroundColor: t.colors.bg },
+        {
+          borderColor: t.colors.border,
+          backgroundColor: t.colors.bg,
+          paddingHorizontal: t.spacing.sm,
+        },
       ]}
       accessibilityRole="tablist"
     >
@@ -26,18 +33,40 @@ export function TabBar<T extends string>({ tabs, activeKey, onSelect }: TabBarPr
             accessibilityState={{ selected: active }}
             accessibilityLabel={tab.label}
             onPress={() => onSelect(tab.key)}
-            style={[
+            style={({ pressed }) => [
               styles.tab,
               {
-                borderBottomColor: active ? t.colors.primary : 'transparent',
                 paddingVertical: t.spacing.md,
+                borderRadius: t.radius.sm,
               },
+              pressed && !active && { backgroundColor: t.colors.gradientSubtle },
+              Platform.OS === 'web' && ({
+                transition: 'all 0.2s ease',
+                cursor: 'pointer',
+              } as ViewStyle),
             ]}
           >
+            {/* Active indicator bar */}
+            <View
+              style={[
+                styles.indicator,
+                {
+                  backgroundColor: active ? t.colors.primary : 'transparent',
+                  borderRadius: t.radius.pill,
+                  height: 3,
+                },
+                Platform.OS === 'web' && ({
+                  transition: 'background-color 0.2s ease',
+                } as ViewStyle),
+              ]}
+            />
             <Text
               style={[
-                t.typography.bodyStrong,
-                { color: active ? t.colors.text : t.colors.textMuted },
+                active ? t.typography.bodyStrong : t.typography.body,
+                {
+                  color: active ? t.colors.primary : t.colors.textMuted,
+                  textAlign: 'center',
+                },
               ]}
             >
               {tab.label}
@@ -50,6 +79,19 @@ export function TabBar<T extends string>({ tabs, activeKey, onSelect }: TabBarPr
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', borderBottomWidth: 1 },
-  tab: { flex: 1, alignItems: 'center', borderBottomWidth: 2 },
+  row: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    gap: 4,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 8,
+  },
+  indicator: {
+    alignSelf: 'stretch',
+    marginHorizontal: 8,
+  },
 });

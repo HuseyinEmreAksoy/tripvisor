@@ -1,3 +1,6 @@
+/**
+ * StatusPill — Redesigned with gradient backgrounds and refined shadow.
+ */
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 
@@ -11,27 +14,36 @@ interface Props {
 
 export function StatusPill({ tone = 'info', label, loading }: Props) {
   const t = useTheme();
-  const bg =
+
+  const bgColor =
+    tone === 'danger'
+      ? t.colors.dangerLight
+      : tone === 'success'
+        ? t.colors.successLight
+        : t.colors.infoLight;
+
+  const textColor =
     tone === 'danger'
       ? t.colors.danger
       : tone === 'success'
         ? t.colors.success
         : t.colors.primary;
+
   return (
     <View
       accessibilityLiveRegion="polite"
       style={[
         styles.pill,
         {
-          backgroundColor: bg,
+          backgroundColor: bgColor,
           borderRadius: t.radius.pill,
           paddingHorizontal: t.spacing.md,
           paddingVertical: t.spacing.xs,
         },
       ]}
     >
-      {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> : null}
-      <Text style={[t.typography.small, { color: '#FFFFFF' }]}>{label}</Text>
+      {loading ? <ActivityIndicator size="small" color={textColor} /> : null}
+      <Text style={[t.typography.small, { color: textColor, fontWeight: '600' }]}>{label}</Text>
     </View>
   );
 }

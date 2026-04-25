@@ -18,7 +18,18 @@ export function Heading({ level = 1, children, ...rest }: HeadingProps) {
     <Text
       accessibilityRole="header"
       {...(webProps as object)}
-      style={[t.typography[variant], { color: t.colors.text }]}
+      style={[
+        t.typography[variant],
+        {
+          color: t.colors.text,
+          // Add extra vertical weight for display headings
+          ...(level === 1
+            ? { letterSpacing: -0.5 }
+            : level === 2
+              ? { letterSpacing: -0.3 }
+              : {}),
+        },
+      ]}
       {...rest}
     >
       {children}

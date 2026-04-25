@@ -147,10 +147,18 @@ export default function Signup() {
               Start your{'\n'}adventure.
             </Text>
             <Text
-              style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm }]}
+              style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}
             >
               Free forever. No credit card. Just great trips.
             </Text>
+            {/* Value prop chips */}
+            <View style={styles.chipRow}>
+              {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
+                <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
+                  <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         </View>
 
@@ -159,7 +167,7 @@ export default function Signup() {
           <ScrollView
             contentContainerStyle={[
               styles.desktopFormInner,
-              { padding: t.spacing.xxl, gap: t.spacing.md },
+              { padding: t.spacing.xxl, gap: t.spacing.lg },
             ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -200,9 +208,17 @@ export default function Signup() {
           <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>
             Start your{'\n'}adventure.
           </Text>
-          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm }]}>
+          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
             Free forever. No credit card. Just great trips.
           </Text>
+          {/* Value prop chips */}
+          <View style={styles.chipRow}>
+            {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
+              <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
+                <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
+              </View>
+            ))}
+          </View>
         </View>
       </View>
 
@@ -213,7 +229,7 @@ export default function Signup() {
           {
             backgroundColor: t.colors.bg,
             padding: t.spacing.xl,
-            gap: t.spacing.md,
+            gap: t.spacing.lg,
           },
         ]}
         keyboardShouldPersistTaps="handled"
@@ -228,7 +244,6 @@ export default function Signup() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  // ── Desktop two-column ────────────────────────────────────────────────────
   desktopRoot: {
     flexDirection: 'row',
   },
@@ -241,7 +256,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   desktopFormOuter: {
-    width: 480,
+    width: 520,
     justifyContent: 'center',
   },
   desktopFormInner: {
@@ -252,10 +267,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ── Mobile / tablet stacked ───────────────────────────────────────────────
   heroContainer: {
-    minHeight: 220,
-    maxHeight: 340,
+    minHeight: 240,
+    maxHeight: 360,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
@@ -263,15 +277,25 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   heroTitle: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
   formCard: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    marginTop: -20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
     flexGrow: 1,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+    flexWrap: 'wrap',
+  },
+  valueChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
 });
