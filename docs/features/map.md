@@ -32,6 +32,20 @@ As a traveler, I want to see my whole itinerary on a map with color-coded days s
 - Empty markers → initial region zoomed out to world view
 - Single-place trip → no polylines, single marker centered
 
+## Phase 15 — Per-day chip filter (shipped 2026-04-25)
+
+A horizontal `ScrollView` chip row ("All" + one chip per day) sits above the existing `<Map>` inside `MapTab` in `app/(app)/trip/[id]/index.tsx`. Selecting a chip filters both `markers` and `polylines` via `useMemo` before they are passed down to the Map component — no new API calls, no backend changes.
+
+- `availableDays` memo: distinct, sorted `day_index` values from places where `day_index` is non-null and `>= 0`. Chip row is hidden entirely when this list is empty (e.g. before optimize runs).
+- Day labels are 1-based to match the Itinerary tab (`day_index 0` → "Day 1").
+- Unassigned places (`day_index === null`) appear only in the "All" view.
+- If the selected day becomes invalid (all its places deleted), a `useEffect` resets selection to `'all'`.
+- State is per-session only — not persisted to URL.
+- A11y: wrapper `accessibilityRole="radiogroup"`, each chip `accessibilityRole="radio"` with `accessibilityState={{ checked }}`.
+- Color dots on chips use `dayColor(dayIndex)` — same palette as the rest of the app.
+
+Non-goals for this phase: Itinerary tab filtering, URL persistence, map viewport auto-fit to selected day.
+
 ## Test plan
 - Component: manual smoke on all three platforms (polyline visual)
 - E2E: deferred to Phase 4

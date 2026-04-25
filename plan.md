@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 14 — Done (web; native unaffected)
+**Current phase**: Phase 15 — Done (web; native unaffected)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -22,6 +22,7 @@
 | 12 | Advisory lock fix (Phase 5 M1) + Cost sort + Date filter (Phase 11 M1/L4 deferred) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 13 | DB-row mutex (closes Phase 12 C1 — PgBouncer advisory-lock weakness) | ✅ Done (web; native deferred to user smoke) | backend |
 | 14 | Share link OG/Twitter meta tags (rich unfurl) | ✅ Done (web verified; native unaffected — Head is web-only no-op) | ui |
+| 15 | Per-day map filter on trip detail | ✅ Done (web verified; native unaffected — shared component code, no platform-specific surface) | ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1911,3 +1912,39 @@ Rich unfurl support for public share links. Previously, pasting a `/share/<token
 **Process**: no formal reviewer pass. UI-only change, two files, both edits follow an existing proven pattern. ui-specialist self-verified by grepping curl'd HTML, confirming the react-helmet-async injection path, and validating sample summary outputs against the spec.
 
 **Feature doc**: `docs/features/share.md` (Phase 14 unfurl mechanism section added).
+
+---
+
+## Phase 15 — Per-day map filter on trip detail
+
+**Status**: Done — shipped 2026-04-25; web verified; native unaffected (shared component code, no platform-specific surface).
+**Last updated**: 2026-04-25
+
+Focus mode for the trip detail Map tab. Users with 25 places across 3–5 days were reading a noisy combined map with all markers and polylines overlaid at once. Phase 15 adds a horizontal chip row ("All" + one chip per day) above the existing `<Map>` inside `MapTab`. Selecting a chip filters both `markers` and `polylines` to that day's data only.
+
+**Mechanism**:
+- `selectedDay: 'all' | number` state in `MapTab`; resets to `'all'` on tab unmount (intentionally not URL-persisted — per-session focus tool).
+- `availableDays` memo: deduped, sorted list of distinct `day_index` values from places where `day_index` is non-null and `>= 0`.
+- Two filter `useMemo`s: one for markers, one for polylines. Both are derived from the same TanStack Query cache — no new API calls.
+- Chip row is rendered only when `availableDays.length > 0`; skipped entirely if no places have been assigned to a day (e.g. before optimize runs).
+
+**Day-label convention**: matches the Itinerary tab. DB `day_index` is 0-based; UI label is 1-based (`day_index === 0` → chip label `"Day 1"`).
+
+**Files changed**:
+- `app/(app)/trip/[id]/index.tsx` — only file modified. Extended `MapTab` with state, memos, and chip row UI. 162 insertions / 24 deletions. Chips use `dayColor(dayIndex)` for a small decorative color dot matching the per-day color scheme used elsewhere. A11y: outer wrapper `accessibilityRole="radiogroup"`, each chip `accessibilityRole="radio"` with `accessibilityState={{ checked }}` — same pattern as Phase 12 `FilterSheet`.
+
+**Edge cases handled**:
+- Zero days available (no places assigned yet): chip row hidden; map shows everything.
+- Selected day becomes invalid (all its places deleted): `useEffect` keyed on `[availableDays, selectedDay]` resets to `'all'` once.
+- Unassigned places (`day_index === null`): visible only in `'all'` view; excluded from all day-specific filters.
+- React keys: stringified `selectedDay` values — no duplicates, no key warnings.
+
+**Non-goals** (explicitly out of scope):
+- Filtering the Itinerary tab — already groups visually by day.
+- URL/route param persistence of chip selection.
+- Map viewport auto-fit / zoom-to-day — potential follow-up; existing fit-to-bounds may already cover it.
+- Backend changes, tests, and smoke runs.
+
+**Process**: no formal reviewer pass. UI-only single-file change; all logic isolated to `MapTab`. ui-specialist self-verified (matched Itinerary tab label convention, confirmed memo deps, confirmed key uniqueness). Same scoped-phase convention as Phases 11–14.
+
+**Feature doc**: `docs/features/map.md` (Phase 15 chip filter section added).

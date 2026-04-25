@@ -184,34 +184,158 @@ function MapTab({
   legs: TripLeg[];
   onMarker: (googlePlaceId: string) => void;
 }) {
-  const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
-  const markers: MapMarker[] = places.map((p) => ({
-    id: p.id,
-    lat: p.lat,
-    lng: p.lng,
-    title: p.user_title ?? 'Place',
-    dayIndex: p.day_index,
-    orderInDay: p.order_in_day,
-  }));
+  const t = useTheme();
 
-  const polylines: MapPolyline[] = legs
-    .filter((l) => l.polyline && l.day_index >= 0)
-    .map((l) => ({
-      id: l.id,
-      dayIndex: l.day_index,
-      points: decodePolyline(l.polyline!),
-    }));
+  // ── Day filter state ───────────────────────────────────────────────────────
+  // 'all' shows everything; a number filters to that day_index (0-indexed).
+  // Resets on tab unmount — per-session, not persisted.
+  const [selectedDay, setSelectedDay] = useState<'all' | number>('all');
+
+  const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
+
+  // All day indexes that have at least one assigned place, deduped and sorted.
+  const availableDays = useMemo(() => {
+    const seen = new Set<number>();
+    for (const p of places) {
+      if (p.day_index !== null && p.day_index >= 0) seen.add(p.day_index);
+    }
+    return [...seen].sort((a, b) => a - b);
+  }, [places]);
+
+  // If the previously-selected day is no longer valid (e.g. all its places
+  // were deleted and the user returns to this tab), reset to 'all'.
+  useEffect(() => {
+    if (selectedDay !== 'all' && !availableDays.includes(selectedDay)) {
+      setSelectedDay('all');
+    }
+  }, [availableDays, selectedDay]);
+
+  // Build the full marker + polyline arrays once.
+  const allMarkers: MapMarker[] = useMemo(
+    () =>
+      places.map((p) => ({
+        id: p.id,
+        lat: p.lat,
+        lng: p.lng,
+        title: p.user_title ?? 'Place',
+        dayIndex: p.day_index,
+        orderInDay: p.order_in_day,
+      })),
+    [places],
+  );
+
+  const allPolylines: MapPolyline[] = useMemo(
+    () =>
+      legs
+        .filter((l) => l.polyline && l.day_index >= 0)
+        .map((l) => ({
+          id: l.id,
+          dayIndex: l.day_index,
+          points: decodePolyline(l.polyline!),
+        })),
+    [legs],
+  );
+
+  // Apply the day filter. When 'all', pass the full arrays (stable references
+  // from the memos above so Map doesn't re-render unnecessarily).
+  const filteredMarkers = useMemo(() => {
+    if (selectedDay === 'all') return allMarkers;
+    // Exclude unassigned (day_index === null) when filtering by a specific day.
+    return allMarkers.filter((m) => m.dayIndex === selectedDay);
+  }, [allMarkers, selectedDay]);
+
+  const filteredPolylines = useMemo(() => {
+    if (selectedDay === 'all') return allPolylines;
+    return allPolylines.filter((p) => p.dayIndex === selectedDay);
+  }, [allPolylines, selectedDay]);
 
   return (
     <View style={{ flex: 1 }}>
-      <Map
-        markers={markers}
-        polylines={polylines}
-        onMarkerPress={(markerId) => {
-          const p = byId.get(markerId);
-          if (p) onMarker(p.google_place_id);
-        }}
-      />
+      {/* Chip row — only rendered once at least one place has been assigned to a day */}
+      {availableDays.length > 0 ? (
+        <View
+          style={{
+            paddingHorizontal: t.spacing.lg,
+            paddingVertical: t.spacing.sm,
+          }}
+        >
+          {/*
+           * accessibilityRole="radiogroup" on the wrapping View groups all chips
+           * for screen readers; each chip carries role="radio" + checked state.
+           */}
+          <View accessibilityRole="radiogroup" accessibilityLabel="Filter map by day">
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: t.spacing.sm }}
+            >
+              {/* "All" chip */}
+              {(['all', ...availableDays] as Array<'all' | number>).map((value) => {
+                const isAll = value === 'all';
+                const isSelected = selectedDay === value;
+                const label = isAll ? 'All' : `Day ${(value as number) + 1}`;
+                const dotColor = isAll ? undefined : dayColor(value as number);
+
+                return (
+                  <Pressable
+                    key={String(value)}
+                    accessibilityRole="radio"
+                    accessibilityLabel={label}
+                    accessibilityState={{ checked: isSelected }}
+                    onPress={() => setSelectedDay(value)}
+                    style={[
+                      styles.dayChip,
+                      {
+                        backgroundColor: isSelected
+                          ? t.colors.primary
+                          : t.colors.bgElevated,
+                        borderColor: isSelected ? t.colors.primary : t.colors.border,
+                        borderRadius: t.radius.md,
+                      },
+                    ]}
+                  >
+                    {/* Color dot for day chips — kept compact (8×8) so it doesn't compete with the label */}
+                    {!isAll && dotColor ? (
+                      <View
+                        style={[
+                          styles.dayChipDot,
+                          { backgroundColor: dotColor },
+                        ]}
+                        // Purely decorative; the label already conveys identity.
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                    ) : null}
+                    <Text
+                      style={[
+                        t.typography.caption,
+                        {
+                          color: isSelected ? t.colors.primaryText : t.colors.text,
+                          fontWeight: isSelected ? '600' : '400',
+                        },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Map fills the remaining space */}
+      <View style={{ flex: 1 }}>
+        <Map
+          markers={filteredMarkers}
+          polylines={filteredPolylines}
+          onMarkerPress={(markerId) => {
+            const p = byId.get(markerId);
+            if (p) onMarker(p.google_place_id);
+          }}
+        />
+      </View>
     </View>
   );
 }
@@ -933,5 +1057,19 @@ const styles = StyleSheet.create({
   },
   dayNotesCollapsed: {
     borderWidth: 1,
+  },
+  // Day-filter chips rendered above the Map in MapTab.
+  dayChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 12, // t.spacing.md = 12
+    minHeight: 36,
+    gap: 6,
+  },
+  dayChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
 });

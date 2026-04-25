@@ -10,7 +10,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Place details + Google reviews | 🚧 In progress | 1 | [place-details.md](place-details.md) |
 | Route optimization (k-means + 2-opt) | 🚧 In progress | 2 | [optimization.md](optimization.md) |
 | Day split by time budget | 🚧 In progress | 2 | [day-split.md](day-split.md) |
-| Map + polyline visualization | 🚧 In progress | 2 | [map.md](map.md) |
+| Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (base map code complete; per-day filter shipped Phase 15 — web verified, native deferred to user smoke) | 2, 15 | [map.md](map.md) |
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
 | Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
@@ -25,6 +25,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Trip notes / journal (per-place + per-day, Markdown in print) | ✅ Done (web; native deferred to user smoke) | 9 | [notes-journal.md](notes-journal.md) |
 | Account data export (JSON) | ✅ Done (web; native deferred to user smoke) | 10 | [account-export.md](account-export.md) |
 | Trips list polish (search + sort + Cost sort + date filter All/Upcoming/Past) | ✅ Done (web; native deferred to user smoke) | 11–12 | [trips-list-polish.md](trips-list-polish.md) |
+| Per-day map filter (MapTab chip row) | ✅ Done (web verified; native unaffected — shared component code) | 15 | [map.md](map.md) |
 
 Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 In progress.
 
