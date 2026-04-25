@@ -1,25 +1,14 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabase';
-import { tripsKeys } from './trips';
-import { tripPlacesKeys } from './trip-places';
 import type { TripLeg, Uuid } from './types';
+// Phase 20 Step 6: hoisted to `./_keys` to break the
+// `trip-places <-> routes` circular import. Re-exported below so existing
+// `import { tripLegsKeys } from './routes'` call sites keep working.
+import { tripsKeys, tripPlacesKeys, tripLegsKeys } from './_keys';
+import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
 
-export const tripLegsKeys = {
-  all: ['trip-legs'] as const,
-  forTrip: (tripId: Uuid) => [...tripLegsKeys.all, tripId] as const,
-  /**
-   * Cache key for the multi-trip batch fetch used by the trips list cost
-   * sort (Phase 12). The id list is sorted at key-construction time so
-   * `[a, b]` and `[b, a]` collapse to one cache entry. We cache by the
-   * comma-joined string (rather than the array itself) for a stable
-   * primitive key — TanStack hashes structurally either way, but the
-   * stringified form is faster to compare and keeps the cache key human
-   * readable in devtools.
-   */
-  byTripIds: (tripIds: readonly Uuid[]) =>
-    [...tripLegsKeys.all, 'by-trips', [...tripIds].sort().join(',')] as const,
-};
+export { tripLegsKeys };
 
 export interface OptimizeResult {
   stateHash: string;
@@ -38,6 +27,10 @@ export interface OptimizeResult {
  * surface (e.g. an "in progress" pill on 409 vs. a generic failure pill
  * on 5xx).
  *
+ * Phase 20 Step 6: now extends the shared {@link EdgeFunctionError} base
+ * class. The class name and field shape are unchanged so existing
+ * `instanceof OptimizeError` checks at consumer sites keep working.
+ *
  * Known codes (mirrors `supabase/functions/optimize-trip/index.ts`):
  *   - `already_optimizing`  — 409 — another optimize is in flight for this
  *                              trip; transient, no user action required
@@ -53,13 +46,9 @@ export interface OptimizeResult {
  * the original `Error` thrown by `supabase.functions.invoke` — the
  * mutation's error type is `OptimizeError | Error` to reflect that.
  */
-export class OptimizeError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number,
-  ) {
-    super(message);
+export class OptimizeError extends EdgeFunctionError {
+  constructor(code: string, message: string, status: number) {
+    super(code, message, status);
     this.name = 'OptimizeError';
   }
 }
@@ -189,43 +178,10 @@ export function useOptimizeTrip() {
       if (error) {
         // `supabase.functions.invoke` wraps non-2xx responses in
         // FunctionsHttpError, exposing the original Response on `.context`.
-        // Try to parse the structured envelope; fall back to the generic
-        // error on any failure so we never silently swallow it.
-        const ctx = (error as { context?: unknown }).context;
-        if (
-          ctx &&
-          typeof ctx === 'object' &&
-          'status' in ctx &&
-          typeof (ctx as { status: unknown }).status === 'number' &&
-          'json' in ctx &&
-          typeof (ctx as { json: unknown }).json === 'function'
-        ) {
-          try {
-            const response = ctx as Response;
-            const body: unknown = await response.json();
-            if (
-              body &&
-              typeof body === 'object' &&
-              'error' in body &&
-              body.error &&
-              typeof body.error === 'object' &&
-              'code' in body.error &&
-              typeof (body.error as { code: unknown }).code === 'string'
-            ) {
-              const env = body.error as { code: string; message?: unknown };
-              const message =
-                typeof env.message === 'string' && env.message.length > 0
-                  ? env.message
-                  : error.message;
-              throw new OptimizeError(env.code, message, response.status);
-            }
-          } catch (parseErr) {
-            // If parse threw an OptimizeError, re-throw it; otherwise
-            // (JSON parse / shape mismatch) fall through to the generic
-            // error below so the caller still sees the original failure.
-            if (parseErr instanceof OptimizeError) throw parseErr;
-          }
-        }
+        // Phase 20 Step 6: parse via the shared `tryParseEdgeFunctionError`
+        // helper so the envelope-parsing logic lives in one place.
+        const typed = await tryParseEdgeFunctionError(error, OptimizeError);
+        if (typed) throw typed;
         throw error;
       }
       if (!data) throw new Error('optimize-trip returned no data');

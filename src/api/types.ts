@@ -23,8 +23,20 @@ export interface Trip {
   archived_at: string | null;
   /** Phase 8: unit-of-account for the per-trip cost rollup (ADR-0007). */
   currency: TripCurrency;
-  /** Phase 8: per-kilometer rate the client multiplies against trip_legs.distance_meters (ADR-0007). */
+  /**
+   * Phase 8: per-kilometer rate the client multiplies against trip_legs.distance_meters (ADR-0007).
+   * @deprecated 2026-04-25 (Phase 20 Step 6) — replaced by the category-based
+   * budget model (`total_budget` + `trip_expenses` table). Kept on the row
+   * for back-compat until Phase 21 Step 4 migrates the UI; future migration
+   * will drop the column.
+   */
   cost_per_km: number;
+  /**
+   * Phase 20 Step 6: optional total-trip budget ceiling. Unit is `currency`.
+   * Null means "no ceiling configured" — the per-category sum from
+   * trip_expenses is still meaningful on its own.
+   */
+  total_budget: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +66,41 @@ export interface TripDay {
   day_end_place_id: Uuid | null;
   /** Phase 9: free-text per-day journal entry (Markdown, rendered client-side per ADR-0008). */
   notes: string | null;
+}
+
+/**
+ * Phase 20 Step 6: category enum for `trip_expenses.category`. Mirrors the
+ * `trip_expenses_category_check` constraint in
+ * `0010_trip_budget_categories.sql`. If the constraint list grows, widen
+ * this union in lockstep.
+ */
+export type TripExpenseCategory =
+  | 'accommodation'
+  | 'food'
+  | 'transport'
+  | 'shopping'
+  | 'activities'
+  | 'other';
+
+/**
+ * Phase 20 Step 6: estimated rows are pre-trip / planning entries; actual
+ * rows are recorded after the fact. Both can coexist for the same
+ * trip/category — Phase 21 will surface variance.
+ */
+export type TripExpenseKind = 'estimated' | 'actual';
+
+export interface TripExpense {
+  id: Uuid;
+  trip_id: Uuid;
+  category: TripExpenseCategory;
+  amount: number;
+  kind: TripExpenseKind;
+  /** Optional pinning to a specific day (`null` = trip-level). */
+  day_index: number | null;
+  /** Free-text label for the line item (e.g. "Hotel night 2"). NOT a place reference. */
+  label: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TripLeg {

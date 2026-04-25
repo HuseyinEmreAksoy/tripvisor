@@ -2,13 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type { CreateTripPlaceInput, TripPlace, Uuid } from './types';
-import { tripsKeys } from './trips';
-import { tripLegsKeys } from './routes';
+// Phase 20 Step 6: hoisted to `./_keys` to break the
+// `trip-places <-> routes` circular import. Re-exported below so existing
+// `import { tripPlacesKeys } from './trip-places'` call sites keep working.
+import { tripsKeys, tripPlacesKeys, tripLegsKeys } from './_keys';
 
-export const tripPlacesKeys = {
-  all: ['trip-places'] as const,
-  forTrip: (tripId: Uuid) => [...tripPlacesKeys.all, tripId] as const,
-};
+export { tripPlacesKeys };
 
 const createTripPlaceSchema = z.object({
   trip_id: z.string().uuid(),

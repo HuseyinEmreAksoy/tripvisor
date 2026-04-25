@@ -4,6 +4,7 @@ export * from './auth';
 export * from './trips';
 export * from './trip-places';
 export * from './trip-days';
+export * from './trip-expenses';
 export * from './places';
 export * from './routes';
 export * from './share';

@@ -1,8 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
-import { tripsKeys } from './trips';
 import type { TripDay, Uuid } from './types';
+// Phase 20 Step 6: query-key factories moved to `./_keys` to break the
+// `trip-places <-> routes` circular import. `tripDaysKeys` was hoisted
+// alongside its peers for consistency, even though it isn't part of the
+// cycle today — keeping the convention uniform avoids future circles
+// when more cross-module invalidations land.
+import { tripsKeys, tripDaysKeys } from './_keys';
 
 // ----- Query keys ---------------------------------------------------------
 //
@@ -10,10 +15,7 @@ import type { TripDay, Uuid } from './types';
 // blanket invalidations, `forTrip(tripId)` is the per-trip list. Day rows are
 // only ever consumed in the context of a parent trip (the trip detail screen
 // renders the per-day timeline), so a single per-trip key is enough.
-export const tripDaysKeys = {
-  all: ['trip-days'] as const,
-  forTrip: (tripId: Uuid) => [...tripDaysKeys.all, 'list', { tripId }] as const,
-};
+export { tripDaysKeys };
 
 /**
  * List trip_days for a trip ordered by day_index. Returns an empty array when

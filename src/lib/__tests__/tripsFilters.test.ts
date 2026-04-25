@@ -24,6 +24,7 @@ function makeTrip(overrides: Partial<Trip> & { id: Uuid }): Trip {
     archived_at: null,
     currency: 'USD',
     cost_per_km: 0.2,
+    total_budget: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     ...overrides,

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type { CreateTripInput, Trip, Uuid } from './types';
+import { tripsKeys } from './_keys';
 
 // ----- Query keys ---------------------------------------------------------
 //
@@ -11,12 +12,11 @@ import type { CreateTripInput, Trip, Uuid } from './types';
 // `invalidateQueries({ queryKey: tripsKeys.all })` hit both lists when a
 // mutation affects ownership of which list a trip lives in (archive /
 // unarchive / duplicate / delete).
-export const tripsKeys = {
-  all: ['trips'] as const,
-  list: (opts: { archived: boolean } = { archived: false }) =>
-    [...tripsKeys.all, 'list', { archived: opts.archived }] as const,
-  detail: (id: Uuid) => [...tripsKeys.all, 'detail', id] as const,
-};
+//
+// Phase 20 Step 6: the factory itself moved to `./_keys` to break the
+// `trip-places <-> routes` circular import. Re-exported here so existing
+// `import { tripsKeys } from './trips'` call sites keep working.
+export { tripsKeys };
 
 const createTripSchema = z.object({
   title: z.string().min(1, 'Title is required').max(120),
@@ -212,10 +212,16 @@ export function useUnarchiveTrip() {
  * actually edits in place:
  *   - `title` — rename affordance (Phase 8)
  *   - `currency`, `cost_per_km` — Phase 8 cost rollup card
+ *     (`cost_per_km` is DEPRECATED as of Phase 20 Step 6 — kept for
+ *     back-compat until Phase 21 Step 4 migrates the UI to the
+ *     category-based budget model)
  *   - `daily_hours_budget`, `transport_mode` — Phase 9 trip-meta cleanup
  *     (Step 9.6); these are the two remaining editable scalars on the trip
  *     detail screen and the optimizer reads both, so a typed home for them
  *     here keeps the editing surface consistent.
+ *   - `total_budget` — Phase 20 Step 6: optional total-trip budget ceiling;
+ *     the per-category sum lives on `trip_expenses` and is fetched
+ *     separately via `useTripExpenses`.
  *
  * Add fields here as new inline-editable surfaces land; do NOT widen to
  * `Partial<Trip>` since that would let callers blindly overwrite immutable
@@ -224,7 +230,12 @@ export function useUnarchiveTrip() {
 export type UpdateTripPatch = Partial<
   Pick<
     Trip,
-    'title' | 'currency' | 'cost_per_km' | 'daily_hours_budget' | 'transport_mode'
+    | 'title'
+    | 'currency'
+    | 'cost_per_km'
+    | 'daily_hours_budget'
+    | 'transport_mode'
+    | 'total_budget'
   >
 >;
 

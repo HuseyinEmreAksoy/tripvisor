@@ -17,6 +17,7 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     archived_at: null,
     currency: 'USD',
     cost_per_km: 0.2,
+    total_budget: null,
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,
@@ -46,7 +47,10 @@ describe('TripCard', () => {
     const onPress = jest.fn();
     const trip = makeTrip();
     const { getByRole } = renderWithTheme(<TripCard trip={trip} onPress={onPress} />);
-    fireEvent.press(getByRole('button', { name: 'Open trip Lisbon 3 days' }));
+    // Role is 'link' (not 'button') so that RN Web renders the card as <a>
+    // rather than <button>, avoiding the nested-button DOM nesting violation
+    // (Problem 3, Phase 20). The accessible name is unchanged.
+    fireEvent.press(getByRole('link', { name: 'Open trip Lisbon 3 days' }));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 });
