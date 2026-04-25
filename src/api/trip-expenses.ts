@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
+import { useTrip } from './trips';
 import type {
   TripExpense,
   TripExpenseCategory,
@@ -195,4 +197,146 @@ export function useDeleteTripExpense() {
       qc.invalidateQueries({ queryKey: tripsKeys.detail(trip_id) });
     },
   });
+}
+
+// ===========================================================================
+// Phase 21 Step 3: budget rollup (per-category + total)
+// ===========================================================================
+//
+// `useTripExpenseRollup` is a *derived* hook — it reads from the existing
+// `useTripExpenses` and `useTrip` query caches and reduces the rows into a
+// per-category breakdown plus trip-wide totals. It does NOT issue its own
+// network request, so adding it has zero cost on the request budget; the
+// React Query cache stays the single source of truth for both raw expenses
+// and the computed rollup.
+//
+// Why a hook (not a selector on `useTripExpenses`):
+//   - The rollup needs the trip's `total_budget`, which lives on a different
+//     query (`useTrip`). Composing both inside a hook keeps the call site
+//     free of plumbing.
+//   - We want one stable, memoized result object per (expenses, budget)
+//     pair so consumers can pass it as a prop without triggering downstream
+//     re-renders on every parent render.
+//
+// Memoization key: the source query's `data` array reference (TanStack
+// returns a new reference only when the data actually changed) plus the
+// scalar `total_budget`. That keeps the reduce O(n) only when something
+// real changed.
+
+const EXPENSE_CATEGORIES: readonly TripExpenseCategory[] = [
+  'accommodation',
+  'food',
+  'transport',
+  'shopping',
+  'activities',
+  'other',
+] as const;
+
+/**
+ * Per-category subtotal: planning estimate, recorded actual, and the
+ * residual `estimated - actual` (positive => still budgeted, negative =>
+ * overspent vs. plan). Phase 21 Step 3 surfaces this on the trip detail
+ * budget card; Phase 21 Step 4+ may reuse the same shape for variance
+ * tooling.
+ */
+export interface TripExpenseCategoryRollup {
+  estimated: number;
+  actual: number;
+  /** `estimated - actual`. Sign is meaningful — see field docs above. */
+  remaining: number;
+}
+
+/**
+ * Shape returned by `useTripExpenseRollup`. `byCategory` is keyed by the
+ * full enum so consumers can render a fixed grid without null-checking
+ * each slot — categories with no expenses get zero/zero/zero.
+ *
+ * `budget` mirrors `trips.total_budget`: `null` means "no ceiling
+ * configured". `remaining` (top-level) is `budget - totalActual`, also
+ * `null` when no budget is set; the UI surfaces "no budget set" copy in
+ * that case rather than rendering a misleading 0.
+ */
+export interface TripExpenseRollup {
+  byCategory: Record<TripExpenseCategory, TripExpenseCategoryRollup>;
+  totalEstimated: number;
+  totalActual: number;
+  budget: number | null;
+  remaining: number | null;
+  hasBudget: boolean;
+}
+
+function emptyByCategory(): Record<TripExpenseCategory, TripExpenseCategoryRollup> {
+  // Build a fresh object each call; consumers may pass the rollup down as a
+  // prop and we don't want shared mutable state if anyone (in tests, say)
+  // ever mutated the result.
+  const out = {} as Record<TripExpenseCategory, TripExpenseCategoryRollup>;
+  for (const cat of EXPENSE_CATEGORIES) {
+    out[cat] = { estimated: 0, actual: 0, remaining: 0 };
+  }
+  return out;
+}
+
+/**
+ * Derived budget rollup for a trip. Reads the existing `useTripExpenses`
+ * + `useTrip` caches and reduces them; emits no extra network request.
+ *
+ * Returns a stable, memoized `TripExpenseRollup`. Empty state
+ * (no expenses, no budget) is a valid result — every numeric field is
+ * `0`, `budget`/`remaining` are `null`, and `hasBudget` is `false`.
+ *
+ * Defensive choices:
+ *   - Categories not in `EXPENSE_CATEGORIES` are silently dropped. The
+ *     DB CHECK constraint prevents inserts outside the enum, so this only
+ *     matters if the server-side enum widens before the client ships a
+ *     matching update — preferable to crashing the trip detail screen.
+ *   - `kind` is treated as a strict 'estimated' | 'actual' switch; rows
+ *     with an unknown kind are skipped (same forward-compat reasoning).
+ */
+export function useTripExpenseRollup(tripId: Uuid | undefined): TripExpenseRollup {
+  const expensesQuery = useTripExpenses(tripId);
+  const tripQuery = useTrip(tripId);
+
+  const expenses = expensesQuery.data;
+  const budget = tripQuery.data?.total_budget ?? null;
+
+  return useMemo<TripExpenseRollup>(() => {
+    const byCategory = emptyByCategory();
+    let totalEstimated = 0;
+    let totalActual = 0;
+
+    if (expenses) {
+      for (const row of expenses) {
+        const slot = byCategory[row.category];
+        if (!slot) continue; // unknown category — see fn-level comment
+        const amount = Number(row.amount);
+        if (!Number.isFinite(amount)) continue;
+        if (row.kind === 'estimated') {
+          slot.estimated += amount;
+          totalEstimated += amount;
+        } else if (row.kind === 'actual') {
+          slot.actual += amount;
+          totalActual += amount;
+        }
+      }
+      // Second pass: derive `remaining` per category. Done after the row
+      // loop so a category that gets both an estimated and an actual row
+      // computes correctly regardless of insertion order.
+      for (const cat of EXPENSE_CATEGORIES) {
+        const slot = byCategory[cat];
+        slot.remaining = slot.estimated - slot.actual;
+      }
+    }
+
+    const hasBudget = budget !== null && Number.isFinite(budget);
+    const remaining = hasBudget ? (budget as number) - totalActual : null;
+
+    return {
+      byCategory,
+      totalEstimated,
+      totalActual,
+      budget: hasBudget ? (budget as number) : null,
+      remaining,
+      hasBudget,
+    };
+  }, [expenses, budget]);
 }

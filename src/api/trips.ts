@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type { CreateTripInput, Trip, Uuid } from './types';
-import { tripsKeys } from './_keys';
+import { tripsKeys, tripExpensesKeys } from './_keys';
 
 // ----- Query keys ---------------------------------------------------------
 //
@@ -297,6 +297,82 @@ export function useDuplicateTrip() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ACTIVE_KEY });
+    },
+  });
+}
+
+// ============================================================
+// Phase 21 Step 3: total-trip budget mutation
+// ============================================================
+//
+// `useUpdateTripBudget` is a narrow, single-field cousin of `useUpdateTrip`
+// dedicated to the budget surface. Why a separate hook (instead of just
+// reusing `useUpdateTrip`):
+//
+//   1. Optimistic UX. The budget card renders the new ceiling immediately
+//      while the round trip is in flight; if the server rejects the change,
+//      we roll back. `useUpdateTrip` is a coarser, multi-field invalidate-
+//      on-success — adding optimism there would risk de-syncing other
+//      inline edits (title, transport mode) that don't currently expect
+//      a cache pre-write.
+//   2. Tighter cache invalidation. After a budget change the
+//      `useTripExpenseRollup` (Phase 21 Step 3) needs to recompute since
+//      `remaining = budget - totalActual` shifted. Invalidating the
+//      per-trip expenses cache is the cheapest way to force the derived
+//      rollup memo to re-run on the next render.
+
+type UpdateTripBudgetContext = {
+  prevDetail: Trip | null | undefined;
+};
+
+/**
+ * Update the trip's `total_budget`. Pass `null` to clear the ceiling
+ * (returns the trip to "no budget configured" state).
+ *
+ * Optimistic + rollback: pre-writes the new value into
+ * `tripsKeys.detail(tripId)` so the budget card updates instantly. On
+ * error we restore the previous detail snapshot. On settle we invalidate
+ * both `tripsKeys.detail(tripId)` and `tripExpensesKeys.forTrip(tripId)`
+ * — the latter because the rollup hook (`useTripExpenseRollup`) is
+ * memoized on the expenses + budget pair, and changing the budget alone
+ * needs to trigger a recompute on the next render.
+ */
+export function useUpdateTripBudget(tripId: Uuid) {
+  const qc = useQueryClient();
+  const detailKey = tripsKeys.detail(tripId);
+  return useMutation<Uuid, Error, number | null, UpdateTripBudgetContext>({
+    mutationFn: async (total_budget) => {
+      // `null` is a meaningful value (clear the ceiling); we deliberately
+      // do NOT short-circuit on `null` like we would on `undefined`.
+      const userId = await getCallerId();
+      const { error } = await supabase
+        .from('trips')
+        .update({ total_budget })
+        .eq('id', tripId)
+        .eq('user_id', userId);
+      if (error) throw error;
+      return tripId;
+    },
+    onMutate: async (total_budget) => {
+      await qc.cancelQueries({ queryKey: detailKey });
+      const prevDetail = qc.getQueryData<Trip | null>(detailKey);
+      if (prevDetail) {
+        qc.setQueryData<Trip | null>(detailKey, { ...prevDetail, total_budget });
+      }
+      return { prevDetail };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prevDetail !== undefined) {
+        qc.setQueryData(detailKey, ctx.prevDetail);
+      }
+    },
+    onSettled: () => {
+      // Detail recomputes the trip row; the per-trip expenses cache is
+      // what `useTripExpenseRollup` keys its memo against, so bumping it
+      // forces the rollup's `remaining = budget - totalActual` to
+      // re-derive with the new ceiling.
+      qc.invalidateQueries({ queryKey: detailKey });
+      qc.invalidateQueries({ queryKey: tripExpensesKeys.forTrip(tripId) });
     },
   });
 }
