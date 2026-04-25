@@ -17,7 +17,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { skipIfEnvNotConfigured } from './_preflight';
+import { skipIfEnvNotConfigured, dismissDevOverlay } from './_preflight';
 
 // ── helper: skip if not authenticated ────────────────────────────────────────
 
@@ -34,6 +34,8 @@ async function skipIfNotAuthenticated(page: import('@playwright/test').Page) {
 async function goToTrips(page: import('@playwright/test').Page) {
   await page.goto('/trips');
   await page.waitForLoadState('networkidle');
+  // Dismiss the Expo dev overlay caused by RootHead expo-router/head named-import bug.
+  await dismissDevOverlay(page);
 }
 
 // =============================================================================
@@ -50,8 +52,9 @@ test.describe('Phase 5 happy — create trip', () => {
     await expect(page).toHaveURL(/\/trip\/new$/);
 
     const title = `E2E Trip ${Date.now()}`;
-    await page.getByLabel(/title/i).fill(title);
-    await page.getByLabel(/daily hours budget/i).fill('8');
+    // Use getByRole('textbox') to avoid strict-mode ambiguity with the visual label Text.
+    await page.getByRole('textbox', { name: /^title$/i }).fill(title);
+    await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
     await page.getByRole('button', { name: /create trip/i }).click();
 
     // Should redirect to the trip detail page
@@ -122,8 +125,8 @@ test.describe('Phase 5 happy — add place (mocked autocomplete)', () => {
     if (!hasTrip) {
       // Create a trip first
       await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
-      await page.getByLabel(/title/i).fill(`E2E Add Place ${Date.now()}`);
-      await page.getByLabel(/daily hours budget/i).fill('8');
+      await page.getByRole('textbox', { name: /^title$/i }).fill(`E2E Add Place ${Date.now()}`);
+      await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
       await page.getByRole('button', { name: /create trip/i }).click();
       await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     } else {
@@ -297,7 +300,10 @@ test.describe('Phase 5 happy — manual edit operations', () => {
 
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
+    // Dismiss LogBox overlays from SSR warnings before interacting with tabs.
+    await dismissDevOverlay(page);
     await page.getByRole('tab', { name: /itinerary/i }).click();
+    await dismissDevOverlay(page);
 
     // Look for a delete button within a place row
     const deleteBtn = page.getByRole('button', { name: /delete|remove place/i }).first();

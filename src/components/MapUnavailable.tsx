@@ -12,8 +12,10 @@ import { dayColor, DAY_COLORS, type MapViewProps } from './Map/types';
 
 type Props = MapViewProps;
 
-export function MapUnavailable({ markers }: Props) {
+export function MapUnavailable({ markers: maybeMarkers }: Props) {
   const t = useTheme();
+  // Defensive: tolerate transient undefined during data hydration.
+  const markers = maybeMarkers ?? [];
 
   // Group markers by dayIndex (null/-1 → unscheduled bucket)
   const groups: Map<number, typeof markers> = new Map();

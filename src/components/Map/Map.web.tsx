@@ -38,26 +38,31 @@ function getWebKey(): string | null {
 
 export function Map(props: MapViewProps) {
   const key = getWebKey();
+  // Coerce to safe arrays — defends against transient undefined during data
+  // hydration / hot reload. The TS type already says these are required, but
+  // a single `undefined.length` here crashes the whole React tree on web.
+  const markers = props.markers ?? [];
+  const polylines = props.polylines ?? [];
 
   // Always call hooks before conditional returns (Rules of Hooks).
   const defaultCenter = useMemo(() => {
     if (props.initialRegion) {
       return { lat: props.initialRegion.lat, lng: props.initialRegion.lng };
     }
-    if (props.markers.length > 0) {
-      const lats = props.markers.map((m) => m.lat);
-      const lngs = props.markers.map((m) => m.lng);
+    if (markers.length > 0) {
+      const lats = markers.map((m) => m.lat);
+      const lngs = markers.map((m) => m.lng);
       return {
         lat: (Math.min(...lats) + Math.max(...lats)) / 2,
         lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
       };
     }
     return { lat: 0, lng: 0 };
-  }, [props.initialRegion, props.markers]);
+  }, [props.initialRegion, markers]);
 
   // ── Graceful degradation: no key → list view ──────────────────────────────
   if (!key) {
-    return <MapUnavailable {...props} />;
+    return <MapUnavailable markers={markers} polylines={polylines} initialRegion={props.initialRegion} onMarkerPress={props.onMarkerPress} />;
   }
 
   return (
@@ -65,14 +70,14 @@ export function Map(props: MapViewProps) {
       <APIProvider apiKey={key}>
         <GoogleMap
           defaultCenter={defaultCenter}
-          defaultZoom={props.markers.length > 0 ? 12 : 2}
+          defaultZoom={markers.length > 0 ? 12 : 2}
           mapId="tripvisor"
           gestureHandling="greedy"
           disableDefaultUI={false}
           style={{ width: '100%', height: '100%' }}
         >
-          <Polylines polylines={props.polylines} />
-          {props.markers.map((m) => (
+          <Polylines polylines={polylines} />
+          {markers.map((m) => (
             <AdvancedMarker
               key={m.id}
               position={{ lat: m.lat, lng: m.lng }}
@@ -90,6 +95,7 @@ export function Map(props: MapViewProps) {
 
 function Polylines({ polylines }: { polylines: MapViewProps['polylines'] }) {
   const map = useMap();
+  const safe = polylines ?? [];
 
   useEffect(() => {
     if (!map) return;
@@ -99,7 +105,7 @@ function Polylines({ polylines }: { polylines: MapViewProps['polylines'] }) {
     const gmaps = (globalThis as unknown as { google?: { maps: GMaps } }).google?.maps;
     if (!gmaps) return;
 
-    const instances = polylines.map(
+    const instances = safe.map(
       (line) =>
         new gmaps.Polyline({
           path: line.points.map((p) => ({ lat: p.lat, lng: p.lng })),
@@ -112,7 +118,7 @@ function Polylines({ polylines }: { polylines: MapViewProps['polylines'] }) {
     return () => {
       for (const poly of instances) poly.setMap(null);
     };
-  }, [map, polylines]);
+  }, [map, safe]);
 
   return null;
 }

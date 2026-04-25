@@ -28,6 +28,16 @@ Tripvisor ships to **iOS, Android, and Web** from the same Expo tree. Every feat
 
 A feature isn't "Done" in `docs/features/overview.md` until `docs-specialist` has ticked all three "Platforms verified" boxes (iOS, Android, Web) in its feature doc.
 
+## Current user priorities (2026-04-25)
+
+- Tripvisor must feel like a travel product, not a bare CRUD shell. Auth, empty states, and primary app surfaces should use richer travel-oriented UI, destination imagery, and stronger visual hierarchy.
+- Navigation must be explicit. Deep screens need visible back affordances, and users should never get stuck without a clear route back.
+- Web must not be treated as a stretched mobile screen. Key screens should have desktop-aware layout, spacing, and hierarchy.
+- Google Maps and add-place are load-bearing flows. Broken map rendering, missing server keys, or other runtime misconfiguration must be treated as blockers and surfaced clearly in smoke reports.
+- Time and duration are the primary planning model. Avoid `cost per km`; if expense tracking exists it should be category-based (`accommodation`, `food`, `transport`, `shopping`, etc.) with total-trip budget plus estimated-vs-actual tracking.
+- Budget tracking, trip sharing/collaboration, and accommodation tracking are promoted roadmap items, not distant brainstorm-only ideas.
+- `test-specialist` is responsible for user-visible runtime failure discovery as well as automated tests. Green tests do not outweigh a broken golden path, dead navigation, bad desktop web layout, or console/runtime errors.
+
 ## Conventions
 
 - TypeScript strict. No `any` without a comment explaining why.

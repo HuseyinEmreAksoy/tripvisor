@@ -56,11 +56,19 @@ function PrintHead() {
 }
   `.trim();
 
-  // We use React.createElement here to avoid importing JSX from a
-  // non-universal module path. The Head component is only evaluated when
-  // this branch executes on web.
+  // The Head component is only evaluated when this branch executes on web.
+  // expo-router/head.js exports `Head` as the default export only
+  // (`export { Head as default } from './build/head/ExpoHead'`).
+  // Destructuring `{ Head }` would yield `undefined` and crash the entire
+  // React tree. Fall back to `.Head` for any future SDK that might re-add a
+  // named export.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Head } = require('expo-router/head') as { Head: React.ComponentType<{ children: React.ReactNode }> };
+  const headModule = require('expo-router/head') as {
+    default?: React.ComponentType<{ children: React.ReactNode }>;
+    Head?: React.ComponentType<{ children: React.ReactNode }>;
+  };
+  const Head = headModule.default ?? headModule.Head;
+  if (!Head) return null;
   return (
     <Head>
       {/* eslint-disable-next-line react/no-danger */}

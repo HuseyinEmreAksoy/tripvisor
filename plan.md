@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 19 — Done
+**Current phase**: Phase 20 — Planned from 2026-04-25 user feedback
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -27,8 +27,25 @@
 | 17 | Recent place searches in the add flow | ✅ Done (web verified; native shares same code path — AsyncStorage cross-platform) | ui |
 | 18 | Duplicate place warning in add flow | ✅ Done (web verified; native shares same code path) | ui |
 | 19 | Test restoration + share-revoke production bug fix | ✅ Done | test + ui + backend |
+| 20 | UX / navigation / maps recovery + expense model cleanup | 📋 Planned (user-priority backlog added 2026-04-25) | ui + backend + docs |
+| 21 | Budget tracking + collaboration + accommodation tracking | 📋 Planned (promoted from brainstorm on 2026-04-25) | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
+
+## User-priority intake — 2026-04-25
+
+1. The in-app UI is not visually interesting enough; it needs travel imagery and more engaging surfaces.
+2. Users need clearer navigation and visible back affordances between pages.
+3. Google Maps integration is currently broken.
+4. Planning should emphasize duration / time more than generic `cost` labeling.
+5. The login screen is too sparse and visually weak.
+6. Add-place is currently blocked by `server_misconfigured: Google Maps server key is not configured`.
+7. `test-specialist` should catch and report user-visible runtime/config issues, not focus only on code-level tests.
+8. Budget tracking and trip sharing / collaboration are missing and should move into the active roadmap.
+9. Accommodation tracking is missing and should move into the active roadmap.
+10. `cost per km` is not the right expense model; expense entry should be category-based (`accommodation`, `food`, `transport`, `shopping`, etc.) with a total-trip budget.
+11. The itinerary has a runtime error around markers / `useMemo`.
+12. Web currently feels like a stretched mobile layout and needs desktop-specific treatment.
 
 ## Phase 0 — scaffold + tooling
 
@@ -2074,3 +2091,191 @@ The test-specialist sub-agent returned after eight phases off-duty, during which
 The seven new test files exposed that pure helper functions (`applySearch`, `applyDateFilter`, `applySort` in `app/(app)/trips.tsx`; `buildSummary` in `app/share/[token].tsx`) could not be imported in Jest because their parent screen modules pull in `expo-router` and native deps that crash the jsdom test environment. Prior workarounds had silently copied the logic into test files, where it could drift from the source. The fix was a ui-specialist extraction refactor: `src/lib/tripsFilters.ts` (exports `applySearch`, `applyDateFilter`, `applySort`, `SortKey`, `DateFilter` — pure, no React deps, module-level `Intl.Collator`) and `src/lib/buildSummary.ts` (exports `buildSummary`, `SharedTripMeta`, `SharedPlace` — pure). Both screen files were updated to import from `@/lib/...`; behavior is identical. Test files were moved from the old `app/(app)/__tests__/` and `app/share/__tests__/` locations to `src/lib/__tests__/` and updated to import from the canonical lib paths. The two now-empty old test directories were cleaned up.
 
 A real production bug was surfaced and fixed. The RLS share test had been asserting a `42501` error on `.insert(...).select()` as a test failure; deeper diagnosis revealed the true design: `trip_shares` deliberately carries no SELECT policy (share tokens must never be readable post-creation), which means `INSERT ... RETURNING` succeeds at write time but the post-insert RETURNING visibility check fails with `42501` because Postgres cannot SELECT back the newly inserted row under the caller's JWT. More critically, the same SELECT-visibility constraint caused `UPDATE ... RETURNING` under a user JWT to silently return row count 0 — no error, no exception, no visible failure — meaning the `handleRevoke` path in `supabase/functions/share-trip/index.ts` had been a no-op in production since Phase 4. Any user who pressed "Revoke" was left with a live share token. The fix: new migration `supabase/migrations/0009_share_insert_policy_note.sql` adds `COMMENT ON POLICY` entries for all three `trip_shares` policies documenting the no-SELECT-policy design, why `.insert(...).select()` fails, and why user-JWT UPDATE silently no-ops. `handleRevoke` was corrected to prove ownership via a user-JWT SELECT on `trips` first, then perform the UPDATE via the admin client (the only path that is RLS-immune and can count its own writes). `tests/rls.share.test.ts` was rewritten accordingly: the `42501` case is now asserted as design-correct; a positive bare `.insert(...)` (without `.select()`) test was added; the owner-UPDATE test asserts the silent no-op under user JWT; a new test asserts admin-client UPDATE succeeds.
+
+---
+
+## Phase 20 — UX / navigation / maps recovery + expense model cleanup
+
+**Goal**: Turn the current app from a functional prototype into a usable travel product by fixing broken map flows, strengthening navigation, improving visual appeal, and correcting the planning / expense model.
+**Status**: 📋 Planned
+**Entry criteria**:
+- Phase 19 is shipped
+- Local Supabase stack and web app can run for smoke
+**Phase exit criteria**:
+- Auth, trips list, trip detail, and add-place screens have a stronger travel-oriented visual hierarchy and no longer feel sparse
+- Every deep screen exposes a clear back affordance on web and native
+- Google Maps renders on supported platforms and add-place no longer fails due to an unhandled key misconfiguration path
+- Time / duration terminology leads planning flows; expense capture no longer relies on `cost per km`
+- Desktop web layout is explicitly adapted and does not look like a stretched mobile screen
+- The known itinerary `markers` / `useMemo` runtime bug is either fixed or reproduced with an owning-agent report and regression test coverage
+
+**Critical path**: Step 1 → Step 2 → Step 3 → Step 5 → Step 6 → Step 7 → Step 8
+
+### Step 1 — Travel-first auth / empty-state / landing visual overhaul
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: Redesign the auth screen, empty states, and first-impression surfaces to feel like a travel product using imagery, stronger hierarchy, richer calls-to-action, and clearer onboarding cues.
+- **Expected output**: updated auth and empty-state UI across web + native-shared surfaces
+- **Depends on**: None
+- **Risks**:
+  - [Medium] Over-design can fight existing form ergonomics — Mitigation: keep forms readable and task-first; visual richness must not reduce clarity
+- **Verification**: live smoke shows a visually richer first-run experience on web, with no regression to auth flow completion
+
+### Step 2 — Navigation clarity + back affordances
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Add consistent back affordances and navigation cues on deep screens, especially add-place, place details, trip detail subflows, and web page transitions.
+- **Expected output**: visible back navigation pattern used consistently across app flows
+- **Depends on**: Step 1
+- **Risks**:
+  - [Low] Duplication with platform navigation chrome — Mitigation: use a shared pattern that complements Expo Router rather than fighting it
+- **Verification**: every deep-linkable screen has an obvious path back during smoke
+
+### Step 3 — Maps + add-place recovery path
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Fix the broken Google Maps / add-place path end-to-end, including clearer handling for missing `GOOGLE_MAPS_SERVER_KEY`, local/dev secret expectations, and any edge-function misconfiguration surface.
+- **Expected output**: add-place and maps have actionable error handling and a working configured path
+- **Depends on**: None
+- **Risks**:
+  - [High] Local success may still differ from hosted key restrictions — Mitigation: document env-specific key requirements and smoke both local and hosted assumptions
+- **Verification**: add-place no longer throws `server_misconfigured` when the server key is present; when absent, the app shows a clear actionable message
+
+### Step 4 — Desktop web layout pass
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: Introduce desktop-aware layout treatments for web on primary screens instead of relying on mobile-stretched layouts.
+- **Expected output**: responsive desktop layouts for auth, trips list, trip detail, and add-place on web
+- **Depends on**: Step 1
+- **Risks**:
+  - [Medium] Web-only divergence may fragment design system — Mitigation: keep shared tokens but split layout structure where needed
+- **Verification**: 1280px web smoke reads as an intentional desktop app, not a narrow mobile column
+
+### Step 5 — Planning terminology cleanup (`duration` / `time` first)
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Audit user-facing wording and screens so trip planning emphasizes duration / time budgets where that is the real concept, reducing misleading generic `cost` language.
+- **Expected output**: clearer time-first planning copy and UI labels
+- **Depends on**: Step 1
+- **Risks**:
+  - [Low] Mixed terminology may remain in older screens — Mitigation: create a copy audit checklist during implementation
+- **Verification**: planner-related screens consistently distinguish time budgets from financial budgets
+
+### Step 6 — Expense model redesign (remove `cost per km`, add categories)
+- **Agent**: backend-specialist
+- **Size**: L
+- **Task**: Re-scope expense tracking around total-trip budget plus categorized entries (`accommodation`, `food`, `transport`, `shopping`, etc.), explicitly removing `cost per km` as the primary model.
+- **Expected output**: updated data model / API contract plan for categorized expenses and total-budget entry
+- **Depends on**: Step 5
+- **Risks**:
+  - [Medium] Existing cost UI and data may need migration — Mitigation: keep schema additive and deprecate old fields behind compatibility shims first
+- **Verification**: expense entry flow supports categories and total-trip budget without relying on per-km cost
+
+### Step 7 — Itinerary runtime bug investigation (`markers` / `useMemo`)
+- **Agent**: reviewer
+- **Size**: M
+- **Task**: Reproduce and isolate the itinerary `markers` / `useMemo` runtime failure, identify the owning layer, and file a structured fix report before implementation.
+- **Expected output**: concrete bug report with file/line ownership and fix direction
+- **Depends on**: Steps 2, 4
+- **Risks**:
+  - [Medium] Reproduction may depend on map state / platform timing — Mitigation: capture reproduction steps and runtime logs during smoke
+- **Verification**: a deterministic repro or a documented reason why it could not yet be reproduced
+
+### Step 8 — Smoke-first testing / reporting pass for the broken golden path
+- **Agent**: test-specialist
+- **Size**: M
+- **Task**: Run live smoke against the updated UX and core flow, explicitly checking maps, add-place, navigation, desktop-web layout, and runtime errors; file findings instead of relying only on automated tests.
+- **Expected output**: smoke log plus structured findings for any remaining user-visible blockers
+- **Depends on**: Steps 3, 4, 6, 7
+- **Risks**:
+  - [Low] Some hosted-only issues may remain — Mitigation: log local vs hosted behavior separately
+- **Verification**: `docs/smoke/phase-20.md` records the golden path and any residual blockers
+
+### Step 9 — Docs / roadmap sync for the UX recovery pass
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: Update roadmap/docs to reflect shipped UX, navigation, map, and expense-model decisions after the phase lands.
+- **Expected output**: `plan.md` status updated and relevant feature docs queued or refreshed
+- **Depends on**: Step 8
+- **Risks**:
+  - [Low] Feature docs may lag behind final naming — Mitigation: docs pass happens after smoke/fixes settle
+- **Verification**: a cold reader can see the new UX priorities and what changed
+
+## ⚠ Blockers (needs user input before phase can fully close)
+
+- Google Maps keys and Supabase secrets must be configured for the target environment — otherwise maps/add-place can only be partially verified
+
+---
+
+## Phase 21 — Budget tracking + collaboration + accommodation tracking
+
+**Goal**: Promote the previously missing travel-product capabilities into the active roadmap: estimated-vs-actual budget tracking, shared trip collaboration, and accommodation-aware planning.
+**Status**: 📋 Planned
+**Entry criteria**:
+- Phase 20 terminology and expense-model cleanup is complete
+**Phase exit criteria**:
+- Users can track estimated vs actual expenses per trip/day/stop using category-based entries
+- Users can share trips for view/edit collaboration with clear permissions and sync behavior
+- Users can attach accommodations to nights and see hotel-to-itinerary context
+
+**Critical path**: Step 1 → Step 2 → Step 4 → Step 5 → Step 6
+
+### Step 1 — Budget tracking product/data design
+- **Agent**: backend-specialist
+- **Size**: L
+- **Task**: Design the schema and API surface for estimated-vs-actual budget tracking per trip, day, and stop, aligned with the Phase 20 category-based expense model.
+- **Expected output**: additive schema + API plan for budgets and expense entries
+- **Depends on**: None
+- **Risks**:
+  - [Medium] Overlap with existing cost surfaces — Mitigation: define canonical fields and migration path before UI implementation
+- **Verification**: schema/API plan supports estimated vs actual rollups at all three scopes
+
+### Step 2 — Collaboration / sharing model expansion
+- **Agent**: backend-specialist
+- **Size**: L
+- **Task**: Extend trip sharing from read-only link sharing into collaborator roles (owner/editor/viewer) with RLS-compatible permissions and sync semantics.
+- **Expected output**: collaboration schema + permission model plan
+- **Depends on**: None
+- **Risks**:
+  - [High] RLS complexity can create access-control holes — Mitigation: model roles explicitly and require two-user deny/allow tests before ship
+- **Verification**: permission matrix is concrete enough for implementation and testing
+
+### Step 3 — Accommodation tracking model
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Define accommodation entities linked to nights/days and the computed relationship to first/last itinerary stops.
+- **Expected output**: schema/API plan for hotel stays and itinerary distance context
+- **Depends on**: None
+- **Risks**:
+  - [Medium] Multi-night / multi-city trips may complicate the model — Mitigation: start with one accommodation block per night range
+- **Verification**: the model can answer “where am I staying this night?” and “how far is it from the day route?”
+
+### Step 4 — UI surfaces for budgets / collaboration / accommodation
+- **Agent**: ui-specialist
+- **Size**: XL
+- **Task**: Build the product surfaces for categorized budgets, collaborator management, and accommodation tracking once the backend contracts are settled.
+- **Expected output**: screens/components for entering expenses, viewing rollups, inviting collaborators, and assigning accommodations
+- **Depends on**: Steps 1, 2, 3
+- **Risks**:
+  - [Medium] Scope is broad for one phase — Mitigation: split implementation into ship-order slices if the step expands beyond L during planning
+- **Verification**: core flows are operable on web and structurally ready for native smoke
+
+### Step 5 — Regression / RLS / collaboration test pass
+- **Agent**: test-specialist
+- **Size**: L
+- **Task**: Add automated and live-smoke coverage for expense rollups, collaborator permissions, and accommodation-linked itinerary behavior.
+- **Expected output**: tests + smoke log covering new travel-product surfaces
+- **Depends on**: Step 4
+- **Risks**:
+  - [High] Collaboration bugs may only surface with multiple sessions/users — Mitigation: require two-user integration coverage before review
+- **Verification**: allow/deny collaboration cases and budget math are covered; smoke proves end-to-end usability
+
+### Step 6 — Reviewer + docs close-out
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: After reviewer/fix loop, update the roadmap and feature docs so these capabilities are no longer treated as missing brainstorm items.
+- **Expected output**: roadmap/docs reflect active shipped or in-progress status for budgets, collaboration, and accommodation
+- **Depends on**: Step 5
+- **Risks**:
+  - [Low] Naming may shift during implementation — Mitigation: docs pass after final UI/backend wording settles
+- **Verification**: these features appear in the active roadmap, not only in brainstorm notes

@@ -38,7 +38,17 @@ function RootHead() {
   if (Platform.OS !== 'web') return null;
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Head } = require('expo-router/head') as { Head: React.ComponentType<{ children: React.ReactNode }> };
+  const headModule = require('expo-router/head') as {
+    default?: React.ComponentType<{ children: React.ReactNode }>;
+    Head?: React.ComponentType<{ children: React.ReactNode }>;
+  };
+  // expo-router/head.js exports `Head` as the default export only
+  // (`export { Head as default } from './build/head/ExpoHead'`).
+  // Destructuring `{ Head }` would yield `undefined` and crash the entire
+  // React tree on web. Fall back to `.Head` for any future SDK that might
+  // re-add a named export.
+  const Head = headModule.default ?? headModule.Head;
+  if (!Head) return null;
 
   return (
     <Head>

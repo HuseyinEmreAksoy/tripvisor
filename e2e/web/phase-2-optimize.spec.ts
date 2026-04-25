@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { skipIfEnvNotConfigured } from './_preflight';
+import { skipIfEnvNotConfigured, dismissDevOverlay } from './_preflight';
 
 test.describe('Phase 2 — optimize + day split + map', () => {
   test.beforeEach(() => {
@@ -19,6 +19,7 @@ test.describe('Phase 2 — optimize + day split + map', () => {
    */
   test('create trip → add places → tabs render', async ({ page }) => {
     await page.goto('/trips');
+    await dismissDevOverlay(page);
     // Skip if not authenticated — auth fixtures come in Phase 4
     const loginVisible = await page.getByRole('heading', { name: /sign in/i }).isVisible();
     test.skip(loginVisible, 'Requires authenticated session (Phase 4 fixture not wired yet)');
@@ -26,8 +27,9 @@ test.describe('Phase 2 — optimize + day split + map', () => {
     // Create trip
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/);
-    await page.getByLabel('Title').fill(`Smoke ${Date.now()}`);
-    await page.getByLabel('Daily hours budget').fill('8');
+    // Use getByRole to avoid ambiguity with the visual "Title" label text.
+    await page.getByRole('textbox', { name: /^title$/i }).fill(`Smoke ${Date.now()}`);
+    await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
     await page.getByRole('button', { name: /create trip/i }).click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/);
 

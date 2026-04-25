@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { skipIfEnvNotConfigured } from './_preflight';
+import { skipIfEnvNotConfigured, dismissDevOverlay } from './_preflight';
 
 // ── helper ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +30,8 @@ async function skipIfNotAuthenticated(page: import('@playwright/test').Page) {
 async function goToTrips(page: import('@playwright/test').Page) {
   await page.goto('/trips');
   await page.waitForLoadState('networkidle');
+  // Dismiss the Expo dev overlay caused by RootHead expo-router/head named-import bug.
+  await dismissDevOverlay(page);
 }
 
 // =============================================================================
@@ -47,8 +49,8 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/, { timeout: 10_000 });
 
-    // Clear title if pre-filled
-    const titleInput = page.getByLabel(/title/i);
+    // Use getByRole to avoid strict-mode ambiguity with the visual label Text element.
+    const titleInput = page.getByRole('textbox', { name: /^title$/i });
     await titleInput.clear();
 
     // Attempt submit
@@ -59,8 +61,10 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     if (!isDisabled) {
       await submitBtn.click();
       // Expect either: stay on same URL, or show a validation error message
+      // page.url() returns a string synchronously, so no .catch() is needed.
+      const currentUrl = page.url();
       const stayedOnForm =
-        (await page.url().catch(() => '')).includes('/trip/new') ||
+        currentUrl.includes('/trip/new') ||
         (await page.getByText(/title.*(required|cannot be empty)|required/i).isVisible().catch(() => false));
       expect(stayedOnForm).toBe(true);
     } else {
@@ -79,8 +83,8 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/, { timeout: 10_000 });
 
-    // Fill title so it's valid
-    await page.getByLabel(/title/i).fill('Invalid Dates Trip');
+    // Fill title so it's valid. Use getByRole to avoid ambiguity with visual label Text.
+    await page.getByRole('textbox', { name: /^title$/i }).fill('Invalid Dates Trip');
 
     // Try to fill end date before start date (if date fields exist)
     const startDateInput = page.getByLabel(/start date/i);
@@ -101,12 +105,13 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     const isDisabled = await submitBtn.isDisabled();
     if (!isDisabled) {
       await submitBtn.click();
-      // Expect error message or form to stay on the same page
+      // Expect error message or form to stay on the same page.
+      // page.url() returns a string synchronously.
       const hasError = await page
         .getByText(/date|invalid|end.*before.*start|start.*after.*end/i)
         .isVisible()
         .catch(() => false);
-      const stayedOnForm = (await page.url().catch(() => '')).includes('/trip/new');
+      const stayedOnForm = page.url().includes('/trip/new');
       expect(hasError || stayedOnForm).toBe(true);
     } else {
       await expect(submitBtn).toBeDisabled();
@@ -200,8 +205,12 @@ test.describe('Phase 5 unhappy — optimize upstream 502', () => {
 
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
+    await dismissDevOverlay(page);
     await page.getByRole('tab', { name: /itinerary/i }).click();
-    await page.waitForLoadState('networkidle');
+    // Use a fixed wait instead of networkidle — TanStack Query polling prevents idle.
+    await page.waitForTimeout(2000);
+    // Dismiss any LogBox overlays from prior render errors (e.g. SSR warnings).
+    await dismissDevOverlay(page);
 
     // The app must not crash
     await expect(page.locator('body')).toBeVisible();
