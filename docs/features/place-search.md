@@ -32,7 +32,7 @@ As a trip planner, I want to search Google Places and add results to my trip wit
 - `<2 char` input shows "Type at least 2 characters" placeholder
 - Session token generated on screen mount via `useAutocompleteSessionToken`, kept stable for the mount lifetime
 - Upstream timeout (>3s) surfaces as an inline error; previous suggestions stay visible
-- Duplicate add: no guard yet — user can add the same place twice. Planned for Phase 2 (show warning)
+- Duplicate add: inline warning banner shown when the picked place is already in the trip (Phase 18). User can still proceed — banner is informational only.
 
 ## Test plan
 - Edge Function: `places-autocomplete/test.ts` covers happy path, `?ping`, method not allowed, invalid input, upstream error ✅
@@ -51,3 +51,11 @@ New `src/lib/recentPlaces.ts` util stores the last 10 picked places in AsyncStor
 - After a place is added, `addRecentPlace(...)` fires and forgets before `router.back()`.
 
 Platforms: Web verified. iOS/Android share the same AsyncStorage code path (the library ships a `localStorage` backend on web); native device verification deferred to user smoke.
+
+## Phase 18 — Duplicate place warning (shipped 2026-04-25)
+
+`app/(app)/trip/[id]/add.tsx` now subscribes to `useTripPlaces(tripId)` and derives `isDuplicate` once place details are loaded. When true, a banner renders above the confirm button: "Already in this trip — confirm to add as a separate visit." Banner uses `bgElevated` background with a `borderLeftWidth: 3` accent in `t.colors.warning`; `accessibilityRole="alert"` + `accessibilityLiveRegion="polite"`. The confirm button label flips to "Add anyway"; tap behavior is unchanged.
+
+Repeat visits are intentionally permitted (same hotel as start/end on multiple days, same restaurant on separate evenings) — the warning is informational only. No server-side unique constraint was added.
+
+Platforms: Web verified. Native shares the identical code path (no platform-split surface).

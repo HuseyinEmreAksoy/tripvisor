@@ -9,6 +9,7 @@ import {
   useCreateTripPlace,
   usePlacesAutocomplete,
   usePlaceDetails,
+  useTripPlaces,
 } from '@/api';
 import { inferCategoryDefault } from '@/lib/categoryDurations';
 import {
@@ -46,6 +47,8 @@ export default function AddPlace() {
     placeId: pickedId ?? undefined,
     sessionToken,
   });
+
+  const { data: existingPlaces = [] } = useTripPlaces(tripId);
 
   const createTripPlace = useCreateTripPlace();
 
@@ -86,6 +89,12 @@ export default function AddPlace() {
     setRecents([]);
   }
 
+  // Derived from React Query cache — no extra useState needed.
+  // Guard on `picked` so we never access `picked.placeId` while still loading.
+  const isDuplicate =
+    !!picked &&
+    existingPlaces.some((p) => p.google_place_id === picked.placeId);
+
   return (
     <Screen padded={false}>
       <View style={{ padding: t.spacing.lg, gap: t.spacing.sm }}>
@@ -120,8 +129,35 @@ export default function AddPlace() {
                 {inferCategoryDefault(picked.types).durationMinutes} min
               </Text>
               <PoweredByGoogle />
+              {isDuplicate ? (
+                // accessibilityRole="alert" + accessibilityLiveRegion="polite"
+                // announces the banner to screen readers when it appears, matching
+                // the pattern established in settings.tsx for inline error notices.
+                <View
+                  style={[
+                    styles.duplicateWarning,
+                    {
+                      backgroundColor: t.colors.bgElevated,
+                      borderLeftColor: t.colors.warning,
+                      borderRadius: t.radius.md,
+                      padding: t.spacing.md,
+                    },
+                  ]}
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                >
+                  <Text style={[t.typography.caption, { color: t.colors.text }]}>
+                    Already in this trip — confirm to add as a separate visit.
+                  </Text>
+                </View>
+              ) : null}
               <Button
-                label="Add to trip"
+                label={isDuplicate ? 'Add anyway' : 'Add to trip'}
+                accessibilityLabel={
+                  isDuplicate
+                    ? 'Add anyway, this place is already in your trip'
+                    : undefined
+                }
                 loading={createTripPlace.isPending}
                 onPress={handleConfirm}
               />
@@ -249,4 +285,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'column', gap: 2 },
   searchArea: { flex: 1 },
   recentsHeader: { textTransform: 'uppercase', letterSpacing: 0.5 },
+  // Structural properties only; color-dependent tokens are applied inline
+  // alongside this style so theme switching works correctly.
+  duplicateWarning: { borderLeftWidth: 3 },
 });

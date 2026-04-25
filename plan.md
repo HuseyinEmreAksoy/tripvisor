@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 17 — Done (web; native shares same code path)
+**Current phase**: Phase 18 — Done (web; native shares same code path)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -25,6 +25,7 @@
 | 15 | Per-day map filter on trip detail | ✅ Done (web verified; native unaffected — shared component code, no platform-specific surface) | ui |
 | 16 | Optimize error codes surfaced to UI | ✅ Done (web verified; native unaffected — shared client code, no platform-specific surface) | backend |
 | 17 | Recent place searches in the add flow | ✅ Done (web verified; native shares same code path — AsyncStorage cross-platform) | ui |
+| 18 | Duplicate place warning in add flow | ✅ Done (web verified; native shares same code path) | ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2032,3 +2033,30 @@ The add-place screen (`app/(app)/trip/[id]/add.tsx`) was stateless: every visit 
 **Process**: no formal reviewer pass. 2-file change, both type-clean. ui-specialist self-verified (typecheck filtered to changed files: 0 new errors). Same scoped-phase convention as Phases 11–16.
 
 **Feature doc**: `docs/features/place-search.md` (Phase 17 recents section added).
+
+---
+
+## Phase 18 — Duplicate place warning in add flow
+
+**Status**: Done — shipped 2026-04-25; web verified; native shares the same code path (single `add.tsx` file, no platform-split surface).
+**Last updated**: 2026-04-25
+
+Phase 17's recents made re-picking the same place a single tap, which surfaced the gap: the add flow had no feedback when a place was already in the current trip. Phase 18 closes that gap with an inline warning banner.
+
+**Mechanism** (`app/(app)/trip/[id]/add.tsx`, 40 ins / 1 del — only file changed):
+- `useTripPlaces(tripId)` subscribed in the add screen to read existing places.
+- `isDuplicate = !!picked && existingPlaces.some(p => p.google_place_id === picked.placeId)` derived once place details have loaded.
+- When `isDuplicate` is true, a banner View renders above the confirm button: **"Already in this trip — confirm to add as a separate visit."** Background is `t.colors.bgElevated`; accent is a `borderLeftWidth: 3` stripe in `t.colors.warning`; text is `t.colors.text` (high contrast — color is carried by the border accent, not the text). `accessibilityRole="alert"` + `accessibilityLiveRegion="polite"` — same screen-reader pattern as `settings.tsx` error banners (Phase 7).
+- Button label swaps from "Add to trip" → "Add anyway"; `accessibilityLabel` updates accordingly. Tap behavior is unchanged — the warning is purely informational.
+
+**Why a banner and not a block or a confirm dialog**: repeat visits are legitimate (same hotel as start/end on multiple days, same restaurant on different nights). Blocking prevents a real use case. A confirm dialog is friction-heavy for a low-stakes nudge. Banner-only is the right calibration.
+
+**Non-goals** (explicitly out of scope):
+- Tests of any kind (Jest, Playwright).
+- Smoke runs.
+- Server-side `(trip_id, google_place_id)` unique constraint — not desired; repeat visits are valid data.
+- Auto-redirect to the existing place, "Merge with existing" affordance, or highlighting which day the duplicate is already on (potential follow-ups).
+
+**Process**: no formal reviewer pass. Single-file UI change, all logic local. ui-specialist self-verified (typecheck: 0 new errors; banner aesthetic matches established `settings.tsx` pattern).
+
+**Feature doc**: `docs/features/place-search.md` (Phase 18 duplicate-warning section added).

@@ -6,7 +6,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 |---|---|---|---|
 | Auth (magic link) | 🚧 In progress | 1 | [auth.md](auth.md) |
 | Trip CRUD | 🚧 In progress | 1 | [trip-crud.md](trip-crud.md) |
-| Place search (autocomplete) + recent places | 🚧 In progress (base code complete; Phase 17 recents — web verified, iOS/Android deferred to user smoke) | 1, 17 | [place-search.md](place-search.md) |
+| Place search (autocomplete) + recent places + duplicate warning | 🚧 In progress (base code complete; Phase 17 recents — web verified, iOS/Android deferred to user smoke; Phase 18 duplicate warning — web verified, native shares same code path) | 1, 17, 18 | [place-search.md](place-search.md) |
 | Place details + Google reviews | 🚧 In progress | 1 | [place-details.md](place-details.md) |
 | Route optimization (k-means + 2-opt) | 🚧 In progress | 2 | [optimization.md](optimization.md) |
 | Day split by time budget | 🚧 In progress | 2 | [day-split.md](day-split.md) |
