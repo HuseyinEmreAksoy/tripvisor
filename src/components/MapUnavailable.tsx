@@ -58,7 +58,11 @@ export function MapUnavailable({ markers: maybeMarkers }: Props) {
         <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
           EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY
         </Text>{' '}
-        to view the map. Here's the list of places:
+        to view the map — see{' '}
+        <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
+          docs/google-maps-setup.md
+        </Text>
+        . Here's the list of places:
       </Text>
 
       {markers.length === 0 ? (

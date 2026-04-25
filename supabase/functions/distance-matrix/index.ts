@@ -64,7 +64,12 @@ export async function handler(req: Request): Promise<Response> {
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'distance-matrix', level: 'error', err: 'missing_server_key' });
-    return errorResponse('server_misconfigured', 'Google Maps server key missing', 500, origin);
+    return errorResponse(
+      'server_misconfigured',
+      'Google Maps server key is not configured. See docs/google-maps-setup.md.',
+      500,
+      origin,
+    );
   }
 
   let body: z.infer<typeof BodySchema>;

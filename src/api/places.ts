@@ -2,11 +2,60 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef } from 'react';
 import { supabase } from './supabase';
 import type { PlaceAutocompleteSuggestion, PlaceDetails } from './types';
+import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
 
 export const placesKeys = {
   autocomplete: (input: string) => ['places', 'autocomplete', input] as const,
   details: (placeId: string) => ['places', 'details', placeId] as const,
 };
+
+/**
+ * Typed error thrown by `usePlacesAutocomplete` and `usePlaceDetails` when
+ * the underlying Edge Function (`places-autocomplete` / `place-details`)
+ * returns a structured `{ error: { code, message } }` envelope with a
+ * non-2xx HTTP status. Consumers can branch on the error via
+ * `instanceof PlacesError` and inspect `.code` to render an appropriate
+ * surface (e.g. a "Maps integration not configured" banner on
+ * `server_misconfigured` vs. a generic failure on transient errors).
+ *
+ * Phase 20 Step 6: now extends the shared {@link EdgeFunctionError} base
+ * class. The class name and field shape are unchanged so existing
+ * `instanceof PlacesError` checks at consumer sites keep working.
+ *
+ * Known codes (from `supabase/functions/{places-autocomplete,place-details}/index.ts`):
+ *   - `server_misconfigured` — 500 — `GOOGLE_MAPS_SERVER_KEY` is not set on the
+ *                              Edge Function host. UI should render a setup banner
+ *                              pointing at docs/google-maps-setup.md.
+ *   - `google_places_disabled` - 502 - Places API (New) is disabled or billing is inactive.
+ *   - `google_key_restricted`  - 502 - server key restrictions block Edge Function calls.
+ *   - `google_places_forbidden` - 502 - Google rejected the server key.
+ *   - `invalid_input`        — 400 — request body failed Zod validation
+ *   - `method_not_allowed`   — 405 — non-POST request to the function
+ *   - `upstream_error`       — 502 — Google Places returned a non-2xx
+ *   - `upstream_timeout`     — 504 — request to Google exceeded timeout
+ *   - `place_not_found`      — 404 — place-details only; placeId is unknown
+ *
+ * Network-only failures (no envelope / parse failure) fall through to the
+ * original `Error` thrown by `supabase.functions.invoke` — query consumers
+ * should treat the error type as `PlacesError | Error`.
+ */
+export class PlacesError extends EdgeFunctionError {
+  constructor(code: string, message: string, status: number) {
+    super(code, message, status);
+    this.name = 'PlacesError';
+  }
+}
+
+const nonRetryablePlaceErrorCodes = new Set([
+  'server_misconfigured',
+  'google_places_disabled',
+  'google_key_restricted',
+  'google_places_forbidden',
+]);
+
+function isNonRetryablePlacesError(error: PlacesError | Error): boolean {
+  return error instanceof PlacesError && nonRetryablePlaceErrorCodes.has(error.code);
+}
 
 function generateSessionToken(): string {
   // RFC4122 v4-ish. Crypto may be unavailable on some RN runtimes; fall back to Math.random.
@@ -46,17 +95,27 @@ export function usePlacesAutocomplete(params: {
   const { input, sessionToken, locationBias, enabled = true } = params;
   const key = useMemo(() => placesKeys.autocomplete(input), [input]);
 
-  return useQuery<PlaceAutocompleteSuggestion[]>({
+  return useQuery<PlaceAutocompleteSuggestion[], PlacesError | Error>({
     queryKey: key,
     enabled: enabled && input.trim().length >= 2,
     staleTime: 1000 * 60 * 5,
+    // Setup failures are not transient; retrying only adds noise.
+    // Let transient errors fall back to TanStack's default retry behaviour.
+    retry: (failureCount, error) => {
+      if (isNonRetryablePlacesError(error)) return false;
+      return failureCount < 3;
+    },
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke<{
         suggestions: PlaceAutocompleteSuggestion[];
       }>('places-autocomplete', {
         body: { input, sessionToken, locationBias },
       });
-      if (error) throw error;
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, PlacesError);
+        if (typed) throw typed;
+        throw error;
+      }
       return data?.suggestions ?? [];
     },
   });
@@ -77,22 +136,29 @@ export function usePlaceDetails(params: {
   enabled?: boolean;
 }) {
   const { placeId, sessionToken, fields, enabled = true } = params;
-  return useQuery<PlaceDetails | null>({
+  return useQuery<PlaceDetails | null, PlacesError | Error>({
     queryKey: placeId
       ? [...placesKeys.details(placeId), fields ?? 'full']
       : ['places', 'details', 'none'],
     enabled: enabled && Boolean(placeId),
     staleTime: 1000 * 60 * 60,
     gcTime: 1000 * 60 * 60 * 24,
+    retry: (failureCount, error) => {
+      if (isNonRetryablePlacesError(error)) return false;
+      return failureCount < 3;
+    },
     queryFn: async () => {
       if (!placeId) return null;
       const { data, error } = await supabase.functions.invoke<{ place: PlaceDetails }>(
         'place-details',
         { body: { placeId, sessionToken, fields } },
       );
-      if (error) throw error;
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, PlacesError);
+        if (typed) throw typed;
+        throw error;
+      }
       return data?.place ?? null;
     },
   });
 }
-

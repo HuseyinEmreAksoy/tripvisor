@@ -73,6 +73,53 @@ interface GooglePlaceResponse {
   googleMapsUri?: string;
 }
 
+function mapGooglePlacesError(status: number, body: string) {
+  if (status === 404) {
+    return { code: 'place_not_found', message: 'Google place was not found', status: 404 };
+  }
+
+  const normalized = body.toLowerCase();
+
+  if (
+    status === 403 &&
+    (normalized.includes('places api (new) has not been used') ||
+      normalized.includes('disabled') ||
+      normalized.includes('billing'))
+  ) {
+    return {
+      code: 'google_places_disabled',
+      message:
+        'Google Places API (New) is disabled or billing is not active for the server key project.',
+      status: 502,
+    };
+  }
+
+  if (
+    status === 403 &&
+    (normalized.includes('referer') ||
+      normalized.includes('referrer') ||
+      normalized.includes('api_key_http_referrer_blocked'))
+  ) {
+    return {
+      code: 'google_key_restricted',
+      message:
+        'Google Maps server key cannot call Places from Edge Functions. Use a server key without browser referrer restrictions.',
+      status: 502,
+    };
+  }
+
+  if (status === 403) {
+    return {
+      code: 'google_places_forbidden',
+      message:
+        'Google Places rejected the server key. Check API restrictions, billing, and project access.',
+      status: 502,
+    };
+  }
+
+  return { code: 'upstream_error', message: 'Google Places returned an error', status: 502 };
+}
+
 export async function handler(req: Request): Promise<Response> {
   const origin = req.headers.get('origin');
   const requestId = newRequestId();
@@ -92,7 +139,12 @@ export async function handler(req: Request): Promise<Response> {
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'place-details', level: 'error', err: 'missing_server_key' });
-    return errorResponse('server_misconfigured', 'Google Maps server key missing', 500, origin);
+    return errorResponse(
+      'server_misconfigured',
+      'Google Maps server key is not configured. See docs/google-maps-setup.md.',
+      500,
+      origin,
+    );
   }
 
   let body: z.infer<typeof BodySchema>;
@@ -142,8 +194,8 @@ export async function handler(req: Request): Promise<Response> {
         body: text.slice(0, 500),
         durationMs: Date.now() - start,
       });
-      const code = googleRes.status === 404 ? 'place_not_found' : 'upstream_error';
-      return errorResponse(code, 'Google Places returned an error', googleRes.status, origin);
+      const mapped = mapGooglePlacesError(googleRes.status, text);
+      return errorResponse(mapped.code, mapped.message, mapped.status, origin);
     }
 
     const raw = (await googleRes.json()) as GooglePlaceResponse;

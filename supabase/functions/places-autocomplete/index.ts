@@ -34,6 +34,8 @@ const FIELD_MASK = [
   'suggestions.placePrediction.structuredFormat',
 ].join(',');
 
+const MAX_SUGGESTIONS = 3;
+
 interface GoogleSuggestion {
   placePrediction?: {
     placeId: string;
@@ -43,6 +45,46 @@ interface GoogleSuggestion {
     };
     text?: { text?: string };
   };
+}
+
+function mapGooglePlacesError(status: number, body: string) {
+  const normalized = body.toLowerCase();
+
+  if (
+    status === 403 &&
+    (normalized.includes('places api (new) has not been used') ||
+      normalized.includes('disabled') ||
+      normalized.includes('billing'))
+  ) {
+    return {
+      code: 'google_places_disabled',
+      message:
+        'Google Places API (New) is disabled or billing is not active for the server key project.',
+    };
+  }
+
+  if (
+    status === 403 &&
+    (normalized.includes('referer') ||
+      normalized.includes('referrer') ||
+      normalized.includes('api_key_http_referrer_blocked'))
+  ) {
+    return {
+      code: 'google_key_restricted',
+      message:
+        'Google Maps server key cannot call Places from Edge Functions. Use a server key without browser referrer restrictions.',
+    };
+  }
+
+  if (status === 403) {
+    return {
+      code: 'google_places_forbidden',
+      message:
+        'Google Places rejected the server key. Check API restrictions, billing, and project access.',
+    };
+  }
+
+  return { code: 'upstream_error', message: 'Google Places returned an error' };
 }
 
 export async function handler(req: Request): Promise<Response> {
@@ -66,7 +108,7 @@ export async function handler(req: Request): Promise<Response> {
     log({ requestId, fn: 'places-autocomplete', level: 'error', err: 'missing_server_key' });
     return errorResponse(
       'server_misconfigured',
-      'Google Maps server key is not configured',
+      'Google Maps server key is not configured. See docs/google-maps-setup.md.',
       500,
       origin,
     );
@@ -127,7 +169,8 @@ export async function handler(req: Request): Promise<Response> {
         body: text.slice(0, 500),
         durationMs: Date.now() - start,
       });
-      return errorResponse('upstream_error', 'Google Places returned an error', 502, origin);
+      const mapped = mapGooglePlacesError(googleRes.status, text);
+      return errorResponse(mapped.code, mapped.message, 502, origin);
     }
 
     const payload = (await googleRes.json()) as { suggestions?: GoogleSuggestion[] };
@@ -142,7 +185,8 @@ export async function handler(req: Request): Promise<Response> {
           secondaryText: p.structuredFormat?.secondaryText?.text ?? '',
         };
       })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .slice(0, MAX_SUGGESTIONS);
 
     log({
       requestId,
