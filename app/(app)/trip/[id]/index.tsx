@@ -24,6 +24,7 @@ import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
 import {
+  OptimizeError,
   useDeleteTrip,
   useOptimizeTrip,
   useReorderDay,
@@ -122,7 +123,10 @@ export default function TripDetail() {
           {optimize.isPending ? (
             <StatusPill tone="info" label="Optimizing…" loading />
           ) : optimize.error ? (
-            <StatusPill tone="danger" label="Optimize failed" />
+            (() => {
+              const { tone, label } = pillForOptimizeError(optimize.error);
+              return <StatusPill tone={tone} label={label} />;
+            })()
           ) : places.length < 2 ? (
             <StatusPill tone="info" label="Add places to optimize" />
           ) : null}
@@ -995,6 +999,40 @@ function SectionHeading({ label, t }: { label: string; t: ReturnType<typeof useT
       {label}
     </Text>
   );
+}
+
+/**
+ * Map an optimize-trip error to a user-facing status pill.
+ *
+ * - `already_optimizing` (409) is a transient state, not a failure: another
+ *   optimize is already running for the trip (typically a double-click or a
+ *   rapid state-key change). Render as info tone — the auto-optimize effect
+ *   above will re-run when the in-flight call settles, no user action needed.
+ * - All other known codes map to danger tone with a code-specific label.
+ * - Unknown codes / non-OptimizeError (network failures, parse fallthrough)
+ *   fall back to the generic "Optimize failed" label.
+ */
+function pillForOptimizeError(
+  err: unknown,
+): { tone: 'info' | 'success' | 'danger'; label: string } {
+  if (err instanceof OptimizeError) {
+    switch (err.code) {
+      case 'already_optimizing':
+        return { tone: 'info', label: 'Optimizing in progress…' };
+      case 'too_many_places':
+        return { tone: 'danger', label: 'Trip is too large' };
+      case 'matrix_failed':
+        return { tone: 'danger', label: 'Routing service unavailable' };
+      case 'not_found':
+        return { tone: 'danger', label: 'Trip not found' };
+      case 'rpc_failed':
+      case 'db_error':
+      case 'invalid_input':
+      default:
+        return { tone: 'danger', label: 'Optimize failed' };
+    }
+  }
+  return { tone: 'danger', label: 'Optimize failed' };
 }
 
 function formatRange(start: string | null, end: string | null): string {

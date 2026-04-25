@@ -30,6 +30,40 @@ export interface OptimizeResult {
   polylineDays: number;
 }
 
+/**
+ * Typed error thrown by `useOptimizeTrip` when the `optimize-trip` Edge
+ * Function returns a structured `{ error: { code, message } }` envelope
+ * with a non-2xx HTTP status. Consumers can branch on the error via
+ * `instanceof OptimizeError` and inspect `.code` to render an appropriate
+ * surface (e.g. an "in progress" pill on 409 vs. a generic failure pill
+ * on 5xx).
+ *
+ * Known codes (mirrors `supabase/functions/optimize-trip/index.ts`):
+ *   - `already_optimizing`  — 409 — another optimize is in flight for this
+ *                              trip; transient, no user action required
+ *   - `too_many_places`     — 400 — trip exceeds the MVP cap (25 places)
+ *   - `matrix_failed`       — 502 — distance-matrix Edge Function failed
+ *   - `rpc_failed`          — 500 — `apply_optimization` RPC failed
+ *   - `db_error`            — 500 — Postgres read/write error
+ *   - `not_found`           — 404 — trip not visible to caller under RLS
+ *   - `invalid_input`       — 400 — request body failed Zod validation
+ *   - `method_not_allowed`  — 405 — non-POST request to the function
+ *
+ * Network-only failures (no envelope / parse failure) fall through to
+ * the original `Error` thrown by `supabase.functions.invoke` — the
+ * mutation's error type is `OptimizeError | Error` to reflect that.
+ */
+export class OptimizeError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = 'OptimizeError';
+  }
+}
+
 export function useTripLegs(tripId: Uuid | undefined) {
   return useQuery<TripLeg[]>({
     queryKey: tripId ? tripLegsKeys.forTrip(tripId) : ['trip-legs', 'none'],
@@ -132,15 +166,68 @@ export function useAllTripLegs(tripIds: readonly Uuid[]) {
   return { ...query, byTripId };
 }
 
+/**
+ * Mutation hook that invokes the `optimize-trip` Edge Function.
+ *
+ * Error shape: when the function returns a non-2xx status with the
+ * structured `{ error: { code, message } }` envelope, this hook parses
+ * the body and throws an {@link OptimizeError} carrying the code and
+ * status. Consumers can `instanceof OptimizeError` to branch on the
+ * code (see the JSDoc on `OptimizeError` for the full code list).
+ * Network-only failures (no envelope / unparseable body) fall through
+ * to the original generic `Error` from `supabase.functions.invoke` —
+ * the mutation's error type is `OptimizeError | Error`.
+ */
 export function useOptimizeTrip() {
   const qc = useQueryClient();
-  return useMutation<OptimizeResult, Error, { tripId: Uuid }>({
+  return useMutation<OptimizeResult, OptimizeError | Error, { tripId: Uuid }>({
     mutationFn: async ({ tripId }) => {
       const { data, error } = await supabase.functions.invoke<OptimizeResult>(
         'optimize-trip',
         { body: { tripId } },
       );
-      if (error) throw error;
+      if (error) {
+        // `supabase.functions.invoke` wraps non-2xx responses in
+        // FunctionsHttpError, exposing the original Response on `.context`.
+        // Try to parse the structured envelope; fall back to the generic
+        // error on any failure so we never silently swallow it.
+        const ctx = (error as { context?: unknown }).context;
+        if (
+          ctx &&
+          typeof ctx === 'object' &&
+          'status' in ctx &&
+          typeof (ctx as { status: unknown }).status === 'number' &&
+          'json' in ctx &&
+          typeof (ctx as { json: unknown }).json === 'function'
+        ) {
+          try {
+            const response = ctx as Response;
+            const body: unknown = await response.json();
+            if (
+              body &&
+              typeof body === 'object' &&
+              'error' in body &&
+              body.error &&
+              typeof body.error === 'object' &&
+              'code' in body.error &&
+              typeof (body.error as { code: unknown }).code === 'string'
+            ) {
+              const env = body.error as { code: string; message?: unknown };
+              const message =
+                typeof env.message === 'string' && env.message.length > 0
+                  ? env.message
+                  : error.message;
+              throw new OptimizeError(env.code, message, response.status);
+            }
+          } catch (parseErr) {
+            // If parse threw an OptimizeError, re-throw it; otherwise
+            // (JSON parse / shape mismatch) fall through to the generic
+            // error below so the caller still sees the original failure.
+            if (parseErr instanceof OptimizeError) throw parseErr;
+          }
+        }
+        throw error;
+      }
       if (!data) throw new Error('optimize-trip returned no data');
       return data;
     },

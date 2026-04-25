@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 15 — Done (web; native unaffected)
+**Current phase**: Phase 16 — Done (web; native unaffected)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -23,6 +23,7 @@
 | 13 | DB-row mutex (closes Phase 12 C1 — PgBouncer advisory-lock weakness) | ✅ Done (web; native deferred to user smoke) | backend |
 | 14 | Share link OG/Twitter meta tags (rich unfurl) | ✅ Done (web verified; native unaffected — Head is web-only no-op) | ui |
 | 15 | Per-day map filter on trip detail | ✅ Done (web verified; native unaffected — shared component code, no platform-specific surface) | ui |
+| 16 | Optimize error codes surfaced to UI | ✅ Done (web verified; native unaffected — shared client code, no platform-specific surface) | backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1948,3 +1949,47 @@ Focus mode for the trip detail Map tab. Users with 25 places across 3–5 days w
 **Process**: no formal reviewer pass. UI-only single-file change; all logic isolated to `MapTab`. ui-specialist self-verified (matched Itinerary tab label convention, confirmed memo deps, confirmed key uniqueness). Same scoped-phase convention as Phases 11–14.
 
 **Feature doc**: `docs/features/map.md` (Phase 15 chip filter section added).
+
+---
+
+## Phase 16 — Optimize error codes surfaced to UI
+
+**Status**: Done — shipped 2026-04-25; web verified; native unaffected (shared client code, no platform-specific surface).
+**Last updated**: 2026-04-25
+
+The `optimize-trip` Edge Function has returned structured error envelopes (`{ error: { code, message } }`) since Phase 2, but the client was discarding the `code` and always rendering a generic red "Optimize failed" pill. The most common real-world failure — the 409 `already_optimizing` race on double-click — showed as a scary error when it is actually a transient non-failure.
+
+Phase 16 is a pure client-side change. No backend modifications.
+
+**Typed error class** (`src/api/routes.ts`):
+- New `OptimizeError extends Error` with fields `{ code: string, message: string, status: number }`.
+- Full JSDoc lists all 8 known codes matching `supabase/functions/optimize-trip/index.ts` exactly: `already_optimizing`, `too_many_places`, `matrix_failed`, `not_found`, `rpc_failed`, `db_error`, `invalid_input`, `method_not_allowed`.
+- Re-exported via the existing `src/api/index.ts` wildcard — no import path changes needed for consumers.
+
+**Envelope parsing** (`src/api/routes.ts`):
+- `useOptimizeTrip().mutationFn` catches `FunctionsHttpError`, reads `.context` as a `Response`, and parses the `{ error: { code, message } }` envelope shape.
+- On match: throws `OptimizeError`. On parse failure: falls through to the original error so network / non-envelope failures are unaffected.
+- Mutation generic widened to `useMutation<OptimizeResult, OptimizeError | Error, { tripId: Uuid }>`.
+
+**Status pill branching** (`app/(app)/trip/[id]/index.tsx`):
+- New `pillForOptimizeError(err)` helper maps known codes to `(tone, label)` pairs:
+  - `already_optimizing` → info / "Optimizing in progress…"
+  - `too_many_places` → danger / "Trip is too large"
+  - `matrix_failed` → danger / "Routing service unavailable"
+  - `not_found` → danger / "Trip not found"
+  - `rpc_failed` / `db_error` / `invalid_input` / `method_not_allowed` → danger / "Optimize failed"
+  - Unknown code or non-`OptimizeError` → danger / "Optimize failed" (preserves previous behaviour)
+- The existing `<StatusPill>` render branch is replaced with the helper output via an IIFE. No new UI surface introduced.
+
+**Non-goals** (explicitly out of scope):
+- Tests of any kind (Jest, Playwright, Deno).
+- Smoke runs.
+- Auto-retry on 409 — the auto-optimize `useEffect` re-runs on state-key changes; explicit retry would over-engineer.
+- Toast / Snackbar / modal.
+- Edge Function changes.
+
+**Maintenance note**: if a new error code is added to `supabase/functions/optimize-trip/index.ts`, update both (1) the `OptimizeError` JSDoc in `src/api/routes.ts` and (2) the `pillForOptimizeError` mapping in `app/(app)/trip/[id]/index.tsx`.
+
+**Process**: no formal reviewer pass. 2-file change, all logic local. backend-specialist self-verified (typecheck filtered to changed files: 0 new errors; envelope shape verified against `supabase/functions/_shared/errors.ts`). Same scoped-phase convention as Phases 11–15.
+
+**Feature doc**: `docs/features/optimization.md` (typed error and pill branching section added).

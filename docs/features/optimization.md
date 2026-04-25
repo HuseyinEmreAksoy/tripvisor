@@ -37,10 +37,27 @@ See [ADR-0001](../adr/0001-kmeans-2opt-over-or-tools.md).
 - Polyline only fetched for days with ≥ 2 places
 - Trip capped at 25 places for MVP (Routes API element billing scales quadratically)
 
+## Error surfacing (Phase 16)
+
+The Edge Function has returned structured envelopes (`{ error: { code, message } }`) since Phase 2. Phase 16 wires up client-side parsing so the UI can show accurate status instead of a generic red pill.
+
+**`OptimizeError`** — `src/api/routes.ts`. Extends `Error`; adds `{ code: string, message: string, status: number }`. Re-exported via `src/api/index.ts`. The JSDoc in that file is the canonical list of all 8 known codes (mirroring `supabase/functions/optimize-trip/index.ts`).
+
+**`pillForOptimizeError(err)`** — `app/(app)/trip/[id]/index.tsx`. Maps known codes to `(tone, label)` pairs for `<StatusPill>`:
+- `already_optimizing` → info / "Optimizing in progress…" (the common 409 double-click race; not a failure)
+- `too_many_places` → danger / "Trip is too large"
+- `matrix_failed` → danger / "Routing service unavailable"
+- `not_found` → danger / "Trip not found"
+- `rpc_failed` / `db_error` / `invalid_input` / `method_not_allowed` → danger / "Optimize failed"
+- Unknown code or non-`OptimizeError` → danger / "Optimize failed"
+
+If a new code is added to the Edge Function, update (1) the `OptimizeError` JSDoc in `src/api/routes.ts` and (2) the mapping in `pillForOptimizeError`.
+
 ## Edge cases
 - Trip with 0–1 places: optimizer returns no days; no Google calls issued
 - All legs cached: zero external calls
 - `directions-polyline` failure for a day: that day rendered as straight-line segments with a "degraded" flag (not yet surfaced in UI — Phase 3)
+- Concurrent optimize calls (double-click): Edge Function returns 409 `already_optimizing`; client shows info pill "Optimizing in progress…" rather than a red error (Phase 16)
 
 ## Test plan
 - Unit (Jest + fast-check): `src/lib/optimizer/__tests__/optimizer.unit.test.ts` + `.property.test.ts` — completeness, idempotence, anchor pinning, deterministic state hash, multi-day split
