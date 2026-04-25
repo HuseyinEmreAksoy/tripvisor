@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
+  BackButton,
   Button,
   DraggableItinerary,
   EmptyState,
@@ -101,9 +102,7 @@ export default function TripDetail() {
   return (
     <Screen padded={false}>
       <View style={{ padding: t.spacing.lg, gap: t.spacing.xs }}>
-        <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-          <Text style={[t.typography.body, { color: t.colors.primary }]}>← Back</Text>
-        </Pressable>
+        <BackButton onPress={() => router.back()} label="Trips" />
         <View style={styles.titleRow}>
           <Heading level={1}>{trip.title}</Heading>
           {/* Print button — navigates to print route on all platforms */}
@@ -117,7 +116,7 @@ export default function TripDetail() {
         </View>
         <View style={styles.metaRow}>
           <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day ·{' '}
+            {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h plan/day ·{' '}
             {trip.transport_mode}
           </Text>
           {optimize.isPending ? (
@@ -206,14 +205,6 @@ function MapTab({
     return [...seen].sort((a, b) => a - b);
   }, [places]);
 
-  // If the previously-selected day is no longer valid (e.g. all its places
-  // were deleted and the user returns to this tab), reset to 'all'.
-  useEffect(() => {
-    if (selectedDay !== 'all' && !availableDays.includes(selectedDay)) {
-      setSelectedDay('all');
-    }
-  }, [availableDays, selectedDay]);
-
   // Build the full marker + polyline arrays once.
   const allMarkers: MapMarker[] = useMemo(
     () =>
@@ -240,18 +231,39 @@ function MapTab({
     [legs],
   );
 
+  // Phase 20 Step 7 fix: render-time derivation instead of a state-resetting
+  // useEffect. The previous design interleaved a useEffect between two
+  // useMemo calls, which under React 18 concurrent rendering + Fast Refresh
+  // + the parent's auto-optimize cascade caused hook-tape corruption and
+  // crashed the entire trip detail route on first cold mount with
+  // "Cannot read properties of undefined (reading 'length')" (issue #11).
+  //
+  // Computing `effectiveSelectedDay` at render time eliminates the
+  // state→effect→state cycle. If `selectedDay` no longer points at a valid
+  // day (e.g. user deleted all of Day 2's places and returns to the tab),
+  // we silently treat it as 'all' for filtering. The setter is still wired
+  // to chip taps; if the user taps a chip then deletes its places elsewhere,
+  // the filter "softly" falls back to 'all' on next render. Keeping the raw
+  // state in `selectedDay` lets the chip's checked-state visually still
+  // point at the user's last intent if those places are restored (e.g. via
+  // re-optimize) without an extra setState round-trip.
+  const effectiveSelectedDay: 'all' | number =
+    selectedDay !== 'all' && !availableDays.includes(selectedDay)
+      ? 'all'
+      : selectedDay;
+
   // Apply the day filter. When 'all', pass the full arrays (stable references
   // from the memos above so Map doesn't re-render unnecessarily).
   const filteredMarkers = useMemo(() => {
-    if (selectedDay === 'all') return allMarkers;
+    if (effectiveSelectedDay === 'all') return allMarkers;
     // Exclude unassigned (day_index === null) when filtering by a specific day.
-    return allMarkers.filter((m) => m.dayIndex === selectedDay);
-  }, [allMarkers, selectedDay]);
+    return allMarkers.filter((m) => m.dayIndex === effectiveSelectedDay);
+  }, [allMarkers, effectiveSelectedDay]);
 
   const filteredPolylines = useMemo(() => {
-    if (selectedDay === 'all') return allPolylines;
-    return allPolylines.filter((p) => p.dayIndex === selectedDay);
-  }, [allPolylines, selectedDay]);
+    if (effectiveSelectedDay === 'all') return allPolylines;
+    return allPolylines.filter((p) => p.dayIndex === effectiveSelectedDay);
+  }, [allPolylines, effectiveSelectedDay]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -276,7 +288,7 @@ function MapTab({
               {/* "All" chip */}
               {(['all', ...availableDays] as Array<'all' | number>).map((value) => {
                 const isAll = value === 'all';
-                const isSelected = selectedDay === value;
+                const isSelected = effectiveSelectedDay === value;
                 const label = isAll ? 'All' : `Day ${(value as number) + 1}`;
                 const dotColor = isAll ? undefined : dayColor(value as number);
 
@@ -879,8 +891,10 @@ function SettingsTab({
   return (
     <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
       {/* ── Trip settings ───────────────────────────────────────────────── */}
+      {/* Step 5: "Daily plan time" is time-first language — it's hours of
+          activities per day, not a financial budget. */}
       <Slider
-        label="Daily hours budget"
+        label="Daily plan time"
         unit="h"
         min={2}
         max={14}
@@ -899,8 +913,12 @@ function SettingsTab({
         ]}
       />
 
-      {/* ── Cost settings (Step 8.6) ─────────────────────────────────────── */}
-      <SectionHeading label="Cost settings" t={t} />
+      {/* ── Travel cost settings (Step 8.6 + Step 5 label cleanup) ──────── */}
+      {/* Step 5: renamed from "Cost settings" to "Estimated travel cost" so it
+          reads as a derived, narrow metric (fuel / transport) rather than the
+          full trip money budget. Step 6 (backend) will replace this model with
+          category-based budgets. */}
+      <SectionHeading label="Estimated travel cost" t={t} />
       <SegmentedControl<TripCurrency>
         label="Currency"
         value={currency}
@@ -909,7 +927,7 @@ function SettingsTab({
       />
       <View style={{ gap: t.spacing.xs }}>
         <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-          Cost per km ({currency})
+          Travel cost per km ({currency})
         </Text>
         <TextInput
           value={rateText}
@@ -918,8 +936,8 @@ function SettingsTab({
           // inputMode is a web-standard hint; RN ≥ 0.72 honours it on web.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           inputMode={"decimal" as any}
-          accessibilityLabel="Cost per kilometre"
-          accessibilityHint="Enter the fuel or transport cost per kilometre"
+          accessibilityLabel="Travel cost per kilometre"
+          accessibilityHint="Enter the fuel or transport cost per kilometre for estimated travel cost"
           style={[
             styles.rateInput,
             {
