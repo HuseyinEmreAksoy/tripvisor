@@ -13,7 +13,9 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (Phase 20: Map import shadowing JS Map fixed; desktop split-view; web verified; native deferred to user smoke) | 2, 15, 20 | [map.md](map.md) |
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
 | Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
-| Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20 (migration, RLS, TanStack Query API); UI deferred to Phase 21 | 20 | [expenses.md](expenses.md) |
+| Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20; UI shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 20, 21 | [expenses.md](expenses.md) |
+| Trip collaboration (invite + roles) | 🚧 In progress — shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 21 | [collaboration.md](collaboration.md) |
+| Accommodation tracking | 🚧 In progress — shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 21 | [accommodation.md](accommodation.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
 | Shareable read-only link | ✅ Done (web verified; iOS/Android deferred to user smoke — Head is web-only no-op, no native re-verification needed for Phase 14 unfurl; Phase 19 fixed share-revoke production bug — tokens that appeared revoked were live until this fix) | 4, 14, 19 | [share.md](share.md) |
 | .ics calendar export | 🚧 Code complete · awaiting native smoke | 4 | [ics-export.md](ics-export.md) |
@@ -33,7 +35,7 @@ Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 I
 
 ## Post-MVP brainstorm (from `database-schema.jsx`)
 
-`/database-schema.jsx` at project root is a pre-existing React visualization of an earlier, broader brainstorm. As of 2026-04-25, three items from that brainstorm have been promoted into the active roadmap (`plan.md` Phase 21): budget tracking, trip collaboration, and accommodation tracking. The remaining items below are still out of scope for MVP but worth revisiting:
+`/database-schema.jsx` at project root is a pre-existing React visualization of an earlier, broader brainstorm. Budget tracking, trip collaboration, and accommodation tracking were promoted into the active roadmap in Phase 21 and are now represented in the feature table above. The remaining items below are still out of scope for MVP but worth revisiting:
 
 - Weather forecast integration + rainy-day indoor alternatives
 - Meal planning (breakfast/lunch/dinner tagging, restaurant suggestions near stops)
@@ -41,4 +43,4 @@ Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 I
 - Packing lists (auto-suggested from destination + weather + activities)
 - Document storage (tickets, reservations, passport copies)
 
-These should be re-evaluated after Phase 4 ships.
+These should be re-evaluated after Phase 21 smoke and Phase 22 close out.

@@ -28,7 +28,7 @@
 | 18 | Duplicate place warning in add flow | ✅ Done (web verified; native shares same code path) | ui |
 | 19 | Test restoration + share-revoke production bug fix | ✅ Done | test + ui + backend |
 | 20 | UX / navigation / maps recovery + expense model cleanup | ✅ Done (web smoke green 2026-04-25; native deferred to user smoke) | ui + backend + docs |
-| 21 | Budget tracking + collaboration + accommodation tracking | 📋 Planned (promoted from brainstorm on 2026-04-25) | backend + ui + docs |
+| 21 | Budget tracking + collaboration + accommodation tracking | ✅ Code complete 2026-04-25 — automated tests + live smoke skipped per user direction; platforms unverified | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2218,73 +2218,291 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
 
 ## Phase 21 — Budget tracking + collaboration + accommodation tracking
 
-**Goal**: Promote the previously missing travel-product capabilities into the active roadmap: estimated-vs-actual budget tracking, shared trip collaboration, and accommodation-aware planning.
-**Status**: 📋 Planned
+**Goal**: Promote the deferred travel-product capabilities into shipping features: budget UI on the existing `trip_expenses` data layer, multi-user trip collaboration extending the existing `trip_shares` link infrastructure, and accommodation tracking with a first-class data model.
+**Status**: ✅ Code complete 2026-04-25 — automated tests (21.14), live smoke (21.15), reviewer pass (21.16), and fix loop (21.17) skipped per user direction; ADRs (21.2) deferred per user direction. Platforms NOT verified. See `docs/smoke/phase-21.md` for deferred-state record.
 **Entry criteria**:
-- Phase 20 terminology and expense-model cleanup is complete
+- Phase 20 complete (category-based expense data layer + desktop layout primitives shipped)
+- Open questions below answered by user before backend/ui work begins
+
 **Phase exit criteria**:
-- Users can track estimated vs actual expenses per trip/day/stop using category-based entries
-- Users can share trips for view/edit collaboration with clear permissions and sync behavior
-- Users can attach accommodations to nights and see hotel-to-itinerary context
+- Users can enter estimated/actual expenses per category from the trip detail screen, see a rollup vs `total_budget`, edit an existing expense, and delete one — verified on web, iOS, Android
+- A trip owner can invite a collaborator by email and grant either viewer or editor (per Open Question 1) role; collaborator can sign in and access the trip per granted role; owner can revoke access; two-user RLS deny tests pass — verified on web, iOS, Android
+- Users can attach an accommodation to a night-range (check-in / check-out dates), optionally anchor to a Google place via existing autocomplete, and see it surfaced on the trip detail / day views — verified on web, iOS, Android
+- Desktop layouts use `useBreakpoint` from day one for every new screen / drawer / sheet
+- `docs/features/expenses.md`, new `docs/features/collaboration.md`, new `docs/features/accommodation.md`, and `docs/features/overview.md` are updated to "shipped" with all three platform boxes ticked
+- Live smoke recorded at `docs/smoke/phase-21.md` walking the budget + collaboration + accommodation golden paths
 
-**Critical path**: Step 1 → Step 2 → Step 4 → Step 5 → Step 6
+### Open questions / decisions — RESOLVED 2026-04-25 by user
 
-### Step 1 — Budget tracking product/data design
+1. **Collaboration permission model**: ✅ Decided — **both `viewer` and `editor` roles, viewer as default**. Schema uses `role` enum.
+2. **Collaboration invite delivery**: ✅ Decided — **email invite + in-app accept**. Owner enters invitee's email; backend creates a `trip_collaborators` row in `pending` status and emails a tokenized link. Invitee follows link → lands in app → must be signed in → presses **Accept** (or **Decline**) to bind the row to their `auth.user.id` and flip status to `accepted`. Auto-bind on link click is rejected — explicit accept gates write access.
+3. **Budget UI scope for v1**: ✅ Decided — **total budget + per-category rollups, no caps**. Total is editable; per-category is computed-only.
+4. **Accommodation as new table vs expense category extension**: ✅ Decided — **new `trip_accommodations` table**. Accommodation cost still flows through `trip_expenses` in the `accommodation` category; optional `accommodation_id` FK back-links them.
+5. **Accommodation place anchor**: ✅ Decided — **optional `google_place_id` + free-text address fallback**. Reuses existing autocomplete; ToS-safe (we already persist `google_place_id` + coordinates only).
+6. **Trip-listing visibility for collaborators**: ✅ Decided — **yes, in `/trips` with "Shared with me" badge**. UNION owned + accepted-collaborator trips in `useTrips`.
+
+**Schema implications locked from above:**
+- `trip_collaborators` columns: `id, trip_id, invitee_email, user_id (nullable until accepted), role enum('viewer','editor'), status enum('pending','accepted','declined','revoked'), invite_token, created_at, accepted_at, revoked_at`
+- Invite-accept Edge Function or RPC required (token → bind to current `auth.uid()`)
+- `trip_accommodations` columns: `id, trip_id, name, google_place_id (nullable), address (nullable), check_in_date, check_out_date, notes, created_at, updated_at`
+
+**Critical path**: 21.1 → 21.2 → (21.3 ‖ 21.5 ‖ 21.8) → (21.4 ‖ 21.6 ‖ 21.9) → 21.7 → 21.10 → 21.11 → 21.12 → 21.13 → 21.14
+
+The riskiest spine is **collaboration**: 21.5 (multi-user RLS migration) gates 21.6 (collaborator-aware API rewrite) gates 21.7 (UI plumbing across every trip-scoped screen). Budget and accommodation slices can run in parallel against this critical path.
+
+---
+
+### Group A — Foundations (must complete before any Group B work)
+
+#### Step 21.1 — Resolve open questions ✅ Done 2026-04-25
+- **Agent**: planner (this step is a hand-off, not a code task)
+- **Size**: XS
+- **Task**: User answers the 6 open questions above. Planner updates this section with the resolved decisions and converts blockers into "decided" notes.
+- **Inputs**: Open questions list above
+- **Outputs**: Updated `plan.md` with answers inlined; ADRs queued for any non-obvious choices
+- **Depends on**: None
+- **Risks**: [Blocker] Phase cannot start without these — Mitigation: this step exists exactly to surface that
+- **Verification**: All 6 questions have a "Decided: <answer>" line written into plan.md
+
+#### Step 21.2 — ADRs for load-bearing decisions — DEFERRED (user direction)
+- **Reason**: User directed the team to skip formal ADR authoring for this phase; the locked decisions recorded in the "Open questions / decisions" block above serve as the de-facto record.
+- **Agent**: planner
+- **Size**: S
+- **Task**: Author ADRs in `docs/adr/` for the two load-bearing choices: (a) collaboration model (multi-user RLS via `trip_collaborators` join table vs. denormalized owner_ids), (b) accommodation as separate table vs. expense extension. Skip ADRs for trivially-resolved questions.
+- **Inputs**: Step 21.1 decisions
+- **Outputs**: `docs/adr/0001-trip-collaboration-model.md`, `docs/adr/0002-accommodation-as-separate-table.md` (numbering: planner picks next free numbers; verify no existing ADRs collide)
+- **Depends on**: 21.1
+- **Risks**: [Low] Decisions may shift during implementation — Mitigation: ADRs are short and amendable
+- **Verification**: Two ADRs written; each ≤ 1 screen; status: accepted
+
+---
+
+### Group B — Backend (per slice, parallelizable across slices)
+
+#### Step 21.3 — [Slice: Budget] Budget rollup helper + API extensions ✅ Done 2026-04-25
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Add a derived rollup helper to `src/api/trip-expenses.ts` (e.g. `useTripExpenseRollup(tripId)` returning `{ byCategory, totalEstimated, totalActual, budget, remaining }`). No new migration — `trip_expenses` and `trips.total_budget` already exist. Add `useUpdateTripBudget(tripId)` mutation to set `trips.total_budget`. Re-export from `src/api/index.ts`.
+- **Inputs**: existing `trip_expenses` schema, existing `useTripExpenses` hook
+- **Outputs**: extended `src/api/trip-expenses.ts`, new hook(s), updated `src/api/index.ts` re-exports
+- **Depends on**: 21.2
+- **Parallel with**: 21.5, 21.8
+- **Risks**: [Low] Rollup math edge cases (zero expenses, null budget) — Mitigation: test-specialist covers in 21.10
+- **Verification**: Hook returns correct rollup for a fixture trip with 5 mixed-kind expenses; mutation updates `trips.total_budget` round-trip
+
+#### Step 21.4 — [Slice: Budget] Wire test fixtures + types ✅ Done 2026-04-25
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Ensure `src/api/types.ts` exposes `TripExpense`, `TripExpenseRollup` types cleanly for UI consumption. Add Zod parsing for the rollup return shape if any server-side aggregation is introduced (none expected for v1 — JS-side aggregation is fine for <50 rows).
+- **Inputs**: 21.3 hook signatures
+- **Outputs**: type exports in `src/api/types.ts`
+- **Depends on**: 21.3
+- **Parallel with**: 21.6, 21.9
+- **Risks**: none material
+- **Verification**: `tsc --noEmit` passes; types importable from UI
+
+#### Step 21.5 — [Slice: Collaboration] Migration `0011_trip_collaborators.sql` ✅ Done 2026-04-25
 - **Agent**: backend-specialist
 - **Size**: L
-- **Task**: Design the schema and API surface for estimated-vs-actual budget tracking per trip, day, and stop, aligned with the Phase 20 category-based expense model.
-- **Expected output**: additive schema + API plan for budgets and expense entries
-- **Depends on**: None
+- **Task**: New migration creating `public.trip_collaborators (id uuid pk, trip_id uuid fk trips, user_id uuid fk auth.users, role text check in ('viewer','editor'), invited_at timestamptz, accepted_at timestamptz null, invited_by uuid fk auth.users)`. Update RLS policies on **all** trip-child tables (`trip_days`, `trip_places`, `trip_legs`, `trip_expenses`, plus the new `trip_accommodations` from 21.8) so SELECT is allowed when caller is owner OR has accepted collaborator row; UPDATE/INSERT/DELETE allowed only for owner OR editor-role collaborators. Update `trips` SELECT policy similarly. Owner-only operations (delete trip, manage collaborators) stay restricted to `trips.user_id = auth.uid()`. Define a SQL helper function `public.user_can_access_trip(trip_id uuid)` returning bool to keep policies DRY.
+- **Inputs**: 21.2 ADR-1 decision (single `role` enum confirmed)
+- **Outputs**: `supabase/migrations/0011_trip_collaborators.sql`; documents the helper function and policy structure inline
+- **Depends on**: 21.2
+- **Parallel with**: 21.3, 21.8
 - **Risks**:
-  - [Medium] Overlap with existing cost surfaces — Mitigation: define canonical fields and migration path before UI implementation
-- **Verification**: schema/API plan supports estimated vs actual rollups at all three scopes
+  - [High] RLS holes — a sharee could read another sharee's email or see all collaborators on a trip. Mitigation: `trip_collaborators` SELECT policy must be limited to owner + the collaborator themselves seeing only their own row; explicit two-user negative test required in 21.10
+  - [High] Recursive policy evaluation cost — `user_can_access_trip` called from every child-table policy could explode. Mitigation: keep the function `stable language sql security definer` and `set search_path = public`; benchmark with EXPLAIN on a 10-place trip
+  - [Medium] `trip_expenses` policies were authored in 0010 with strict owner-only semantics — must be replaced, not added to. Mitigation: migration drops + recreates, documented in migration header
+- **Verification**: `supabase db reset` applies cleanly; `psql` direct test confirms a viewer-role collaborator can SELECT trip + places + legs but cannot UPDATE; editor-role collaborator can UPDATE places; non-collaborator non-owner cannot SELECT
 
-### Step 2 — Collaboration / sharing model expansion
+#### Step 21.6 — [Slice: Collaboration] `manage-collaborators` Edge Function + client API ✅ Done 2026-04-25
 - **Agent**: backend-specialist
 - **Size**: L
-- **Task**: Extend trip sharing from read-only link sharing into collaborator roles (owner/editor/viewer) with RLS-compatible permissions and sync semantics.
-- **Expected output**: collaboration schema + permission model plan
-- **Depends on**: None
+- **Task**: New Edge Function `supabase/functions/manage-collaborators/index.ts` with ops `invite` (owner adds by email — uses Supabase Auth admin to look up or invite user, then inserts `trip_collaborators` row), `list` (owner lists collaborators on their trip; returns email + role + accepted_at, never user_id leakage to other collaborators), `update_role` (owner only), `remove` (owner only), `accept` (invitee marks `accepted_at`). Anonymous `?ping` returns 200. Client API `src/api/trip-collaborators.ts` exposes `useTripCollaborators(tripId)`, `useInviteCollaborator(tripId)`, `useUpdateCollaboratorRole(tripId)`, `useRemoveCollaborator(tripId)`, `useAcceptCollaboratorInvite()`. Re-export from `src/api/index.ts`.
+- **Inputs**: 21.5 schema + decision on email-invite flow (Open Q2)
+- **Outputs**: Edge Function + tests scaffolding (test bodies authored by test-specialist in 21.10), `src/api/trip-collaborators.ts`
+- **Depends on**: 21.5
+- **Parallel with**: 21.4, 21.9
 - **Risks**:
-  - [High] RLS complexity can create access-control holes — Mitigation: model roles explicitly and require two-user deny/allow tests before ship
-- **Verification**: permission matrix is concrete enough for implementation and testing
+  - [High] Email-enumeration: if invite fails when email doesn't exist, attackers can probe registered emails. Mitigation: always return success-shape, send actual invite if user exists, no-op silently if not (test-specialist verifies)
+  - [Medium] Race on accept (two devices same invite) — Mitigation: `accepted_at` is upsert-idempotent
+  - [Medium] Existing `useTrips()` query needs to merge owned + accepted-collaborator trips. Mitigation: 21.7 covers
+- **Verification**: Edge Function `?ping` returns 200; `invite` then `accept` round-trip works in local Supabase; `list` excludes other collaborators' user_ids
 
-### Step 3 — Accommodation tracking model
+#### Step 21.7 — [Slice: Collaboration] Update `useTrips` and trip-scoped hooks for shared trips — DEFERRED (user direction)
+- **Reason**: UNION of owned + accepted-collaborator trips in `useTrips` was not implemented in Phase 21. The trips list instead consumes `useTrips()` (owned) and `useCollaboratedTrips()` (shared) as two separate sections. Completing the UNION is a Phase 22 candidate.
 - **Agent**: backend-specialist
 - **Size**: M
-- **Task**: Define accommodation entities linked to nights/days and the computed relationship to first/last itinerary stops.
-- **Expected output**: schema/API plan for hotel stays and itinerary distance context
-- **Depends on**: None
-- **Risks**:
-  - [Medium] Multi-night / multi-city trips may complicate the model — Mitigation: start with one accommodation block per night range
-- **Verification**: the model can answer “where am I staying this night?” and “how far is it from the day route?”
+- **Task**: Update `useTrips()` in `src/api/trips.ts` to UNION owned trips and accepted-collaborator trips, returning a `role: 'owner' | 'editor' | 'viewer'` field per trip. Audit every existing `src/api/*.ts` hook that mutates trip data and ensure it gracefully handles the case where caller is a viewer (the RLS-driven 403 must surface as a typed `forbidden` error, not a silent failure).
+- **Inputs**: 21.5 RLS, 21.6 collaborator API
+- **Outputs**: updated `src/api/trips.ts`, audit notes inline; possibly small touch-ups to `trip-places.ts`, `trip-expenses.ts`, etc. for error mapping
+- **Depends on**: 21.5, 21.6
+- **Parallel with**: 21.9 (different files)
+- **Risks**: [Medium] UNION query performance — Mitigation: index on `trip_collaborators(user_id, accepted_at)` already in 21.5
+- **Verification**: A test user with one owned trip and one accepted-collaborator invite sees both in `useTrips()` with correct `role` values
 
-### Step 4 — UI surfaces for budgets / collaboration / accommodation
+#### Step 21.8 — [Slice: Accommodation] Migration `0012_trip_accommodations.sql` ✅ Done 2026-04-25
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: New migration creating `public.trip_accommodations (id uuid pk, trip_id uuid fk trips, name text not null, google_place_id text null, address text null, lat numeric null, lng numeric null, check_in_date date not null, check_out_date date not null, notes text null, created_at, updated_at)` with CHECK `check_out_date > check_in_date`. RLS policies use the `user_can_access_trip(trip_id)` helper from 21.5 (depends on 21.5 landing first). Index on `trip_id`. `updated_at` trigger reuses `set_updated_at()`.
+- **Inputs**: 21.2 ADR-2 (separate table confirmed), 21.5 helper function
+- **Outputs**: `supabase/migrations/0012_trip_accommodations.sql`
+- **Depends on**: 21.5 (for RLS helper)
+- **Parallel with**: 21.3, 21.6
+- **Risks**:
+  - [Medium] Overlap detection (two stays same night) — out of scope for v1; UI will warn but DB does not enforce. Mitigation: documented in migration header
+  - [Low] Coordinates persistence is ToS-safe (we already store `lat`/`lng` for `trip_places`)
+- **Verification**: Migration applies cleanly; viewer-collaborator can SELECT, editor can INSERT, non-collaborator gets 0 rows
+
+#### Step 21.9 — [Slice: Accommodation] Client API `src/api/trip-accommodations.ts` ✅ Done 2026-04-25
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: TanStack Query hooks `useTripAccommodations(tripId)`, `useCreateAccommodation()`, `useUpdateAccommodation()`, `useDeleteAccommodation()`. Zod schema. Query keys in `src/api/_keys.ts`. Re-export from `src/api/index.ts`. Optional: a derived selector that maps each `trip_days[].day_index` to the accommodation covering that night, for UI consumption in 21.13.
+- **Inputs**: 21.8 schema
+- **Outputs**: `src/api/trip-accommodations.ts`, types in `src/api/types.ts`
+- **Depends on**: 21.8
+- **Parallel with**: 21.4, 21.7
+- **Risks**: [Low] none material
+- **Verification**: `tsc --noEmit` passes; CRUD round-trip works against local Supabase
+
+---
+
+### Group C — UI (per slice, parallelizable across slices; depends on Group B)
+
+#### Step 21.10 — [Slice: Budget] Budget UI on trip detail ✅ Done 2026-04-25
 - **Agent**: ui-specialist
-- **Size**: XL
-- **Task**: Build the product surfaces for categorized budgets, collaborator management, and accommodation tracking once the backend contracts are settled.
-- **Expected output**: screens/components for entering expenses, viewing rollups, inviting collaborators, and assigning accommodations
-- **Depends on**: Steps 1, 2, 3
+- **Size**: L
+- **Task**: Build (a) a `BudgetCard` on trip detail showing total budget, total estimated, total actual, remaining, with a small per-category bar breakdown (mobile-first card; desktop variant uses `useBreakpoint` to expand into a 2-col layout placing the card alongside the trip summary), (b) a `BudgetSheet` (modal on mobile, side drawer on desktop) for setting `total_budget`, (c) an `ExpenseSheet` for create/edit with category picker, kind toggle (estimated/actual), amount field, optional day picker, optional label, (d) a list view of all expenses with edit/delete swipe (mobile) or row-actions (desktop). Strong empty state with travel imagery (per 2026-04-25 user priorities). Currency rendering via `Intl.NumberFormat` keyed off `trips.currency`.
+- **Inputs**: 21.3, 21.4 hooks; existing `useBreakpoint`; existing trip detail screen
+- **Outputs**: `src/components/budget/BudgetCard.tsx`, `src/components/budget/BudgetSheet.tsx`, `src/components/budget/ExpenseSheet.tsx`, `src/components/budget/ExpenseList.tsx`; integrated into `app/(app)/trip/[id]/index.tsx` (or wherever trip detail lives)
+- **Depends on**: 21.3, 21.4
+- **Parallel with**: 21.11, 21.13
 - **Risks**:
-  - [Medium] Scope is broad for one phase — Mitigation: split implementation into ship-order slices if the step expands beyond L during planning
-- **Verification**: core flows are operable on web and structurally ready for native smoke
+  - [Medium] Sheet behavior diverges between iOS / Android / web — Mitigation: use existing sheet primitive if Phase 20 introduced one; otherwise platform-split
+  - [Medium] Viewer collaborators must see budget read-only (no edit affordances) — Mitigation: gate edit UI on `trip.role !== 'viewer'`
+- **Verification**: Manual: enter 5 expenses across categories, see correct rollup, edit one, delete one. Viewer-role user sees read-only. iOS / Android / web all render correctly.
 
-### Step 5 — Regression / RLS / collaboration test pass
+#### Step 21.11 — [Slice: Collaboration] Collaborator management UI ✅ Done 2026-04-25
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: Build (a) a `CollaboratorsScreen` accessible from trip detail (route `app/(app)/trip/[id]/collaborators.tsx`) with mobile-first list + email invite form + role selector, desktop variant uses two-column layout (`useBreakpoint`), (b) a "Shared with me" section header and badge in `app/(app)/trips.tsx` (the trips list) for trips where `role !== 'owner'`, (c) an invite-acceptance flow — when an invitee signs in and lands on `/trips`, pending invites show a banner with accept/decline. Visible back affordance per 2026-04-25 priority. Show role-appropriate edit/view affordances throughout (already gated in 21.10 for budget; add the same gating to existing place/leg edit UIs in this step's audit).
+- **Inputs**: 21.6, 21.7 APIs; existing trip detail + trips-list screens
+- **Outputs**: `app/(app)/trip/[id]/collaborators.tsx`, updates to `app/(app)/trips.tsx`, new `src/components/collaboration/InviteForm.tsx`, `src/components/collaboration/CollaboratorRow.tsx`, `src/components/collaboration/PendingInvitesBanner.tsx`; gated affordance audit across existing trip-edit UIs
+- **Depends on**: 21.6, 21.7
+- **Parallel with**: 21.10, 21.13
+- **Risks**:
+  - [High] Existing place/leg/optimize UIs may unconditionally allow edits — Mitigation: ui-specialist must audit every trip-scoped mutation surface; add a `useTripRole(tripId)` hook in 21.7 if not already there
+  - [Medium] Invite-by-email UX when invitee doesn't exist yet — Mitigation: success copy says "If they have an account they'll see this trip; otherwise they'll need to sign up first" (matches the email-enumeration mitigation in 21.6)
+- **Verification**: Two-account manual smoke: owner invites editor by email; editor signs in, accepts, edits a place; owner sees the edit. Owner downgrades to viewer; editor's edit affordances disappear. Owner revokes; trip vanishes from former-collaborator's list.
+
+#### Step 21.12 — [Slice: Collaboration] Update share-link and existing public-share screen ✅ Done 2026-04-25
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Update `app/share/[token].tsx` to clarify that link-share is **read-only public view** distinct from collaboration. Add a small "Want to invite someone to edit? Use Collaborators →" link from the trip detail's existing share UI to the new collaborators screen. Link-share itself is unchanged.
+- **Inputs**: 21.11 collaborators screen
+- **Outputs**: copy / link updates to share UI; no logic changes
+- **Depends on**: 21.11
+- **Parallel with**: 21.13
+- **Risks**: [Low] none material
+- **Verification**: Existing share flow still works; new link discoverable from trip detail
+
+#### Step 21.13 — [Slice: Accommodation] Accommodation UI on trip detail + day views ✅ Done 2026-04-25
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: Build (a) `AccommodationsSection` on trip detail showing each booking as a card with name, dates (night N–M of trip), address line, and tap-to-edit, (b) `AccommodationSheet` for create/edit — name field, optional Google place autocomplete (reuses existing `PlacesAutocomplete`), free-text address fallback, check-in / check-out date pickers with validation (`check_out > check_in`), notes, (c) per-day surfacing on existing day views — small "Staying at: <name>" pill near the day header when an accommodation covers that night. Mobile-first; desktop uses two-column (`useBreakpoint`). Visible back affordance from sheet.
+- **Inputs**: 21.9 hooks; existing `PlacesAutocomplete`, day views; `useBreakpoint`
+- **Outputs**: `src/components/accommodation/AccommodationsSection.tsx`, `src/components/accommodation/AccommodationSheet.tsx`, `src/components/accommodation/StayingAtPill.tsx`; integrations into trip detail + day views
+- **Depends on**: 21.9
+- **Parallel with**: 21.10, 21.11
+- **Risks**:
+  - [Medium] Date range overlap UX (two accommodations same night) — Mitigation: warning banner in sheet, no DB enforcement; documented in `docs/features/accommodation.md`
+  - [Medium] Native date picker divergence — Mitigation: use the same date-picker primitive Phase 20 standardized on (or platform-split if necessary)
+  - [Medium] Viewer role gating — Mitigation: `role !== 'viewer'` gates create/edit affordances
+- **Verification**: Add a 3-night stay with Google place anchor; appears on trip detail and on each of the 3 day headers; date validation rejects invalid ranges; viewer cannot create/edit.
+
+---
+
+### Group D — Test, smoke, review, docs (sequential close-out)
+
+#### Step 21.14 — Test authoring (automated) — DEFERRED (user direction)
+- **Reason**: User explicitly skipped automated tests for Phase 21. Phase 22 should include RLS two-user deny tests, rollup unit tests, and Playwright E2E for all three golden paths.
 - **Agent**: test-specialist
 - **Size**: L
-- **Task**: Add automated and live-smoke coverage for expense rollups, collaborator permissions, and accommodation-linked itinerary behavior.
-- **Expected output**: tests + smoke log covering new travel-product surfaces
-- **Depends on**: Step 4
+- **Task**: Author (a) **unit / integration tests** for: `trip_expenses` rollup math, `trip_collaborators` two-user RLS deny / allow matrix (owner-only, viewer-can-read-cannot-write, editor-can-write, non-member-cannot-read, collaborator-cannot-see-other-collaborators-emails), `trip_accommodations` RLS, `manage-collaborators` Edge Function ops including email-enumeration safety (consistent response when email exists vs. doesn't). (b) **Playwright web E2E** for the three golden paths: budget entry + rollup, collaborator invite + acceptance + edit, accommodation creation + day surfacing. (c) **Component tests** for budget rollup display, collaborator role gating, accommodation date validation.
+- **Inputs**: All Group B and Group C output
+- **Outputs**: tests under `tests/`, `e2e/web/phase-21-budget.spec.ts`, `e2e/web/phase-21-collaboration.spec.ts`, `e2e/web/phase-21-accommodation.spec.ts`, RLS tests under `tests/rls.*.test.ts`
+- **Depends on**: 21.10, 21.11, 21.12, 21.13
+- **Parallel with**: (none — gates 21.15)
 - **Risks**:
-  - [High] Collaboration bugs may only surface with multiple sessions/users — Mitigation: require two-user integration coverage before review
-- **Verification**: allow/deny collaboration cases and budget math are covered; smoke proves end-to-end usability
+  - [High] Two-user collaboration tests need second seeded auth.user; mitigation: extend existing test seeding pattern from `tests/rls.share.test.ts`
+  - [Medium] E2E flake on the email-invite flow (depends on Supabase Auth admin in local) — Mitigation: stub Auth admin in local; integration test covers the real path
+- **Verification**: `npm test` and `npm run test:e2e` both green; RLS deny tests show correct 403 / empty-result for cross-user access
 
-### Step 6 — Reviewer + docs close-out
-- **Agent**: docs-specialist
+#### Step 21.15 — Live smoke on web (penultimate, mandatory) — DEFERRED (user direction)
+- **Reason**: User explicitly skipped live smoke for Phase 21. `docs/smoke/phase-21.md` records the deferred state. No platform-verified box was ticked for budget, collaboration, or accommodation features.
+- **Agent**: test-specialist
 - **Size**: S
-- **Task**: After reviewer/fix loop, update the roadmap and feature docs so these capabilities are no longer treated as missing brainstorm items.
-- **Expected output**: roadmap/docs reflect active shipped or in-progress status for budgets, collaboration, and accommodation
-- **Depends on**: Step 5
-- **Risks**:
-  - [Low] Naming may shift during implementation — Mitigation: docs pass after final UI/backend wording settles
-- **Verification**: these features appear in the active roadmap, not only in brainstorm notes
+- **Task**: Walk all three golden paths in a real browser (Chromium) on a fresh Supabase local + dev server. Record at `docs/smoke/phase-21.md` with: (a) budget — set total budget, add 5 expenses across categories + kinds, verify rollup, edit + delete; (b) collaboration — owner invites editor, editor signs in (use second test account), accepts, edits a place; owner downgrades to viewer; editor loses affordances; owner revokes; (c) accommodation — add 3-night stay with Google anchor, verify per-day pill. Note any console errors, navigation dead-ends, or desktop-layout regressions per 2026-04-25 priorities. If anything fails, **do not proceed to 21.16** — main assistant loops back to owning ui/backend specialist.
+- **Inputs**: 21.14 (automated tests must be green first)
+- **Outputs**: `docs/smoke/phase-21.md` with PASS / FAIL per golden path, screenshots optional
+- **Depends on**: 21.14
+- **Parallel with**: (none)
+- **Risks**: [High] Smoke surfaces unknown unknowns — Mitigation: this is exactly what smoke is for; budget time for at least one fix loop
+- **Verification**: Smoke log at `docs/smoke/phase-21.md` shows PASS for all three paths; no console errors
+
+#### Step 21.16 — Reviewer pass — DEFERRED (user direction)
+- **Reason**: User skipped smoke (21.15), so reviewer pass was also skipped. Phase 22 should include an RLS correctness review and email-enumeration audit.
+- **Agent**: reviewer
+- **Size**: M
+- **Task**: Pre-merge review covering: RLS correctness on `trip_collaborators` and the helper function (manual SQL probe), email-enumeration safety on `manage-collaborators`, ToS compliance (no Google reviews/photos/hours persisted on accommodations — only `google_place_id` + coords), desktop layouts on web, visible back affordances on every new screen, viewer-role gating across all mutation surfaces, console-error scan during smoke replay. Report findings; if anything is architecture-level, planner re-enters.
+- **Inputs**: 21.15 smoke log (must show PASS)
+- **Outputs**: review notes; possibly a list of fix items
+- **Depends on**: 21.15
+- **Parallel with**: (none)
+- **Risks**: [Medium] Reviewer finds rearchitecture-level RLS issue — Mitigation: planner re-enters with revised steps appended (don't renumber existing)
+- **Verification**: Reviewer signs off, OR fix-loop steps are added and re-reviewed
+
+#### Step 21.17 — Fix loop — DEFERRED (user direction)
+- **Reason**: No reviewer pass (21.16) was run, so there are no fix items. Any issues surfaced during Phase 22 smoke or review will be addressed then.
+- **Agent**: ui-specialist and/or backend-specialist (as scoped per reviewer findings)
+- **Size**: variable (typically S–M)
+- **Task**: Apply reviewer's fix items. Each fix is one logical commit. If a fix is rearchitecture-level, planner re-enters before this step.
+- **Inputs**: 21.16 review output
+- **Outputs**: targeted fixes
+- **Depends on**: 21.16
+- **Parallel with**: (none)
+- **Risks**: [Low] Scope creep during fixes — Mitigation: every fix maps to a reviewer-named item
+- **Verification**: Reviewer re-checks the named items only
+
+#### Step 21.18 — Docs sync (final) ✅ Done 2026-04-25
+- **Agent**: docs-specialist
+- **Size**: M
+- **Task**: Update `docs/features/expenses.md` to "shipped" with all three platform boxes ticked; create `docs/features/collaboration.md` and `docs/features/accommodation.md` following the standard template; update `docs/features/overview.md` to mark all three as shipped and remove from the brainstorm-deferred list; update `docs/architecture.md` to reference the two new tables and the `user_can_access_trip` helper; sync `plan.md` Phase 21 status to ✅ Done.
+- **Inputs**: All shipped surfaces post-fix-loop
+- **Outputs**: `docs/features/collaboration.md` (new), `docs/features/accommodation.md` (new), updates to `docs/features/expenses.md`, `docs/features/overview.md`, `docs/architecture.md`, `plan.md`
+- **Depends on**: 21.17 (or 21.16 if no fixes required)
+- **Parallel with**: (none — final step)
+- **Risks**: [Low] Doc drift if naming shifted — Mitigation: this step is precisely the alignment pass
+- **Verification**: All four docs reflect shipped reality; `plan.md` Phase 21 marked ✅ Done
+
+---
+
+### Phase 22 candidates (known limitations from Phase 21)
+
+The following items were identified during Phase 21 implementation and intentionally left for Phase 22:
+
+1. **`useUpdateCollaborator` not implemented** — collaborators screen role chips are read-only; to change a collaborator's role the owner must revoke + re-invite.
+2. **`useTrips` does not UNION owned + accepted-collaborator trips** — trips list consumes `useTrips()` and `useCollaboratedTrips()` as two separate sections (Step 21.7 deferred).
+3. **Accommodation edit sheet missing Google Places autocomplete** — only manual address entry in v1; the "remove existing link" button works but autocomplete wiring is absent.
+4. **Budget UI uses static `$` symbol** — `trip.currency` is not threaded through the budget components.
+5. **Editor collaborators cannot edit `trips.total_budget`** — `trips` UPDATE is owner-only per current RLS; a per-column relaxation may be needed if product wants editors to manage budgets.
+
+### Out-of-scope (deferred to Phase 22+, do not plan now)
+- Per-category budget caps with overspend warnings
+- Per-day budget caps
+- Trip ownership transfer to a collaborator
+- Real-time multi-user collaboration cursor / presence
+- Accommodation overlap enforcement at DB level
+- Budget export (CSV / PDF)
+- Currency conversion for multi-currency expenses
+- Push notifications on collaborator invites
