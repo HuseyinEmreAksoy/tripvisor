@@ -7,7 +7,7 @@
 ## Platforms verified
 - ☐ iOS
 - ☐ Android
-- ☐ Web
+- ☑ Web (Phase 17 recents verified by ui-specialist 2026-04-25; base autocomplete flow smoke-tested with same session)
 
 ## User story
 As a trip planner, I want to search Google Places and add results to my trip with minimal typing.
@@ -38,3 +38,16 @@ As a trip planner, I want to search Google Places and add results to my trip wit
 - Edge Function: `places-autocomplete/test.ts` covers happy path, `?ping`, method not allowed, invalid input, upstream error ✅
 - Component: manual smoke for now; add test for the AddPlace screen in Phase 2
 - E2E: deferred to Phase 4
+
+## Phase 17 — Recent place searches (shipped 2026-04-25)
+
+New `src/lib/recentPlaces.ts` util stores the last 10 picked places in AsyncStorage (`STORAGE_KEY = '@tripvisor/recent-places/v1'`). Persisted fields: `placeId`, `mainText`, `secondaryText`, `lastUsedAt`. No live data (photos/reviews/hours/rating) is stored — ToS contract preserved. LRU eviction, deduped by `placeId`.
+
+`app/(app)/trip/[id]/add.tsx` additions:
+- On mount: loads recents into local `useState` via `useEffect`.
+- Recents rendered in a sibling `<View>` above the autocomplete `FlatList` (not `ListHeaderComponent` — keeps section pinned regardless of scroll position).
+- `showRecents = debounced.length < 2 && recents.length > 0` — recents and autocomplete results are mutually exclusive; `searchPrompt` empty state suppressed when recents are shown.
+- "Clear recent searches" pressable at the bottom of the recents section.
+- After a place is added, `addRecentPlace(...)` fires and forgets before `router.back()`.
+
+Platforms: Web verified. iOS/Android share the same AsyncStorage code path (the library ships a `localStorage` backend on web); native device verification deferred to user smoke.

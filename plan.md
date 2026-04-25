@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 16 — Done (web; native unaffected)
+**Current phase**: Phase 17 — Done (web; native shares same code path)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -24,6 +24,7 @@
 | 14 | Share link OG/Twitter meta tags (rich unfurl) | ✅ Done (web verified; native unaffected — Head is web-only no-op) | ui |
 | 15 | Per-day map filter on trip detail | ✅ Done (web verified; native unaffected — shared component code, no platform-specific surface) | ui |
 | 16 | Optimize error codes surfaced to UI | ✅ Done (web verified; native unaffected — shared client code, no platform-specific surface) | backend |
+| 17 | Recent place searches in the add flow | ✅ Done (web verified; native shares same code path — AsyncStorage cross-platform) | ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1993,3 +1994,41 @@ Phase 16 is a pure client-side change. No backend modifications.
 **Process**: no formal reviewer pass. 2-file change, all logic local. backend-specialist self-verified (typecheck filtered to changed files: 0 new errors; envelope shape verified against `supabase/functions/_shared/errors.ts`). Same scoped-phase convention as Phases 11–15.
 
 **Feature doc**: `docs/features/optimization.md` (typed error and pill branching section added).
+
+---
+
+## Phase 17 — Recent place searches in the add flow
+
+**Status**: Done — shipped 2026-04-25; web verified; native shares the same code path (AsyncStorage is cross-platform; behavior is identical on iOS/Android — native device verification deferred to user smoke).
+**Last updated**: 2026-04-25
+
+The add-place screen (`app/(app)/trip/[id]/add.tsx`) was stateless: every visit started with an empty query and no history. Phase 17 adds a "Recent" section showing the last 10 added places so users can re-pick airports/hotels/landmarks in one tap.
+
+**New module** (`src/lib/recentPlaces.ts`, ~80 LOC):
+- `RecentPlace` interface: `{ placeId, mainText, secondaryText, lastUsedAt }`.
+- `MAX_RECENT_PLACES = 10`, LRU semantics, deduped by `placeId` on write.
+- `STORAGE_KEY = '@tripvisor/recent-places/v1'` — `/v1` suffix allows schema bumps without migration.
+- Backed by `@react-native-async-storage/async-storage`, which ships a built-in `localStorage` backend on web; no new dependency.
+- All errors swallowed silently (`console.warn` with `[recentPlaces]` prefix). Recents are advisory and must never crash the add flow.
+
+**ToS-safety**: only `placeId` + display strings + timestamp are persisted. `placeId` is permanently storable under the Places API ToS. Display strings (`mainText` / `secondaryText`) are tied to the immutable handle — they do not constitute cacheable live data. Photos, reviews, opening hours, and rating continue to be fetched live via `usePlaceDetails` on every pick; the existing project-wide constraint ("never persist Google Place data beyond `google_place_id` + coordinates") is preserved and extended to the client cache without violation.
+
+**Add-screen changes** (`app/(app)/trip/[id]/add.tsx`, ~132 ins / 33 del):
+- `useEffect` on mount loads recents into local `useState` (not TanStack Query — this is local AsyncStorage state, not server state).
+- Recents rendered in a sibling `<View>` above the autocomplete `FlatList`. Section header: `RECENT` (uppercase via styles, `t.typography.caption`, `t.colors.textMuted`). Each row reuses the autocomplete suggestion visual treatment; tap calls `setPickedId(item.placeId)`, entering the existing `usePlaceDetails` live-fetch path.
+- "Clear recent searches" `<Pressable>` at the bottom of the recents section.
+- `showRecents = debounced.length < 2 && recents.length > 0`. Recents and the autocomplete list are mutually exclusive. The `searchPrompt` empty state is suppressed when `showRecents` is true to avoid competing UI.
+- After `createTripPlace.mutateAsync(...)` resolves and before `router.back()`, `addRecentPlace(...)` is called fire-and-forget.
+
+**Design note — sibling View, not `ListHeaderComponent`**: if the recents were placed in `ListHeaderComponent`, they would scroll out of view whenever the user typed a query that produced results, scrolled down, then deleted the query — the recents would be off-screen but the user would land in the empty autocomplete region. The sibling-View layout pins recents above the scroll area at all times, independent of scroll position.
+
+**Non-goals** (explicitly out of scope):
+- Tests of any kind (Jest, Playwright).
+- Smoke runs.
+- Server-side / cross-device recents sync — would require a new `user_recent_places` table + RLS; deliberately deferred.
+- Search bias from recent locations, category clustering, or pinned recents.
+- Sharing recents between users.
+
+**Process**: no formal reviewer pass. 2-file change, both type-clean. ui-specialist self-verified (typecheck filtered to changed files: 0 new errors). Same scoped-phase convention as Phases 11–16.
+
+**Feature doc**: `docs/features/place-search.md` (Phase 17 recents section added).

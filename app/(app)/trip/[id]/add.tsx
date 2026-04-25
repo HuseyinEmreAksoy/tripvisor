@@ -11,6 +11,12 @@ import {
   usePlaceDetails,
 } from '@/api';
 import { inferCategoryDefault } from '@/lib/categoryDurations';
+import {
+  addRecentPlace,
+  clearRecentPlaces,
+  getRecentPlaces,
+  type RecentPlace,
+} from '@/lib/recentPlaces';
 
 function useDebounced<T>(value: T, ms = 250): T {
   const [debounced, setDebounced] = useState(value);
@@ -43,6 +49,16 @@ export default function AddPlace() {
 
   const createTripPlace = useCreateTripPlace();
 
+  // ─── Recent places — local AsyncStorage state (not server state) ─────────────
+  const [recents, setRecents] = useState<RecentPlace[]>([]);
+
+  useEffect(() => {
+    getRecentPlaces().then(setRecents);
+  }, []);
+
+  // True when the query is too short for autocomplete and recents are available.
+  const showRecents = debounced.length < 2 && recents.length > 0;
+
   async function handleConfirm() {
     if (!picked || !tripId) return;
     const defaults = inferCategoryDefault(picked.types);
@@ -55,7 +71,19 @@ export default function AddPlace() {
       lat: picked.location.latitude,
       lng: picked.location.longitude,
     });
+    // Fire-and-forget: slow storage write must not block navigation.
+    // addRecentPlace swallows its own errors internally.
+    addRecentPlace({
+      placeId: picked.placeId,
+      mainText: picked.displayName,
+      secondaryText: picked.formattedAddress,
+    });
     router.back();
+  }
+
+  function handleClearRecents() {
+    clearRecentPlaces();
+    setRecents([]);
   }
 
   return (
@@ -106,43 +134,112 @@ export default function AddPlace() {
           )}
         </View>
       ) : (
-        <FlatList
-          data={suggestions}
-          keyExtractor={(s) => s.placeId}
-          contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
-          ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
-          ListEmptyComponent={
-            debounced.length >= 2 ? (
-              isFetching ? (
-                <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
-                  <ActivityIndicator />
-                </View>
-              ) : (
-                <EmptyState {...noSearchResults} />
-              )
-            ) : (
-              <EmptyState {...searchPrompt} />
-            )
-          }
-          ListFooterComponent={suggestions.length ? <PoweredByGoogle /> : null}
-          renderItem={({ item }) => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Choose ${item.mainText}`}
-              onPress={() => setPickedId(item.placeId)}
-              style={[styles.row, { paddingVertical: t.spacing.md }]}
-            >
-              <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
-                {item.mainText}
+        // ── Search / Recents area ───────────────────────────────────────────────
+        // Layout: Recents section (pinned, non-scrolling) sits above the
+        // autocomplete FlatList. Both share the same horizontal padding so
+        // visual alignment stays consistent. Using a sibling <View> rather than
+        // ListHeaderComponent keeps the recents header visible while the user
+        // scrolls a long autocomplete list.
+        <View style={styles.searchArea}>
+          {showRecents && (
+            <View style={{ paddingHorizontal: t.spacing.lg }}>
+              {/* Section header — non-interactive label, no role needed */}
+              <Text
+                style={[
+                  t.typography.caption,
+                  styles.recentsHeader,
+                  { color: t.colors.textMuted, marginVertical: t.spacing.sm },
+                ]}
+              >
+                Recent
               </Text>
-              {item.secondaryText ? (
-                <Text style={[t.typography.small, { color: t.colors.textMuted }]} numberOfLines={1}>
-                  {item.secondaryText}
+
+              {recents.map((item, index) => (
+                <View key={item.placeId}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Recent: ${item.mainText}`}
+                    onPress={() => setPickedId(item.placeId)}
+                    style={[styles.row, { paddingVertical: t.spacing.md }]}
+                  >
+                    <Text
+                      style={[t.typography.bodyStrong, { color: t.colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {item.mainText}
+                    </Text>
+                    {item.secondaryText ? (
+                      <Text
+                        style={[t.typography.small, { color: t.colors.textMuted }]}
+                        numberOfLines={1}
+                      >
+                        {item.secondaryText}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                  {/* Separator between rows (not after the last one) */}
+                  {index < recents.length - 1 && (
+                    <View style={{ height: 1, backgroundColor: t.colors.border }} />
+                  )}
+                </View>
+              ))}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear recent searches"
+                onPress={handleClearRecents}
+                style={{ paddingVertical: t.spacing.md }}
+              >
+                <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+                  Clear recent searches
                 </Text>
-              ) : null}
-            </Pressable>
+              </Pressable>
+
+              {/* Divider between recents section and the empty-state below */}
+              <View style={{ height: 1, backgroundColor: t.colors.border }} />
+            </View>
           )}
-        />
+
+          <FlatList
+            data={suggestions}
+            keyExtractor={(s) => s.placeId}
+            contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
+            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
+            ListEmptyComponent={
+              debounced.length >= 2 ? (
+                isFetching ? (
+                  <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
+                    <ActivityIndicator />
+                  </View>
+                ) : (
+                  <EmptyState {...noSearchResults} />
+                )
+              ) : (
+                // Only show the search prompt when there are no recents to display.
+                // When recents are shown above, the empty state would be redundant.
+                !showRecents ? <EmptyState {...searchPrompt} /> : null
+              )
+            }
+            ListFooterComponent={suggestions.length ? <PoweredByGoogle /> : null}
+            renderItem={({ item }) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Choose ${item.mainText}`}
+                onPress={() => setPickedId(item.placeId)}
+                style={[styles.row, { paddingVertical: t.spacing.md }]}
+              >
+                <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
+                  {item.mainText}
+                </Text>
+                {item.secondaryText ? (
+                  <Text style={[t.typography.small, { color: t.colors.textMuted }]} numberOfLines={1}>
+                    {item.secondaryText}
+                  </Text>
+                ) : null}
+              </Pressable>
+            )}
+          />
+        </View>
       )}
     </Screen>
   );
@@ -150,4 +247,6 @@ export default function AddPlace() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'column', gap: 2 },
+  searchArea: { flex: 1 },
+  recentsHeader: { textTransform: 'uppercase', letterSpacing: 0.5 },
 });
