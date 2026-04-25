@@ -12,6 +12,8 @@ export interface Trip {
   anchor_place_id: Uuid | null;
   transport_mode: TransportMode;
   timezone: string | null;
+  /** ISO timestamp; null means "active". Set by archive / unarchive (Phase 7). */
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }

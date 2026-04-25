@@ -70,18 +70,29 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
   );
 }
 
+// `position: 'fixed'` ensures the overlay covers the full viewport even when
+// BottomSheet is rendered inside a scroll container (e.g. inside a FlatList item).
+// This is a valid CSS value in React Native Web; the cast bypasses the RN type system
+// which doesn't know about the web-only 'fixed' position value.
+const fixedFill = {
+  position: 'fixed' as unknown as 'absolute',
+  top: 0 as const,
+  left: 0 as const,
+  right: 0 as const,
+  bottom: 0 as const,
+};
+
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...fixedFill,
     alignItems: 'center',
     justifyContent: 'flex-end',
     zIndex: 100,
   },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  backdrop: {
+    ...fixedFill,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
   sheet: {
     width: '100%',
     maxWidth: 520,

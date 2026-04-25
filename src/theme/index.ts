@@ -1,2 +1,2 @@
-export { ThemeProvider, useTheme, useThemeControls, type Theme } from './ThemeProvider';
+export { ThemeProvider, useTheme, useThemeControls, type Theme, type ThemeMode } from './ThemeProvider';
 export * from './tokens';

@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 6 — Partial (UX polish only) · live smoke skipped per user direction
+**Current phase**: Phase 7 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -14,6 +14,7 @@
 | 4 | Polish (offline cache, share link, .ics export, Sentry, empty states) | 🚧 Code complete · awaiting live smoke (closed out in Phase 6) | ui + backend |
 | 5 | Test hardening (coverage, E2E, property, CI) | 🚧 Partial — source fixes shipped 2026-04-25; test-hardening exit criteria deferred | backend + ui |
 | 6 | Phase 4 web close-out (live smoke + small polish) | 🚧 Partial — Step 6.0 (stack ready) + Step 6.4 (UX polish) shipped 2026-04-25; smoke (6.1–6.3, 6.5–6.7) skipped per user direction | backend + ui |
+| 7 | Trip lifecycle (archive / duplicate) + Settings screen (theme toggle + delete account) | ✅ Done (web; native deferred to user smoke) | ui + backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1035,3 +1036,206 @@ Once these are done, the main assistant can delegate Phase 1 to `planner` → `b
 - **Not** running native (iOS/Android) smoke — deferred to user.
 - **Not** addressing Phase 4 reviewer findings beyond the two small ones in Step 6.4.
 - **Not** flipping Phases 2 / 3 status — they stay 🚧 until Google Maps keys are provisioned.
+
+## Phase 7 — Trip lifecycle (archive / duplicate) + Settings screen (theme toggle + delete account)
+
+**Goal**: Ship visible product progress on two independent surfaces that need no Google Maps keys, no EAS, and no native account: (a) per-trip Archive / Duplicate / Delete actions with a hidden-by-default "Archived" filter on the trips list, and (b) a minimal `/(app)/settings` screen exposing the user email, persisted theme preference (light / dark / system), and "Delete account" (cascade RPC + auth admin delete).
+**Status**: ✅ Done — shipped 2026-04-25; reviewer sign-off (`docs/reviews/phase-7.md`); M1 fixed inline; M2 + lows parked as follow-ups.
+**Last updated**: 2026-04-25
+
+**Direction chosen**: Blend of Direction 2 (trip lifecycle) as the headline and Direction 1's smallest valuable slice (Settings screen with theme + delete account) as parallel polish. Rejected Direction 3 because it sits squarely on Google-key-gated optimizer territory. Rejected Direction 4 because it needs an EAS build to verify and the EAS account is unprovisioned. Rejected Direction 5 (cost rollup / printable view) as a single-direction phase because it adds less behavioural surface than archive + duplicate; it is parked as a Phase 8 candidate. The blended pick maximises shipping product per step: every step lands a user-visible feature or a small migration that unblocks one, and nothing depends on the three carried-forward blockers (Google keys, leaked PAT, EAS).
+
+**Entry criteria**:
+- Phase 6 partial close-out is the current state (no further action needed there)
+- `src/api/trips.ts` and `src/components/TripCard.tsx` are stable (last touched in Phase 3); Phase 7 will extend, not rewrite
+- `src/theme/ThemeProvider.tsx` already exposes a controllable theme context (confirmed via `src/theme/index.ts` export of `useThemeControls`); Phase 7 only persists the user's choice, not the provider rewiring
+- User has NOT requested Google-keys provisioning, EAS provisioning, or PAT rotation in this phase — Phase 7 must not depend on any of those
+
+**Phase exit criteria**:
+- A user can open any trip card's overflow menu and choose **Archive** → the trip disappears from the default trips list and is reachable via an "Archived" filter / segmented control on `/trips`
+- A user can choose **Duplicate** on any trip → a new trip appears in the list with title `"<original> (copy)"`, all `trip_places` rows cloned (with their `visit_duration_minutes` and `notes`), `trip_legs` deliberately NOT cloned (will be recomputed when optimizer runs), and the new trip is unarchived even if the source was archived
+- A user can choose **Unarchive** on an archived trip → it returns to the default list
+- The existing **Delete** action is reachable from the same overflow menu (no behavioural change; consolidation only)
+- A user can navigate to `/(app)/settings`, see their email (read-only), pick Light / Dark / System theme, and the choice persists across reloads on web (AsyncStorage on native, `localStorage` via the same `storage` adapter on web)
+- A user can press **Delete account** in Settings, confirm via a destructive-style confirmation dialog, and have all their trips + child rows + auth user deleted in one server-side call; the UI then signs them out and routes to `/(auth)/login`
+- All three platforms (iOS, Android, Web) render the new Settings screen and the new TripCard overflow menu without layout breaks (visual confirmation; native verification deferred to user as standard for this project)
+- `docs/features/overview.md` has a row for "Trip archive / duplicate" and "Account settings (theme, delete account)" with status reflecting Phase 7 completion
+- A short ADR exists at `docs/adr/0001-trip-duplicate-semantics.md` recording the decision to clone places but not legs (so the optimizer recomputes), which is the only non-obvious design call in this phase
+
+**Critical path**: Step 7.1 → Step 7.2 → Step 7.3 → Step 7.6 → Step 7.8 → Step 7.9 → Step 7.10
+
+(Steps 7.4 and 7.5 are parallel UI work on the Settings surface; Step 7.7 parallels 7.6 on the same critical-path tier.)
+
+### Step 7.1 — ADR for trip-duplicate semantics
+- **Status**: ✅ Done
+- **Agent**: planner
+- **Size**: XS
+- **Task**: Author `docs/adr/0001-trip-duplicate-semantics.md` recording: (1) duplicating a trip clones `trip_places` (with `user_title`, `category`, `visit_duration_minutes`, `notes`, `lat`, `lng`, `google_place_id`, but NOT `day_index` / `order_in_day` — those reset to `null` so the optimizer can re-place them); (2) does NOT clone `trip_legs` (recomputed on next optimize); (3) does NOT clone `trip_days` (recomputed); (4) the new trip is `archived_at = null` regardless of source state. Format per the planner ADR template (Context / Decision / Alternatives considered / Consequences). One screen max.
+- **Inputs**: This phase plan; existing schema in `supabase/migrations/0001_init.sql`
+- **Expected output**: `docs/adr/0001-trip-duplicate-semantics.md` exists; Step 7.3 RPC author reads it before writing SQL
+- **Depends on**: None
+- **Parallel with**: Step 7.2
+- **Platform check**: N/A (doc only)
+- **Risks**:
+  - [Low] ADR may need a follow-up if Step 7.3 surfaces a constraint we missed (e.g. unique `(trip_id, google_place_id)` partial index forcing a different copy strategy) — Mitigation: re-edit ADR if needed; status stays "accepted" but the Decision section gets a one-line amendment
+- **Touched files**: `docs/adr/0001-trip-duplicate-semantics.md`
+
+### Step 7.2 — Migration: `trips.archived_at` + `duplicate_trip` RPC stub
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Add `supabase/migrations/0004_trip_lifecycle.sql` that: (1) adds `archived_at timestamptz` to `public.trips` (nullable, default null); (2) adds a partial index `create index if not exists trips_user_active_idx on public.trips(user_id) where archived_at is null;` to keep the default list query fast; (3) creates an empty stub `create or replace function public.duplicate_trip(p_trip_id uuid) returns uuid` that returns `null` for now and will be filled in Step 7.3 — the stub exists so this migration ships independently and Step 7.3 can `create or replace` it without re-migrating; (4) creates an empty stub `create or replace function public.delete_account_cascade() returns void` that returns `void` for now. Both stubs `language plpgsql security definer set search_path = public, auth` so Step 7.3 / 7.6 can fill them. RLS policies on `trips` already gate by `user_id`; verify the existing policy still permits filtering by `archived_at` from the client (it should — the column is on `trips`, the policy reads `auth.uid() = user_id`).
+- **Inputs**: ADR from Step 7.1
+- **Expected output**: New migration file applied via `npx supabase db reset` locally without error; `\d public.trips` shows the new column; `select public.duplicate_trip('00000000-0000-0000-0000-000000000000')` returns `null` without error; `select public.delete_account_cascade()` runs as a no-op
+- **Depends on**: Step 7.1 (ADR)
+- **Parallel with**: (none — gates 7.3, 7.6)
+- **Platform check**: N/A (DB migration)
+- **Risks**:
+  - [Medium] `security definer` functions need `set search_path` to avoid the lint warning Supabase surfaces; Mitigation: include `set search_path = public, auth` on both stubs
+  - [Low] Existing client queries in `src/api/trips.ts` use `.select('*')` which will now return `archived_at`; the TS type in `src/api/types.ts` must be updated in Step 7.7 — Mitigation: tracked as a Step 7.7 dependency
+- **Touched files**: `supabase/migrations/0004_trip_lifecycle.sql`
+
+### Step 7.3 — Implement `duplicate_trip` RPC
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Replace the stub with a real implementation: takes `p_trip_id uuid`; verifies `auth.uid() = (select user_id from trips where id = p_trip_id)` (raise `'not_authorized'` otherwise); inserts a new `trips` row with `title = original.title || ' (copy)'`, copies `daily_hours_budget`, `transport_mode`, `timezone`, `start_date`, `end_date`, `daily_hours_budget`, `anchor_place_id` set to `null` (the original anchor refers to a place in the source trip, which the duplicate will own a copy of — but resolving the new anchor id is non-trivial; per the ADR, drop the anchor and let the user re-pick), `archived_at = null`; bulk-inserts cloned `trip_places` rows (one row per source place, copying the columns listed in the ADR, leaving `day_index` and `order_in_day` null); does NOT touch `trip_legs` or `trip_days`; returns the new trip id. Wrap in a single transaction. **Do not write tests.**
+- **Inputs**: Step 7.2 stub; ADR
+- **Expected output**: `select public.duplicate_trip('<real-trip-id>')` returns a uuid; the new trip is queryable from the client and shows zero days / zero legs but the same place count as the source; calling with another user's trip id raises `'not_authorized'`
+- **Depends on**: Step 7.2
+- **Parallel with**: Step 7.5 (UI settings shell — disjoint files)
+- **Platform check**: N/A (DB function)
+- **Risks**:
+  - [Medium] If `trip_places.google_place_id` has a unique-per-user constraint we forgot, the bulk insert will fail — Mitigation: read `0001_init.sql` constraints first; the schema as of `0001_init.sql` does NOT enforce uniqueness on `(trip_id, google_place_id)` so duplication is safe
+  - [Low] `start_date` / `end_date` may collide with calendar logic if user duplicates and edits both — Mitigation: out of scope; just clone the values as-is
+- **Touched files**: `supabase/migrations/0004_trip_lifecycle.sql` (the same file — `create or replace function` lets us extend the stub without a second migration); if the user requires a clean migration history, split into `0005_duplicate_trip_impl.sql` instead — backend-specialist's call
+
+### Step 7.4 — Settings route shell + theme toggle UI
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Create `app/(app)/settings.tsx` (Expo Router file) with: (1) a `Heading` "Settings"; (2) a read-only field showing the signed-in user's email (`useUser()` from `src/api/auth.ts` or equivalent); (3) a `SegmentedControl` for theme with options Light / Dark / System; selecting one calls `useThemeControls().setMode(mode)` from `src/theme/ThemeProvider.tsx` and persists the choice via the existing platform `storage` adapter (`storage.web.ts` / `storage.native.ts`) under key `tripvisor.theme.mode`; (4) a placeholder slot for the "Delete account" button that Step 7.6 will fill — for this step, render a disabled `Button` labelled "Delete account" with `disabled` set so the layout is right but no destructive action ships yet. Wire `app/(app)/_layout.tsx` so `/settings` is reachable from the user's existing menu / sign-out area on the trips list — concretely, replace the bare "Sign out" button in `app/(app)/trips.tsx` with a small overflow that has Settings + Sign out, OR add a Settings link in the header. **No tests.**
+- **Inputs**: Existing `useThemeControls`, `storage` adapter, `useSignOut`, `Button`, `SegmentedControl`, `Heading`, `Screen`
+- **Expected output**: Navigating to `/settings` renders the screen on web (visual confirmation only); selecting Dark in the segmented control flips the app to dark colors; reloading the page preserves the choice; the Delete account button is rendered but disabled
+- **Depends on**: None
+- **Parallel with**: Step 7.5
+- **Platform check**: All three (iOS, Android, Web). `storage.web.ts` and `storage.native.ts` already exist and are platform-correct. `SegmentedControl` is single-file (cross-platform). No native-only or web-only surface introduced.
+- **Risks**:
+  - [Medium] `useThemeControls` may not expose `setMode` with a System option today — Mitigation: ui-specialist reads `src/theme/ThemeProvider.tsx` first; if it only supports light/dark, extend it to accept `'system'` (use `Appearance.getColorScheme()` from RN) before wiring the segmented control. Keep the extension under ~20 lines; if it balloons, park "system" and ship Light/Dark only.
+  - [Low] The trips list header may not have room for a new icon on narrow viewports — Mitigation: replace "Sign out" with a single "Settings" link and move Sign out into the Settings screen
+- **Touched files**: `app/(app)/settings.tsx`, `app/(app)/trips.tsx`, possibly `src/theme/ThemeProvider.tsx`
+
+### Step 7.5 — TripCard overflow menu (Archive / Duplicate / Delete)
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Add a small overflow trigger (three-dot button or `MoreVertical` icon) to `src/components/TripCard.tsx` that opens a `BottomSheet` (existing component, platform-split) with three actions: **Archive** (or **Unarchive** if `trip.archived_at != null`), **Duplicate**, **Delete** (destructive style — re-uses any existing destructive button styling, otherwise red `tintColor`). Each action calls a mutation hook (Step 7.7 will provide them) and dismisses the sheet on success. Wire pressing the overflow button so it does NOT propagate to the card's `onPress` (which navigates to the trip). Add `accessibilityLabel="Trip actions"` on the trigger and a sensible `accessibilityRole="button"` on each sheet item. Render an inline "Archived" pill (existing `StatusPill` component) on archived trips when shown in the Archived filter.
+- **Inputs**: Existing `TripCard`, `BottomSheet`, `StatusPill`, `Button`
+- **Expected output**: TripCard renders the overflow trigger on all three platforms; tapping it opens the bottom sheet; the three actions are visible and labelled; sheet dismisses on action; pressing the card body still navigates to the trip
+- **Depends on**: None (uses placeholder/no-op handlers until Step 7.7 wires the real mutations — ui-specialist must wire to handlers passed in via props from `app/(app)/trips.tsx`, which Step 7.7 fills)
+- **Parallel with**: Step 7.4
+- **Platform check**: All three. `BottomSheet.native.tsx` + `BottomSheet.web.tsx` are pre-existing. Confirm the web variant supports tap-outside-to-dismiss (it should — Phase 4 used it for share UI).
+- **Risks**:
+  - [Medium] `BottomSheet.web.tsx` may render as a centered modal rather than a real bottom sheet on desktop; that's fine UX — ui-specialist should verify the rendered output looks deliberate, not broken
+  - [Low] Hit area for the overflow icon may be too small on touch — Mitigation: 44×44 minimum hit area; use `hitSlop` if the icon itself is smaller
+- **Touched files**: `src/components/TripCard.tsx` (overflow trigger + sheet wiring); possibly a new `src/components/TripActionsSheet.tsx` if the inline sheet bloats the file beyond ~150 lines
+
+### Step 7.6 — Implement `delete_account_cascade` RPC
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Replace the Step 7.2 stub: `delete_account_cascade()` runs as `security definer`, captures `auth.uid()`, deletes all `public.trips` rows for that user (cascade handles `trip_days`, `trip_places`, `trip_legs`, `trip_shares`), then calls `auth.users` delete. Note: deleting from `auth.users` requires `service_role` — the RPC alone cannot self-delete the auth row. Two options: (a) the RPC deletes only the `public.*` rows and an Edge Function `delete-account` (new) calls `supabase.auth.admin.deleteUser()` server-side using the service role key; (b) skip the auth-row delete and rely on `on delete cascade` from `auth.users` to clean `public.*` (which would require admin to delete the auth user). Pick **(a)**: ship a new Edge Function at `supabase/functions/delete-account/index.ts` that (1) verifies the JWT, (2) calls the RPC to clean `public.*`, (3) calls `supabase.auth.admin.deleteUser(jwt.sub)`, (4) returns 200. The client (Step 7.8) calls the Edge Function, not the RPC directly. **No tests.**
+- **Inputs**: Step 7.2 stub; existing Edge Function pattern in `supabase/functions/share-trip/index.ts`
+- **Expected output**: Edge Function deployable locally; calling with a valid JWT removes the user's `trips` rows and the `auth.users` row; calling without a JWT returns 401; calling for a different user is impossible (the RPC reads `auth.uid()` from the JWT, not from the request body)
+- **Depends on**: Step 7.2
+- **Parallel with**: Step 7.7
+- **Platform check**: N/A (server)
+- **Risks**:
+  - [Medium] `supabase.auth.admin.deleteUser` on the local stack uses the service role key from `.env`; the Edge Function must be configured to receive `SUPABASE_SERVICE_ROLE_KEY` as a function secret, not a public env — Mitigation: follow the pattern in `supabase/functions/share-trip/index.ts` which already uses service role for token issuance
+  - [Medium] Race condition: if the RPC succeeds but the auth-admin call fails, the user has no trips but still has an auth row — recoverable but messy. Mitigation: order the calls auth-delete-first → cascade-cleanup-second so a failure leaves the user signed in with their data intact (safer); update the Edge Function accordingly
+  - [Low] Local Mailpit may not deliver a "your account was deleted" email — Mitigation: out of scope; no email is sent
+- **Touched files**: `supabase/migrations/0004_trip_lifecycle.sql` (RPC body), `supabase/functions/delete-account/index.ts` (new), possibly `supabase/functions/_shared/cors.ts` if the share-trip function uses a shared helper
+
+### Step 7.7 — Client-side mutations: archive / unarchive / duplicate / delete + types
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Extend `src/api/trips.ts` with TanStack Query mutations: `useArchiveTrip()`, `useUnarchiveTrip()` (both update `archived_at`), `useDuplicateTrip()` (calls the `duplicate_trip` RPC, invalidates `['trips']` on success), `useDeleteTrip()` (already exists or close to it — confirm). Update the `useTrips()` query to accept an optional `{ archived: boolean }` argument that filters via `.is('archived_at', null)` or `.not('archived_at', 'is', null)`; default to `archived: false` for the existing call site. Update `src/api/types.ts` `Trip` shape to include `archived_at: string | null`. The `useTrips()` query key becomes `['trips', { archived }]` so the two filtered lists cache independently. Optimistic update on archive / unarchive: remove the trip from the active list (or move it to the archived list) immediately; rollback on error.
+- **Inputs**: Step 7.2 (column exists), Step 7.3 (RPC works)
+- **Expected output**: Hooks exported from `src/api/trips.ts` and re-exported from `src/api/index.ts`; calling `useArchiveTrip().mutate(tripId)` from a UI handler sets `archived_at` and the trips list updates without a manual `refetch`; calling `useDuplicateTrip().mutate(tripId)` returns the new trip id and the list shows the copy after invalidation
+- **Depends on**: Step 7.2, Step 7.3
+- **Parallel with**: Step 7.6
+- **Platform check**: All three (pure JS / TanStack Query)
+- **Risks**:
+  - [Medium] Optimistic updates with TanStack Query require careful rollback wiring; if the mutation fails (e.g. RLS rejects), the list must revert — Mitigation: use the standard `onMutate` / `onError` / `onSettled` pattern; if it gets fiddly, drop optimistic updates and just invalidate on success (acceptable trade-off — the user already sees a brief loading state on Phase 1's existing mutations)
+  - [Low] `Trip` type widening may cause TypeScript errors in unrelated files — Mitigation: run `tsc --noEmit` locally and fix any breakages in the same step (these will be `archived_at` references at most)
+- **Touched files**: `src/api/trips.ts`, `src/api/types.ts`, `src/api/index.ts`
+
+### Step 7.8 — Wire Settings screen Delete Account + trips list to the new mutations
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) In `app/(app)/settings.tsx`, replace the Step 7.4 disabled "Delete account" button with a real flow: pressing the button opens a destructive confirmation dialog (use a platform-appropriate confirm — `Alert.alert` on native, a `BottomSheet` or `window.confirm` on web; reuse what Phase 3 used for destructive trip-delete confirmations if it exists). On confirm, call the `delete-account` Edge Function via the existing `supabaseClient.functions.invoke('delete-account')` pattern. On 200, sign the user out (`useSignOut().mutate()`) which routes to `/(auth)/login`; on error, show an `EmptyState`-style inline error or a toast and stay put. (b) In `app/(app)/trips.tsx`, add a `SegmentedControl` (or simple two-tab `TabBar`) at the top of the list with options "Active" (default) and "Archived"; the selected tab controls the `archived` arg passed to `useTrips()`. (c) Wire `TripCard`'s overflow handlers to `useArchiveTrip` / `useUnarchiveTrip` / `useDuplicateTrip` / `useDeleteTrip` from Step 7.7. (d) After Duplicate succeeds, show a brief inline confirmation (existing toast or a `StatusPill` if no toast system; do NOT introduce a new toast lib) and let the list re-render via cache invalidation.
+- **Inputs**: Steps 7.4, 7.5, 7.6, 7.7
+- **Expected output**: All exit-criteria user flows work end-to-end on web (visual confirmation only); native deferred to user
+- **Depends on**: Steps 7.4, 7.5, 7.6, 7.7
+- **Parallel with**: (none — integration step)
+- **Platform check**: All three. The destructive confirm differs per platform: `Alert.alert` on native, `window.confirm` (or BottomSheet) on web; ui-specialist must keep both branches in a `Platform.OS` split or a small `confirmDestructive.web.ts` / `.native.ts` helper.
+- **Risks**:
+  - [Medium] `window.confirm` is ugly on web; if ui-specialist would rather build an in-app modal, that's fine but cap it at one small new component (`DestructiveConfirm.tsx`) — do not redesign the modal system
+  - [Medium] After Delete-account, the React Query cache still holds stale data; the redirect to `/(auth)/login` handles this in practice (auth state change clears protected queries on the next mount), but if the redirect doesn't fire, ui-specialist must `queryClient.clear()` after the Edge Function returns 200
+  - [Low] The "Active" / "Archived" tabs may need a count badge — Mitigation: out of scope for v1; ship without counts
+- **Touched files**: `app/(app)/settings.tsx`, `app/(app)/trips.tsx`, possibly `src/components/DestructiveConfirm.tsx` (new), `src/components/TripCard.tsx` (final wiring)
+
+### Step 7.9 — Reviewer pass on Phase 7 changes
+- **Status**: ✅ Done
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read every diff introduced in Phase 7. Confirm: (1) RLS still holds — the new `archived_at` column does not need a new policy because the existing `trips_user_id_idx` policy gates by `user_id`, but the reviewer must verify the new partial index `trips_user_active_idx` does not accidentally bypass RLS (indexes don't, but the SQL should be sanity-checked); (2) `delete_account_cascade` and the `delete-account` Edge Function correctly use the JWT `sub` claim, not a request-body user id (no IDOR); (3) the Edge Function receives `SUPABASE_SERVICE_ROLE_KEY` only on the server, never echoed to the client; (4) the trip-duplicate RPC has the `auth.uid()` ownership check before the insert; (5) no Google ToS regressions — the duplicate-trip code path must NOT clone any Google-derived fields beyond `google_place_id` + `lat` / `lng` (per the ADR); (6) the Settings screen does not log the user's email or any PII to Sentry / console; (7) destructive actions (Delete account, Delete trip) require explicit user confirmation. Write findings to `docs/reviews/phase-7.md` with critical / high / medium / low. **Tests are out of scope; reviewer reads code only, does not run tests or smokes.**
+- **Inputs**: All Phase 7 diffs
+- **Expected output**: `docs/reviews/phase-7.md` with findings; no critical or high blocks Step 7.10
+- **Depends on**: Step 7.8
+- **Parallel with**: (none)
+- **Platform check**: N/A (review)
+- **Risks**:
+  - [Medium] If the reviewer surfaces a critical (e.g. IDOR in delete-account, RLS bypass in duplicate), Phase 7 must loop back to backend-specialist for a fix before 7.10 can run — Mitigation: budget one fix loop; if more than one critical surfaces, planner re-enters with a revised plan rather than patching inline
+- **Touched files**: `docs/reviews/phase-7.md`
+
+### Step 7.10 — Docs flip
+- **Status**: ✅ Done
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: (a) Add two rows to `docs/features/overview.md`: "Trip archive / duplicate" → ✅ Done (web; native deferred to user smoke), Phase 7, doc `trip-lifecycle.md`; "Account settings (theme + delete account)" → ✅ Done (web; native deferred), Phase 7, doc `settings.md`. (b) Create `docs/features/trip-lifecycle.md` and `docs/features/settings.md` per the existing feature-doc template (intent / scope / API surface / data model / platforms verified table — leave iOS / Android boxes unticked, tick Web only). (c) Flip the Phase 7 row in `plan.md`'s top table to ✅ Done. (d) Append a one-paragraph "Phase 7 — close-out" entry under the Phase 6 partial-close-out paragraph, summarising shipped surface (archive / duplicate / settings / theme persistence / delete account). Do NOT edit `CLAUDE.md` (planner project rule).
+- **Inputs**: Step 7.9 review (no critical / high)
+- **Expected output**: Feature docs reflect the new state; `plan.md` Phase 7 row reads ✅ Done; the two new feature docs exist
+- **Depends on**: Step 7.9
+- **Parallel with**: (none)
+- **Platform check**: N/A (docs)
+- **Risks**:
+  - [Low] Existing feature-doc template may have evolved between Phase 4 and now — Mitigation: docs-specialist reads `docs/features/share.md` as the most recent template and matches its shape
+- **Touched files**: `plan.md`, `docs/features/overview.md`, `docs/features/trip-lifecycle.md` (new), `docs/features/settings.md` (new)
+
+## ⚠ Blockers (Phase 7 — must be cleared before Step 7.2)
+
+1. **Local Supabase stack must be reachable** for the migration to apply (`npx supabase db reset`). Same precondition as Phase 6 Step 6.0; if the user has not run `supabase start` since Phase 6, they need to before Step 7.2 lands.
+2. **Pre-existing blockers carried forward — NOT in scope for Phase 7**:
+   - Google Maps API keys — Phase 7 deliberately avoids any Google-keyed surface; no dependency.
+   - Leaked Supabase PAT rotation — Phase 7 uses local Supabase only; cloud PAT is irrelevant.
+   - EAS account / Apple Developer / Google Play Developer — Phase 7 is web-first; native verification deferred.
+
+## Phase 7 — non-goals (explicit)
+
+- **Tests** — no Jest, no Deno tests, no fast-check, no RLS integration tests, no `*.test.ts` / `*.spec.ts` files authored or modified. The `test-specialist` sub-agent is removed for the duration of the project.
+- **Smokes** — no Playwright execution, no manual UI smoke checklists, no `docs/smoke/phase-7.md`.
+- **Coverage / CI changes** — Phase 5 deferred work stays deferred; the existing `.github/workflows/` is not modified.
+- **Google Maps work** — no Places API, no Routes API, no optimizer changes, no map polyline updates.
+- **EAS / native builds** — no `eas.json` changes, no Apple / Google Play config, no native verification beyond visual confirmation by the implementing specialist on whatever simulator they happen to have running.
+- **Native verification** — iOS / Android remain deferred to user smoke as standard for this project.
+- **Phases 2 / 3 / 5 / 6 status flips** — Phase 7 does not touch their rows; they stay 🚧 / partial as recorded.
+- **Trip-collaboration / sharing extensions** — out of scope; this phase is single-user lifecycle only.
+- **Cost / itinerary visibility (Direction 5)** — parked as a Phase 8 candidate.
+- **Bulk place ops / day rebalance (Direction 3)** — parked; touches Google-key-gated optimizer territory.
+
+## Phase 7 — close-out
+
+Shipped 2026-04-25. Phase 7 landed two independent user-visible surfaces with no dependency on Google Maps keys, EAS, or native provisioning. Trip lifecycle: the `trips.archived_at` column (migration `0004_trip_lifecycle.sql`), partial index `trips_user_active_idx`, `duplicate_trip` RPC (clones places only per ADR-0006, not legs), and `delete_account_cascade` RPC backed by the new `delete-account` Edge Function are all live on the local stack; client mutations `useArchiveTrip`, `useUnarchiveTrip`, `useDuplicateTrip`, and query-key partitioning ship in `src/api/trips.ts`. Settings screen: `app/(app)/settings.tsx` exposes email (read-only), Light/Dark/System theme picker with `Appearance` listener and persistence, Sign out, and Delete account with destructive confirm. The M1 race (sign-out after delete-account) was fixed inline. M2 (parallel-mutation rollback footgun) and all low findings from `docs/reviews/phase-7.md` are parked as follow-ups. Web golden path confirmed visually; iOS and Android deferred to user smoke.
