@@ -13,10 +13,12 @@
 //
 // Steps:
 //  1. Auth: run under the caller's JWT so RLS enforces ownership.
-//  2. Acquire a per-trip session-scoped advisory lock via the
-//     `try_lock_trip(uuid)` RPC (migration 0007) — bail with 409
-//     `already_optimizing` if another optimize is in flight for the same
-//     trip. Released in `finally` via `unlock_trip(uuid)`.
+//  2. Acquire a per-trip row-mutex via the `claim_trip_optimize(uuid, int)`
+//     RPC (migration 0008) — bail with 409 `already_optimizing` if another
+//     optimize is in flight for the same trip. Released in `finally` via
+//     `release_trip_optimize(uuid)`. The row-mutex replaces the Phase 12
+//     session-scoped advisory lock (closes review C1: PgBouncer transaction
+//     pooling could route lock and unlock to different backends).
 //  3. Load trip + places. Cap at 25 places.
 //  4. Fetch N×N distance matrix, reusing legs < 30 days old from trip_legs.
 //  5. Run the pure optimizer (k-means + 2-opt).
@@ -109,18 +111,33 @@ export async function handler(req: Request): Promise<Response> {
   }
   if (!trip) return errorResponse('not_found', 'Trip not found or forbidden', 404, origin);
 
-  // Per-trip advisory lock (session-scoped, via try_lock_trip RPC from
-  // migration 0007). We use the non-blocking try variant: if another
-  // optimize is in flight for this trip, bail with 409 rather than
-  // serialize and double-charge the user's compute against the Google
-  // free tier. The lock is released in `finally` via unlock_trip.
+  // Per-trip row-mutex via claim_trip_optimize (migration 0008). The mutex
+  // is a single-statement UPDATE on trips.optimizing_at, atomic at the row
+  // level regardless of which backend the connection is routed to — immune
+  // to PgBouncer transaction-pooling connection swaps (the failure mode
+  // that weakened the Phase 12 session-scoped advisory lock, review C1).
   //
-  // `lockHeld` tracks whether *this* invocation acquired the lock. If the
-  // RPC errors (e.g. migration not yet deployed in some env), we log and
-  // proceed without the lock — stateHash idempotence still prevents truly
+  // We use a 5-minute TTL: if the Edge Function crashes mid-optimize, the
+  // claim auto-expires so a subsequent call can re-claim without operator
+  // intervention. Optimize completion is bounded — MAX_PLACES = 25 plus
+  // 2-opt and matrix calls runs comfortably under 30s in observed worst
+  // case, so a 5-minute TTL gives 10x headroom for cold start + retry while
+  // still recovering from a hung function within minutes.
+  //
+  // Behavior: if another optimize holds an unexpired claim, bail with 409
+  // rather than serialize and double-charge the user's compute against the
+  // Google free tier. Concurrent optimize requests for the same trip are
+  // almost always a double-click bug, not intentional parallelism.
+  //
+  // `lockHeld` tracks whether *this* invocation won the claim. If the RPC
+  // errors (e.g. migration not yet deployed in some env), we log and
+  // proceed without the mutex — stateHash idempotence still prevents truly
   // wasted work on the rare race.
   let lockHeld = false;
-  const lockRes = await admin.rpc('try_lock_trip', { p_trip_id: body.tripId });
+  const lockRes = await admin.rpc('claim_trip_optimize', {
+    p_trip_id: body.tripId,
+    p_ttl_seconds: 300,
+  });
   if (lockRes.error) {
     log({
       requestId,
@@ -350,20 +367,17 @@ export async function handler(req: Request): Promise<Response> {
       { origin },
     );
   } finally {
-    // Always release the lock if we acquired it. Swallow any release error
-    // (e.g. transient DB blip): the session-scoped lock will auto-release
-    // when the Edge Function's connection is recycled, so a missed unlock
-    // is at worst a brief, self-healing window.
-    //
-    // We DO log if `pg_advisory_unlock` returns false: that means we asked
-    // the wrong session to release a lock it never held (likely cause:
-    // PgBouncer in transaction-pooling mode rotated the underlying
-    // connection between the lock and the unlock call). Important
-    // observability signal for the C1 known-limitation around session-scope
-    // semantics under connection pooling.
+    // Release the row-mutex if we acquired it. The release is unconditional
+    // at the SQL level (UPDATE ... SET optimizing_at = NULL WHERE id = ?)
+    // and has no session-mismatch failure mode — unlike the Phase 12
+    // pg_advisory_unlock, the row-mutex doesn't care which backend
+    // connection issues the release. If the release fails (transient DB
+    // blip), the TTL on the claim ensures the row self-recovers within 5
+    // minutes, so a missed release is at worst a brief, self-healing window
+    // — log it for observability and move on.
     if (lockHeld) {
       const releaseRes = await admin
-        .rpc('unlock_trip', { p_trip_id: body.tripId })
+        .rpc('release_trip_optimize', { p_trip_id: body.tripId })
         .then(
           (r) => r,
           (err) => ({ data: null, error: err as { message?: string } }),
@@ -373,16 +387,8 @@ export async function handler(req: Request): Promise<Response> {
           requestId,
           fn: 'optimize-trip',
           level: 'warn',
-          stage: 'unlock_error',
+          stage: 'release_error',
           err: (releaseRes.error as { message?: string }).message ?? 'unknown',
-        });
-      } else if (releaseRes.data === false) {
-        log({
-          requestId,
-          fn: 'optimize-trip',
-          level: 'warn',
-          stage: 'unlock_session_mismatch',
-          tripId: body.tripId,
         });
       }
     }

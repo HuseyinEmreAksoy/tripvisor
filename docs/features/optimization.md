@@ -1,6 +1,6 @@
 # optimization
 
-**Status**: 🚧 In progress (code + tests complete; awaiting live Routes API smoke). Advisory lock upgraded in Phase 12.
+**Status**: 🚧 In progress (code + tests complete; awaiting live Routes API smoke). Advisory lock upgraded in Phase 12; replaced with row-mutex in Phase 13.
 **Owner agents**: backend-specialist
 **Depends on**: trip-crud, place-search
 
@@ -29,7 +29,7 @@ See [ADR-0001](../adr/0001-kmeans-2opt-over-or-tools.md).
 - Edge Function: `optimize-trip { tripId }` → returns stateHash + days + counts. Returns HTTP 409 `already_optimizing` when a concurrent optimize for the same trip holds the lock.
 - Internally calls: `distance-matrix`, `directions-polyline`
 - Client hook: `useOptimizeTrip()` (TanStack Query mutation); auto-fired debounced 500ms after add/remove/settings changes
-- Concurrency guard (Phase 12): `try_lock_trip(uuid)` / `unlock_trip(uuid)` SECURITY DEFINER RPCs in `supabase/migrations/0007_advisory_lock_wrappers.sql`. Wrap `pg_try_advisory_lock` / `pg_advisory_unlock` keyed by `hashtextextended(trip_id::text, 0)`. Granted to `service_role` only.
+- Concurrency guard (Phase 13): `claim_trip_optimize(p_trip_id uuid, p_ttl_seconds int default 300) returns boolean` / `release_trip_optimize(p_trip_id uuid) returns void` SECURITY DEFINER RPCs in `supabase/migrations/0008_trip_optimize_mutex.sql`. Row-mutex on `trips.optimizing_at timestamptz null`; each is a single atomic UPDATE, immune to PgBouncer connection swaps. Granted to `service_role` only. Replaces the Phase 12 `try_lock_trip` / `unlock_trip` advisory-lock pair (dropped in migration `0008`).
 
 ## Cost discipline
 - `trip_legs` rows < 30 days old are reused — only missing pairs hit Distance Matrix
@@ -49,10 +49,10 @@ See [ADR-0001](../adr/0001-kmeans-2opt-over-or-tools.md).
 
 ## Known limitations
 
-### C1 — PgBouncer connection-swap weakens session-scoped lock (Phase 12, parked-with-mitigation)
+### Resolved limitations
 
-`try_lock_trip` / `unlock_trip` use `pg_try_advisory_lock` / `pg_advisory_unlock`, which are session-scoped. When Supabase is configured with PgBouncer in transaction-pooling mode the two RPC calls may land on different backend connections; the lock acquired by the first call is then invisible to the unlock call, so the lock leaks until the original session closes.
+#### ~~C1 — PgBouncer connection-swap weakens session-scoped lock~~ — Closed in Phase 13
 
-Mitigation in place: the `finally` block in `optimize-trip` emits a `unlock_session_mismatch` warn log when `pg_advisory_unlock` returns `false` (indicating it unlocked a lock it did not hold, or found nothing to unlock). Monitor this log in Supabase Edge Function logs to measure swap frequency.
+The Phase 12 advisory-lock pair (`try_lock_trip` / `unlock_trip`) used `pg_try_advisory_lock` / `pg_advisory_unlock`, which are session-scoped. Under PgBouncer transaction pooling the two RPC calls could land on different backend connections, causing the lock to leak.
 
-This state is strictly better than the previous silent no-op. A future phase may consolidate lock + work + unlock into a single multi-statement RPC to eliminate the inter-call connection-swap window.
+Closed in Phase 13 by replacing the advisory-lock pair with a row-mutex on `trips.optimizing_at`. Each of `claim_trip_optimize` and `release_trip_optimize` is a single atomic `UPDATE` statement; PgBouncer cannot route different parts of one statement to different backends, so the connection-swap failure mode is structurally eliminated. The `unlock_session_mismatch` log stage was removed (the failure mode no longer exists). Migration `0008_trip_optimize_mutex.sql` drops the old RPCs and adds the new ones.

@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 12 — Done (web; native deferred)
+**Current phase**: Phase 13 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -20,6 +20,7 @@
 | 10 | Account data export (JSON download) + L4 debounce flush-on-blur bundle | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 11 | Trips list polish (search + sort) + Phase 10 L2 fix | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 12 | Advisory lock fix (Phase 5 M1) + Cost sort + Date filter (Phase 11 M1/L4 deferred) | ✅ Done (web; native deferred to user smoke) | backend + ui |
+| 13 | DB-row mutex (closes Phase 12 C1 — PgBouncer advisory-lock weakness) | ✅ Done (web; native deferred to user smoke) | backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1851,4 +1852,34 @@ Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and 
 **Status**: Done — shipped 2026-04-25; web verified; native deferred to user smoke.
 **Last updated**: 2026-04-25
 
-Closed three carried-forward deferred items in one bundle. (1) Phase 5 M1 — the silent no-op advisory lock in `optimize-trip` is replaced by a real session-scoped lock pair: new migration `0007_advisory_lock_wrappers.sql` adds `try_lock_trip(uuid)` / `unlock_trip(uuid)` SECURITY DEFINER RPCs wrapping `pg_try_advisory_lock` / `pg_advisory_unlock` keyed by `hashtextextended(trip_id::text, 0)`, granted to `service_role` only (not `authenticated`). `optimize-trip` now returns HTTP 409 `already_optimizing` when another optimize is in flight for the same trip; the `finally` block calls `unlock_trip` and emits `unlock_error` / `unlock_session_mismatch` warn logs for observability. Known limitation: PgBouncer transaction pooling can swap the backend connection between the lock and unlock RPCs, weakening the session-scope guarantee; the `unlock_session_mismatch` log provides telemetry to measure swap frequency — see `docs/features/optimization.md` for detail. (2) Phase 11 M1 — Cost sort added as the 4th sort mode on the trips list; backed by new `useAllTripLegs(tripIds)` hook in `src/api/routes.ts` that issues a single batched `select trip_id, distance_meters from trip_legs where trip_id in (...)` with a sorted, stable query key; trips with no legs sort to the bottom. (3) Phase 11 L4 — Date filter added via new generic `FilterSheet` component (`src/components/FilterSheet.tsx`) wrapping the existing platform-split `BottomSheet`; options: All / Upcoming / Past, applied after search and before sort; tab-switch resets search + sort + filter together. `FilterSheet` uses `accessibilityRole="radiogroup"` with per-row `radio` + `accessibilityState={{ checked }}`. Reviewer finding H2/H3 (auth-grant griefing) closed in-phase by revoking RPCs from `public`. M2 (silent unlock failure) closed in-phase by warn logs. Feature docs updated: `docs/features/trips-list-polish.md`, `docs/features/optimization.md`. Review: `docs/reviews/phase-12.md`.
+Closed three carried-forward deferred items in one bundle. (1) Phase 5 M1 — the silent no-op advisory lock in `optimize-trip` is replaced by a real session-scoped lock pair: new migration `0007_advisory_lock_wrappers.sql` adds `try_lock_trip(uuid)` / `unlock_trip(uuid)` SECURITY DEFINER RPCs wrapping `pg_try_advisory_lock` / `pg_advisory_unlock` keyed by `hashtextextended(trip_id::text, 0)`, granted to `service_role` only (not `authenticated`). `optimize-trip` now returns HTTP 409 `already_optimizing` when another optimize is in flight for the same trip; the `finally` block calls `unlock_trip` and emits `unlock_error` / `unlock_session_mismatch` warn logs for observability. Known limitation (C1 — **Closed by Phase 13**): PgBouncer transaction pooling can swap the backend connection between the lock and unlock RPCs, weakening the session-scope guarantee; the `unlock_session_mismatch` log provides telemetry to measure swap frequency — see `docs/features/optimization.md` for detail. (2) Phase 11 M1 — Cost sort added as the 4th sort mode on the trips list; backed by new `useAllTripLegs(tripIds)` hook in `src/api/routes.ts` that issues a single batched `select trip_id, distance_meters from trip_legs where trip_id in (...)` with a sorted, stable query key; trips with no legs sort to the bottom. (3) Phase 11 L4 — Date filter added via new generic `FilterSheet` component (`src/components/FilterSheet.tsx`) wrapping the existing platform-split `BottomSheet`; options: All / Upcoming / Past, applied after search and before sort; tab-switch resets search + sort + filter together. `FilterSheet` uses `accessibilityRole="radiogroup"` with per-row `radio` + `accessibilityState={{ checked }}`. Reviewer finding H2/H3 (auth-grant griefing) closed in-phase by revoking RPCs from `public`. M2 (silent unlock failure) closed in-phase by warn logs. Feature docs updated: `docs/features/trips-list-polish.md`, `docs/features/optimization.md`. Review: `docs/reviews/phase-12.md`.
+
+---
+
+## Phase 13 — DB-row mutex (closes Phase 12 C1)
+
+**Status**: Done — shipped 2026-04-25; web verified; native deferred to user smoke.
+**Last updated**: 2026-04-25
+
+Closed Phase 12 C1: the session-scoped `pg_try_advisory_lock` / `pg_advisory_unlock` pair was vulnerable to PgBouncer transaction-pooling connection swaps — the two RPC calls could land on different backend connections, causing the acquired lock to be invisible to the unlock call and leaking until the session closed.
+
+**Mechanism**: replaced the advisory-lock pair with a row-mutex on `trips.optimizing_at` (new `timestamptz null` column, migration `0008_trip_optimize_mutex.sql`). Claiming and releasing the mutex are each a single atomic `UPDATE` statement wrapped in a data-modifying CTE. Atomic single-statement UPDATEs execute within one transaction at the Postgres layer; PgBouncer cannot route different parts of the same statement to different backends, so the connection-swap failure mode is structurally eliminated.
+
+**Migration `0008` details**:
+- Adds `trips.optimizing_at timestamptz null`.
+- Adds `public.claim_trip_optimize(p_trip_id uuid, p_ttl_seconds int default 300) returns boolean` — data-modifying CTE: `UPDATE trips SET optimizing_at = now() WHERE id = p_trip_id AND (optimizing_at IS NULL OR optimizing_at < now() - make_interval(secs => p_ttl_seconds)) RETURNING true`; returns `false` if the row was not updated (concurrent claim holds it).
+- Adds `public.release_trip_optimize(p_trip_id uuid) returns void` — unconditional `UPDATE trips SET optimizing_at = NULL WHERE id = p_trip_id`.
+- Drops `public.try_lock_trip(uuid)` and `public.unlock_trip(uuid)` (no other callers existed).
+- Both new RPCs are `SECURITY DEFINER`, `set search_path = public`, granted to `service_role` only.
+
+**Edge Function changes** (`supabase/functions/optimize-trip/index.ts`):
+- `try_lock_trip` RPC call replaced by `claim_trip_optimize` (passing `p_ttl_seconds: 300`).
+- `unlock_trip` in `finally` replaced by `release_trip_optimize`.
+- `unlock_session_mismatch` log stage dropped (no session-mismatch failure mode with the row-mutex).
+- `unlock_error` log stage renamed to `release_error`.
+
+**TTL rationale (5 minutes)**: observed worst-case optimize completion (25 places, 2-opt + matrix calls) is well under 30 s. A 5-minute TTL gives 10x headroom for cold-start and retry while enabling automatic stale-claim recovery if the Edge Function crashes mid-optimize. No operator action is needed for hung-function recovery.
+
+**Process**: no formal reviewer pass — scope was one backend file plus one migration. Backend-specialist self-verified via `npx supabase db reset` (clean), `\d trips` (new column present), `\df` (new RPCs present, old ones dropped), behavioral claim/release/stale-recovery test, and `?ping` check.
+
+**Feature doc**: `docs/features/optimization.md` (APIs + Known limitations sections updated).
