@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 18 — Done (web; native shares same code path)
+**Current phase**: Phase 19 — Done
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -26,6 +26,7 @@
 | 16 | Optimize error codes surfaced to UI | ✅ Done (web verified; native unaffected — shared client code, no platform-specific surface) | backend |
 | 17 | Recent place searches in the add flow | ✅ Done (web verified; native shares same code path — AsyncStorage cross-platform) | ui |
 | 18 | Duplicate place warning in add flow | ✅ Done (web verified; native shares same code path) | ui |
+| 19 | Test restoration + share-revoke production bug fix | ✅ Done | test + ui + backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2060,3 +2061,16 @@ Phase 17's recents made re-picking the same place a single tap, which surfaced t
 **Process**: no formal reviewer pass. Single-file UI change, all logic local. ui-specialist self-verified (typecheck: 0 new errors; banner aesthetic matches established `settings.tsx` pattern).
 
 **Feature doc**: `docs/features/place-search.md` (Phase 18 duplicate-warning section added).
+
+---
+
+## Phase 19 — Test restoration + share-revoke production bug fix
+
+**Status**: Done — shipped 2026-04-25.
+**Last updated**: 2026-04-25
+
+The test-specialist sub-agent returned after eight phases off-duty, during which feature work shipped without any automated test coverage. The starting state was 19 suites (4 failed to load entirely, 15 passed with 139 tests) and 0 integration-suite runs in the presence of a live Supabase env. The immediate failure mode was non-lazy `createClient(URL!, SERVICE!, ...)` calls executing at describe-body scope, before `describe.skip` could suppress the body — this caused the four RLS/RPC integration suites (`tests/rls.test.ts`, `tests/rls.share.test.ts`, `tests/rls.trip-places-legs.test.ts`, `tests/rpc.test.ts`) to throw at load time. Fixing all four to lazy-init `createClient` inside `beforeAll` unblocked the integration suite. `jest.config.js` also received `@react-navigation/.*` in `transformIgnorePatterns` and an AsyncStorage mock in `moduleNameMapper`. Seven new test files were then added covering Phase 17 AsyncStorage CRUD (`src/lib/__tests__/recentPlaces.test.ts`), Phase 9 Markdown tokenizer (`src/lib/__tests__/markdown.test.ts`), Phase 11–12 trips list helpers (`src/lib/__tests__/tripsFilters.test.ts`), Phase 14 share unfurl summary (`src/lib/__tests__/buildSummary.test.ts`), Phase 16 OptimizeError class (`src/api/__tests__/optimizeError.test.ts`), Phase 8 duration formatting (`src/components/__tests__/humanizeDuration.test.ts`), and Phase 13 row-mutex RPCs (new `maybeDescribe` block in `tests/rpc.test.ts`). Final counts: 25 suites (4 skipped when env absent, 21 always passing), 241 tests without env, 278 tests with local Supabase — all green.
+
+The seven new test files exposed that pure helper functions (`applySearch`, `applyDateFilter`, `applySort` in `app/(app)/trips.tsx`; `buildSummary` in `app/share/[token].tsx`) could not be imported in Jest because their parent screen modules pull in `expo-router` and native deps that crash the jsdom test environment. Prior workarounds had silently copied the logic into test files, where it could drift from the source. The fix was a ui-specialist extraction refactor: `src/lib/tripsFilters.ts` (exports `applySearch`, `applyDateFilter`, `applySort`, `SortKey`, `DateFilter` — pure, no React deps, module-level `Intl.Collator`) and `src/lib/buildSummary.ts` (exports `buildSummary`, `SharedTripMeta`, `SharedPlace` — pure). Both screen files were updated to import from `@/lib/...`; behavior is identical. Test files were moved from the old `app/(app)/__tests__/` and `app/share/__tests__/` locations to `src/lib/__tests__/` and updated to import from the canonical lib paths. The two now-empty old test directories were cleaned up.
+
+A real production bug was surfaced and fixed. The RLS share test had been asserting a `42501` error on `.insert(...).select()` as a test failure; deeper diagnosis revealed the true design: `trip_shares` deliberately carries no SELECT policy (share tokens must never be readable post-creation), which means `INSERT ... RETURNING` succeeds at write time but the post-insert RETURNING visibility check fails with `42501` because Postgres cannot SELECT back the newly inserted row under the caller's JWT. More critically, the same SELECT-visibility constraint caused `UPDATE ... RETURNING` under a user JWT to silently return row count 0 — no error, no exception, no visible failure — meaning the `handleRevoke` path in `supabase/functions/share-trip/index.ts` had been a no-op in production since Phase 4. Any user who pressed "Revoke" was left with a live share token. The fix: new migration `supabase/migrations/0009_share_insert_policy_note.sql` adds `COMMENT ON POLICY` entries for all three `trip_shares` policies documenting the no-SELECT-policy design, why `.insert(...).select()` fails, and why user-JWT UPDATE silently no-ops. `handleRevoke` was corrected to prove ownership via a user-JWT SELECT on `trips` first, then perform the UPDATE via the admin client (the only path that is RLS-immune and can count its own writes). `tests/rls.share.test.ts` was rewritten accordingly: the `42501` case is now asserted as design-correct; a positive bare `.insert(...)` (without `.select()`) test was added; the owner-UPDATE test asserts the silent no-op under user JWT; a new test asserts admin-client UPDATE succeeds.

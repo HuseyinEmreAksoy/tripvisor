@@ -40,6 +40,8 @@ import { decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/co
 import { useTheme } from '@/theme';
 // Will resolve once backend-specialist lands src/api/share.ts
 import { useSharedTrip } from '@/api/share';
+import { buildSummary } from '@/lib/buildSummary';
+import type { SharedTripMeta, SharedPlace } from '@/lib/buildSummary';
 
 // ── Open Graph / Twitter card head ───────────────────────────────────────────
 //
@@ -50,37 +52,6 @@ import { useSharedTrip } from '@/api/share';
 // Rendered only once `shared` data is available — we never emit meta tags in
 // loading or error states, so crawlers fall back cleanly to the root-layout
 // baseline tags rather than reading misleading or empty values.
-
-function buildSummary(
-  places: SharedPlace[],
-  trip: SharedTripMeta,
-): string {
-  const placeCount = places.length;
-
-  // Format daily hours budget: no trailing ".0" for whole numbers.
-  const hours = trip.daily_hours_budget;
-  const dailyHours = Number.isInteger(hours)
-    ? `${hours}h`
-    : `${hours.toFixed(1)}h`;
-
-  let summary: string;
-
-  if (placeCount === 0) {
-    summary = `Empty trip · ${dailyHours}/day`;
-  } else if (trip.start_date && trip.end_date) {
-    const msPerDay = 1000 * 60 * 60 * 24;
-    const start = new Date(trip.start_date).getTime();
-    const end = new Date(trip.end_date).getTime();
-    // Inclusive day count — floor in case of floating-point dust.
-    const dayCount = Math.max(1, Math.floor((end - start) / msPerDay) + 1);
-    summary = `${dayCount}-day trip · ${placeCount} place${placeCount === 1 ? '' : 's'} · ${dailyHours}/day`;
-  } else {
-    summary = `${placeCount} place${placeCount === 1 ? '' : 's'} · ${dailyHours}/day`;
-  }
-
-  // Hard-cap at 200 chars (the og:description limit enforced here for safety).
-  return summary.length > 200 ? summary.slice(0, 197) + '...' : summary;
-}
 
 interface SharedTripHeadProps {
   trip: SharedTripMeta;
@@ -163,25 +134,9 @@ export default function SharedTripView() {
   );
 }
 
+// SharedTripMeta and SharedPlace are imported from @/lib/buildSummary.
+
 // ── Types inferred from expected API shape ───────────────────────────────────
-interface SharedTripMeta {
-  title: string;
-  start_date: string | null;
-  end_date: string | null;
-  daily_hours_budget: number;
-  transport_mode: string;
-}
-
-interface SharedPlace {
-  id: string;
-  user_title: string | null;
-  lat: number;
-  lng: number;
-  day_index: number | null;
-  order_in_day: number | null;
-  visit_duration_minutes: number;
-}
-
 interface SharedLeg {
   id: string;
   day_index: number;

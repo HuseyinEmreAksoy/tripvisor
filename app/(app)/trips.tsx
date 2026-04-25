@@ -42,16 +42,14 @@ import {
 import { useTheme } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
-import type { Trip } from '@/api/types';
+import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
+import type { SortKey, DateFilter } from '@/lib/tripsFilters';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Tab = 'active' | 'archived';
 
-type SortKey = 'recent' | 'az' | 'start_date' | 'cost';
-
-/** Date-based filter applied after search and before sort. */
-type DateFilter = 'all' | 'upcoming' | 'past';
+// SortKey and DateFilter are imported from @/lib/tripsFilters.
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -75,99 +73,6 @@ const DATE_FILTER_OPTIONS: Array<{ value: DateFilter; label: string }> = [
   { value: 'upcoming', label: 'Upcoming' },
   { value: 'past', label: 'Past' },
 ];
-
-// Locale-aware collator for A→Z sort; stable instance so useMemo doesn't
-// recreate it on every render.
-const collator = new Intl.Collator(undefined, { sensitivity: 'base' });
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function applySearch(trips: Trip[], query: string): Trip[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return trips;
-  return trips.filter((trip) => trip.title.toLowerCase().includes(q));
-}
-
-/**
- * Applies the Upcoming / Past / All date filter.
- *
- * Rules:
- *   upcoming  — start_date >= today, OR (start_date null AND end_date >= today),
- *               OR both dates null (unscheduled active trip — kept visible).
- *   past      — end_date < today AND end_date != null.
- *   all       — no filtering.
- *
- * Both sides of every comparison are `YYYY-MM-DD` strings so lexicographic
- * `<` / `>=` is correct.
- */
-function applyDateFilter(trips: Trip[], filter: DateFilter, today: string): Trip[] {
-  if (filter === 'all') return trips;
-
-  return trips.filter((trip) => {
-    const { start_date, end_date } = trip;
-
-    if (filter === 'upcoming') {
-      // Unscheduled trip — always show in Upcoming.
-      if (!start_date && !end_date) return true;
-      if (start_date) return start_date >= today;
-      // start_date is null but end_date is present.
-      return end_date != null && end_date >= today;
-    }
-
-    // filter === 'past'
-    return end_date != null && end_date < today;
-  });
-}
-
-function applySort(
-  trips: Trip[],
-  key: SortKey,
-  legsByTripId: Map<string, { distance_meters: number }[]>,
-): Trip[] {
-  // Slice to avoid mutating the TanStack Query cache array.
-  const sorted = trips.slice();
-  switch (key) {
-    case 'recent':
-      sorted.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-      break;
-    case 'az':
-      sorted.sort((a, b) => collator.compare(a.title, b.title));
-      break;
-    case 'start_date':
-      sorted.sort((a, b) => {
-        // Null start_dates sink to the bottom.
-        if (!a.start_date && !b.start_date) return 0;
-        if (!a.start_date) return 1;
-        if (!b.start_date) return -1;
-        return a.start_date.localeCompare(b.start_date);
-      });
-      break;
-    case 'cost': {
-      /**
-       * Compute trip cost = sum(leg.distance_meters / 1000 * trip.cost_per_km).
-       * Trips with no legs (total cost = 0) sink to the bottom via the
-       * fallback `created_at` tiebreak to keep ordering stable.
-       */
-      const cost = (trip: Trip): number => {
-        const legs = legsByTripId.get(trip.id) ?? [];
-        return legs.reduce(
-          (acc, leg) => acc + (leg.distance_meters / 1000) * trip.cost_per_km,
-          0,
-        );
-      };
-      sorted.sort((a, b) => {
-        const diff = cost(b) - cost(a); // descending
-        if (diff !== 0) return diff;
-        // Tiebreak: more recent first.
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      });
-      break;
-    }
-  }
-  return sorted;
-}
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 

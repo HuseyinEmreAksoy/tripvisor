@@ -12,6 +12,15 @@
 - Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`. See `supabase/migrations/0001_init.sql`.
 - **RLS on every table**; child tables scoped via `trips.user_id`.
 
+### RLS special case — `trip_shares`
+
+`trip_shares` deliberately has **no SELECT policy**. Share tokens must never be readable by any client JWT after creation; the only read path is the admin-client Edge Function (`share-trip/index.ts`). This design has two non-obvious consequences that must be preserved:
+
+- **`INSERT ... RETURNING` under a user JWT fails with `42501`** even though the row is written. Postgres evaluates the `RETURNING` clause against SELECT policies; since none exist, it cannot read the row back. The correct pattern is `.insert(data)` without `.select()`. The `create` operation in the Edge Function uses the admin client to avoid this.
+- **`UPDATE` under a user JWT silently no-ops** (row count 0, no error). The row is invisible to the caller's SELECT policy, so Postgres treats it as non-existent for the update. All production writes to `trip_shares` — create, revoke — must go through the admin client. Ownership must be proven separately via a user-JWT SELECT on `trips` before the admin client acts.
+
+These constraints are documented via `COMMENT ON POLICY` in `supabase/migrations/0009_share_insert_policy_note.sql`.
+
 ## Third-party APIs
 
 - **Google Maps Platform** — Places API (New), Routes API, Maps SDK (native), Maps JS (web).

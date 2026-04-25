@@ -287,7 +287,7 @@ async function handleRevoke(
 ): Promise<Response> {
   const user = makeUserClient(req);
 
-  // Ownership check via RLS.
+  // Ownership check via RLS on `trips` (which DOES have a SELECT policy).
   const { data: trip, error: tripErr } = await user
     .from('trips')
     .select('id')
@@ -300,13 +300,20 @@ async function handleRevoke(
     return errorResponse('not_found', 'Trip not found or forbidden', 404, origin);
   }
 
-  // Update via user client so the owner's RLS UPDATE policy applies. The owner
-  // has no SELECT policy, so we can't return the updated rows; instead we
-  // count via a HEAD-style select on the admin client after the update.
+  // Update via the admin client. We CANNOT use the user-JWT client here:
+  // `trip_shares` has no SELECT policy by design (tokens must never be
+  // readable post-creation), and Postgres requires a row to be visible via
+  // the SELECT policy in order for UPDATE / DELETE to find it. Without that,
+  // an UPDATE under the user JWT silently affects 0 rows even though the
+  // UPDATE policy's USING clause would otherwise permit it. Ownership has
+  // already been proven against `trips` immediately above, so the admin
+  // client write is safe and equivalent to what the policy would have
+  // permitted under SELECT-visibility-preserving conditions.
+  const admin = makeAdminClient();
   const nowIso = new Date().toISOString();
-  let q = user.from('trip_shares').update({ revoked_at: nowIso }).eq('trip_id', body.tripId);
+  let q = admin.from('trip_shares').update({ revoked_at: nowIso }).eq('trip_id', body.tripId);
   if (body.token) q = q.eq('token', body.token);
-  // `is('revoked_at', null)` — don't re-stamp already-revoked rows.
+  // Don't re-stamp already-revoked rows.
   q = q.is('revoked_at', null);
   const { error: updErr } = await q;
   if (updErr) {
@@ -321,7 +328,6 @@ async function handleRevoke(
   }
 
   // Count rows just revoked via admin client (no SELECT policy for owner).
-  const admin = makeAdminClient();
   let countQ = admin
     .from('trip_shares')
     .select('id', { count: 'exact', head: true })

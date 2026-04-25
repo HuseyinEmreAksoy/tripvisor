@@ -2,11 +2,15 @@ module.exports = {
   preset: 'jest-expo',
   setupFilesAfterEnv: ['<rootDir>/jest-setup.ts'],
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-native-community|expo-modules-core|@supabase/.*|@tanstack/.*))',
+    'node_modules/(?!((jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-native-community|expo-modules-core|@supabase/.*|@tanstack/.*|@react-navigation/.*))',
   ],
   testPathIgnorePatterns: ['/node_modules/', '/supabase/functions/', '<rootDir>/e2e/'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    // AsyncStorage: use the official Jest mock so tests don't require the native module.
+    // https://react-native-async-storage.github.io/async-storage/docs/advanced/jest
+    '^@react-native-async-storage/async-storage$':
+      '<rootDir>/node_modules/@react-native-async-storage/async-storage/jest/async-storage-mock.js',
   },
   // ── Coverage (Step 5.5) ────────────────────────────────────────────────────
   coverageReporters: ['text', 'html', 'json-summary'],

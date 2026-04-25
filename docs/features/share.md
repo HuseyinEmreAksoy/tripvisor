@@ -79,6 +79,40 @@ Per-trip card image generation is out of scope for this phase.
 
 Tags are injected client-side by `react-helmet-async` (under `expo-router/head`) and are not in the initial static HTML. All major unfurlers (Slack, Discord, Twitter/X, iMessage iOS 16+, WhatsApp, Telegram) execute JavaScript before scraping, so this is fine in practice. Non-JS bots (legacy Facebook crawler, plain `curl`) see only the static document title. True pre-rendered tags require SSR or per-trip static export — out of scope.
 
+## Phase 19 — Revoke flow correctness fix
+
+**Bug fixed**: 2026-04-25
+
+The share-revoke flow had been silently failing in production since Phase 4 shipped.
+
+### Root cause
+
+`trip_shares` carries no SELECT policy by design: share tokens must never be queryable by any client JWT after creation (the only read path is the admin-client Edge Function). This design is correct and intentional — but it has a non-obvious consequence for write paths:
+
+- `INSERT ... RETURNING` under a user JWT: the INSERT itself succeeds (the INSERT WITH CHECK policy allows it), but the post-insert `RETURNING` visibility check fails with `42501` because Postgres cannot SELECT the row back under the caller's JWT. The `.insert(...).select()` pattern therefore surfaces `42501` on the client even though the row was written. Direct `.insert(...)` without `.select()` works correctly.
+- `UPDATE ... RETURNING` under a user JWT: the UPDATE is silently blocked by RLS (the row is invisible to the caller's SELECT policy), Postgres returns row count 0, and no error is raised. The `handleRevoke` function in `supabase/functions/share-trip/index.ts` had been using this path, meaning every revoke call returned `{ revoked: 0 }` and the token remained live. Any token a user believed they had revoked was still valid in production from Phase 4 through Phase 18.
+
+### Fix
+
+Three parts:
+
+1. **Migration `supabase/migrations/0009_share_insert_policy_note.sql`** — adds `COMMENT ON POLICY` entries for all three `trip_shares` policies (`trip_shares_insert`, `trip_shares_update`, `trip_shares_delete`) documenting the no-SELECT-policy design rationale, why `.insert(...).select()` produces `42501`, why direct user-JWT UPDATE silently no-ops, and that all production writes must flow through the Edge Function admin client.
+
+2. **`supabase/functions/share-trip/index.ts:handleRevoke`** — reworked to:
+   - Prove ownership via a user-JWT `SELECT` on `trips` (where the caller does have SELECT rights via the standard `trips.user_id = auth.uid()` policy).
+   - Perform the `UPDATE revoked_at = now()` and row-count read via the admin client, which is RLS-immune and can read its own write back.
+   - Return `{ revoked: count }` correctly.
+
+3. **`tests/rls.share.test.ts`** — rewritten to match the correct design:
+   - `42501` on `.insert(...).select()` is now asserted as expected behavior (not a failure).
+   - Bare `.insert(...)` without `.select()` is tested and confirmed to succeed.
+   - Owner-JWT `UPDATE` is tested and confirmed to silently no-op (row count 0, no error) — the test documents the design hazard.
+   - Admin-client `UPDATE` is tested and confirmed to succeed.
+
+### User-visible impact
+
+This is a bug fix with real user impact. Any share token that a user pressed "Revoke" on between Phase 4 (2026-04-24) and Phase 19 (2026-04-25) was not actually revoked. After Phase 19, the revoke flow correctly marks the token as revoked and the share read Edge Function returns HTTP 404 for revoked tokens as documented.
+
 ## ADR
 - [ADR-0002 — Share-link route shape](../adr/0002-share-link-shape.md)
 

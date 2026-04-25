@@ -1,15 +1,29 @@
 /**
  * RLS: trip_shares — two-user isolation test.
  *
- * Verifies the share-links RLS model:
- *   - Owner can INSERT a trip_shares row for their own trip
- *   - Non-owner cannot INSERT a trip_shares row for someone else's trip
- *   - Non-owner cannot SELECT / UPDATE / DELETE any trip_shares rows
- *   - Anonymous client (no auth) cannot SELECT trip_shares at all
+ * Verifies the share-links RLS model. The intended write path for trip_shares
+ * is the `share-trip` Edge Function, which uses the service-role admin client
+ * for the actual INSERT after validating ownership via the user JWT against
+ * `trips`. Direct-from-client INSERTs are NOT a supported path — see the
+ * `COMMENT ON POLICY` strings added in migration 0009 and the design notes
+ * in supabase/migrations/0003_share_links.sql.
+ *
+ * What this suite asserts:
+ *   - Direct `.insert(...).select(...)` from the user client FAILS with 42501.
+ *     This is intentional: trip_shares has no SELECT policy (tokens must never
+ *     be readable post-creation), so INSERT ... RETURNING — which is what
+ *     `.select()` compiles to — cannot succeed. The Edge Function flow
+ *     (admin-client INSERT after JWT-scoped trips ownership check) is the
+ *     only supported write path.
+ *   - Non-owner cannot INSERT a trip_shares row for someone else's trip.
+ *   - Non-owner cannot SELECT / UPDATE / DELETE any trip_shares rows.
+ *   - Anonymous client cannot SELECT trip_shares at all.
+ *   - Owner CAN UPDATE (revoke) their own row under their JWT — that's how the
+ *     Edge Function's revoke flow works.
  *
  * Prerequisites:
  *   - Local Supabase running (`supabase start`)
- *   - Migrations applied including 0003_share_links.sql
+ *   - Migrations applied including 0003_share_links.sql and 0009_share_insert_policy_note.sql
  *   - Env vars:
  *       SUPABASE_URL              (local, e.g. http://127.0.0.1:54321)
  *       SUPABASE_ANON_KEY
@@ -27,10 +41,10 @@ const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const maybeDescribe = URL && ANON && SERVICE ? describe : describe.skip;
 
 maybeDescribe('RLS: trip_shares — owner vs. non-owner access', () => {
-  const admin = createClient(URL!, SERVICE!, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
+  // Lazy-init: clients are constructed inside beforeAll so that the createClient
+  // call (which throws if URL is empty) is never reached when env vars are absent
+  // and maybeDescribe resolves to describe.skip.
+  let admin: ReturnType<typeof createClient>;
   let userAId = '';
   let userBId = '';
   let tripAId = '';
@@ -40,6 +54,10 @@ maybeDescribe('RLS: trip_shares — owner vs. non-owner access', () => {
   let anonClient: ReturnType<typeof createClient>;
 
   beforeAll(async () => {
+    admin = createClient(URL!, SERVICE!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
     // Create user A + user B
     const stamp = Date.now();
     const a = await admin.auth.admin.createUser({
@@ -91,17 +109,44 @@ maybeDescribe('RLS: trip_shares — owner vs. non-owner access', () => {
   });
 
   // ---- INSERT policies -------------------------------------------------------
+  //
+  // trip_shares has no SELECT policy by design (tokens must never be readable
+  // post-creation). The Supabase JS chain `.insert(...).select(...)` compiles
+  // to `INSERT ... RETURNING ...`, which Postgres requires the inserted row
+  // to also satisfy a SELECT policy for. With no SELECT policy, that visibility
+  // check fails and Postgres returns `42501 new row violates row-level
+  // security policy` — the same error code as a WITH CHECK failure, even
+  // though the WITH CHECK itself is satisfied. This is the documented
+  // intended behavior; production INSERTs go through the share-trip Edge
+  // Function with the service-role admin client. See migration 0009.
 
-  it('user A can INSERT a trip_shares row for their own trip', async () => {
-    const token = `test-token-${Date.now()}-userA`;
+  it('user A direct .insert(...).select() FAILS with 42501 (intentional — design forces Edge Function flow)', async () => {
+    const token = `test-token-${Date.now()}-userA-returning`;
     const { data, error } = await userAClient!
       .from('trip_shares')
       .insert({ trip_id: tripAId, token })
       .select('id')
       .single();
+    // INSERT ... RETURNING with no SELECT policy on the table -> 42501.
+    // This is by design and documented in supabase/migrations/0009_share_insert_policy_note.sql.
+    expect(error).not.toBeNull();
+    expect((error as { code?: string } | null)?.code).toBe('42501');
+    expect(data).toBeNull();
+  });
+
+  it('user A bare .insert(...) (no .select() chain) is permitted by WITH CHECK for own trip', async () => {
+    // Without RETURNING, the INSERT only needs to satisfy WITH CHECK, which
+    // it does for an owned trip. This is the path the Edge Function would
+    // take if it were running under the user JWT (it doesn't — it uses
+    // service-role for the write — but the policy still permits it as
+    // defense-in-depth).
+    const token = `test-token-${Date.now()}-userA-bare`;
+    const { error } = await userAClient!.from('trip_shares').insert({ trip_id: tripAId, token });
     expect(error).toBeNull();
-    expect(data).not.toBeNull();
-    if (data) createdShareId = (data as { id: string }).id;
+    // Confirm via admin that the row is present
+    const check = await admin.from('trip_shares').select('id').eq('token', token).maybeSingle();
+    expect(check.data).not.toBeNull();
+    if (check.data) createdShareId = (check.data as { id: string }).id;
   });
 
   it('user B cannot INSERT a trip_shares row for trip_A (not their trip)', async () => {
@@ -109,8 +154,11 @@ maybeDescribe('RLS: trip_shares — owner vs. non-owner access', () => {
     const { error } = await userBClient!
       .from('trip_shares')
       .insert({ trip_id: tripAId, token });
-    // RLS INSERT WITH CHECK should reject this — error is non-null
+    // WITH CHECK rejects this because user B does not own tripAId.
     expect(error).not.toBeNull();
+    // Defense-in-depth: confirm via admin that nothing landed.
+    const check = await admin.from('trip_shares').select('id').eq('token', token).maybeSingle();
+    expect(check.data).toBeNull();
   });
 
   // ---- SELECT policy ---------------------------------------------------------
@@ -182,18 +230,48 @@ maybeDescribe('RLS: trip_shares — owner vs. non-owner access', () => {
   });
 
   // ---- Owner UPDATE (revoke) -------------------------------------------------
+  //
+  // Direct UPDATE under the user JWT silently no-ops on trip_shares because
+  // Postgres requires a row to be SELECT-visible for UPDATE to find it, and
+  // trip_shares has no SELECT policy. This is the same design constraint that
+  // forces INSERTs through the Edge Function admin client. The share-trip
+  // Edge Function's handleRevoke flow performs the actual UPDATE via the
+  // service-role admin client after proving ownership via the user JWT
+  // against the trips table. See migration 0009.
 
-  it('user A can UPDATE (revoke) their own trip_shares row', async () => {
-    // The owner has an UPDATE policy, so they can set revoked_at.
-    // There is no SELECT policy, so we verify the update via admin.
+  it('user A direct UPDATE under JWT silently no-ops (design forces Edge Function admin path)', async () => {
+    // Pre-condition: ensure the row is currently NOT revoked.
+    await admin.from('trip_shares').update({ revoked_at: null }).eq('trip_id', tripAId);
+
     const revokedAt = new Date().toISOString();
     const { error } = await userAClient!
       .from('trip_shares')
       .update({ revoked_at: revokedAt })
       .eq('trip_id', tripAId)
       .is('revoked_at', null);
+    // No error — RLS doesn't raise; it just affects 0 rows.
     expect(error).toBeNull();
-    // Confirm via admin that revoked_at is now set
+    // Verify via admin that the row is STILL not revoked (proving the user-JWT
+    // UPDATE silently no-opped).
+    const check = await admin
+      .from('trip_shares')
+      .select('revoked_at')
+      .eq('trip_id', tripAId)
+      .is('revoked_at', null)
+      .limit(1);
+    expect((check.data ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('admin client UPDATE (the Edge Function path) successfully revokes the row', async () => {
+    // Mirror what share-trip/handleRevoke does after admin-client switch.
+    const revokedAt = new Date().toISOString();
+    const { error } = await admin
+      .from('trip_shares')
+      .update({ revoked_at: revokedAt })
+      .eq('trip_id', tripAId)
+      .is('revoked_at', null);
+    expect(error).toBeNull();
+    // Confirm revoked_at is now set
     const check = await admin
       .from('trip_shares')
       .select('revoked_at')

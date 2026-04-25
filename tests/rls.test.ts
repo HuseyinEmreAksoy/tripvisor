@@ -24,10 +24,10 @@ const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const maybeDescribe = URL && ANON && SERVICE ? describe : describe.skip;
 
 maybeDescribe('RLS: trips + trip_places isolate users', () => {
-  const admin = createClient(URL!, SERVICE!, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
+  // Lazy-init: clients are constructed inside beforeAll so that the createClient
+  // call (which throws if URL is empty) is never reached when env vars are absent
+  // and maybeDescribe resolves to describe.skip.
+  let admin: ReturnType<typeof createClient>;
   let userAId = '';
   let userBId = '';
   let tripAId = '';
@@ -35,6 +35,9 @@ maybeDescribe('RLS: trips + trip_places isolate users', () => {
   let userBClient: ReturnType<typeof createClient>;
 
   beforeAll(async () => {
+    admin = createClient(URL!, SERVICE!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     // Create user A + user B
     const a = await admin.auth.admin.createUser({
       email: `rls-a-${Date.now()}@test.local`,
