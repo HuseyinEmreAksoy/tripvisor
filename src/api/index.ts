@@ -11,3 +11,5 @@ export * from './share';
 export * from './offline';
 export * from './ics';
 export * from './account-export';
+export * from './trip-accommodations';
+export * from './trip-collaborators';

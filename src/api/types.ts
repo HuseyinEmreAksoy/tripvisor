@@ -103,6 +103,38 @@ export interface TripExpense {
   updated_at: string;
 }
 
+/**
+ * Phase 21 Steps 21.8 / 21.9: per-trip lodging entries with date-range
+ * semantics. Anchored to a Google Place when available (`google_place_id`
+ * + denormalized `lat`/`lng`), or falls back to a free-text `address`.
+ *
+ * Cost is recorded SEPARATELY in `trip_expenses` (`category = 'accommodation'`).
+ * The two tables are intentionally not back-linked in v1 — the per-stay
+ * cost breakdown is a future feature if product asks for it.
+ *
+ * CHECK invariants enforced server-side (see `0012_trip_accommodations.sql`):
+ *   - `check_out_date > check_in_date` (strictly greater; zero-night stays rejected)
+ *   - if `google_place_id` is set, both `lat` and `lng` MUST be set
+ */
+export interface TripAccommodation {
+  id: Uuid;
+  trip_id: Uuid;
+  /** User-facing label, e.g. "Hilton Rome" or "Sarah's flat". */
+  name: string;
+  /** Optional Google Place anchor. When set, lat/lng are also set. */
+  google_place_id: string | null;
+  /** Free-text address fallback when no Google place. */
+  address: string | null;
+  /** Denormalized from the Google Place, only present when google_place_id is set. */
+  lat: number | null;
+  lng: number | null;
+  check_in_date: string;
+  check_out_date: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TripLeg {
   id: Uuid;
   trip_id: Uuid;
@@ -241,6 +273,51 @@ export interface CreateShareResult {
 
 export interface RevokeShareResult {
   revoked: number;
+}
+
+// ============================================================
+// Trip collaborators (Phase 21 Step 21.5)
+// ============================================================
+
+/**
+ * Roles a collaborator may hold on a trip.
+ *
+ * `viewer` — read-only on every trip-scoped table (trip_places, trip_days,
+ *   trip_legs, trip_expenses). Cannot manage collaborators or delete the
+ *   trip; cannot edit the trip itself.
+ * `editor` — read + write on every trip-scoped child table. Cannot manage
+ *   collaborators or delete the trip; cannot edit the trip itself in v1.
+ *
+ * Mirrors the role CHECK constraint in `0011_trip_collaborators.sql`.
+ */
+export type TripCollaboratorRole = 'viewer' | 'editor';
+
+/**
+ * Lifecycle states for a `trip_collaborators` row.
+ *
+ * `pending`  — owner sent an invite; invitee has not accepted yet
+ * `accepted` — invitee bound `user_id` and gained access
+ * `declined` — invitee declined; access never granted
+ * `revoked`  — owner removed the collaborator; access removed
+ *
+ * RLS treats only `accepted` rows as active access; the other three are
+ * audit / history.
+ */
+export type TripCollaboratorStatus = 'pending' | 'accepted' | 'declined' | 'revoked';
+
+export interface TripCollaborator {
+  id: Uuid;
+  trip_id: Uuid;
+  invitee_email: string;
+  /** Bound on accept; null while the invite is pending. */
+  user_id: Uuid | null;
+  role: TripCollaboratorRole;
+  status: TripCollaboratorStatus;
+  created_at: string;
+  /** Set by the trigger on status -> accepted. */
+  accepted_at: string | null;
+  /** Set by the trigger on status -> revoked. */
+  revoked_at: string | null;
 }
 
 // ============================================================

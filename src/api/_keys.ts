@@ -78,3 +78,26 @@ export const tripExpensesKeys = {
   all: ['trip-expenses'] as const,
   forTrip: (tripId: Uuid) => [...tripExpensesKeys.all, tripId] as const,
 };
+
+// ---------------------------------------------------------------------------
+// trip-accommodations (Phase 21 Steps 21.8 / 21.9)
+// ---------------------------------------------------------------------------
+export const tripAccommodationsKeys = {
+  all: ['trip-accommodations'] as const,
+  forTrip: (tripId: Uuid) => [...tripAccommodationsKeys.all, tripId] as const,
+};
+
+// ---------------------------------------------------------------------------
+// trip-collaborators (Phase 21 Steps 21.5 / 21.6)
+// ---------------------------------------------------------------------------
+//
+// `forTrip(tripId)` is the owner-side list of collaborators on a single
+// trip (powers the "manage collaborators" UI). `mine` is the per-user
+// list of trips where the caller has an accepted collaborator row
+// (powers `useCollaboratedTrips` and the future "Shared with me" badge
+// in the trips list, deferred to Step 21.7).
+export const tripCollaboratorsKeys = {
+  all: ['trip-collaborators'] as const,
+  forTrip: (tripId: Uuid) => [...tripCollaboratorsKeys.all, 'for-trip', tripId] as const,
+  mine: () => [...tripCollaboratorsKeys.all, 'mine'] as const,
+};
