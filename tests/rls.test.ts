@@ -124,4 +124,21 @@ maybeDescribe('RLS: trips + trip_places isolate users', () => {
     });
     expect(error).not.toBeNull();
   });
+
+  // ---- gap #14: anon denial (Step 5.3) ------------------------------------
+
+  it('anonymous client cannot SELECT trips', async () => {
+    const anonClient = createClient(URL!, ANON!, { auth: { persistSession: false } });
+    // anonClient is not signed in — all RLS for `trips` requires auth
+    const { data, error } = await anonClient.from('trips').select('*').eq('id', tripAId);
+    expect(error).toBeNull();
+    expect((data ?? []).length).toBe(0);
+  });
+
+  it('anonymous client cannot SELECT trip_places', async () => {
+    const anonClient = createClient(URL!, ANON!, { auth: { persistSession: false } });
+    const { data, error } = await anonClient.from('trip_places').select('*');
+    expect(error).toBeNull();
+    expect((data ?? []).length).toBe(0);
+  });
 });

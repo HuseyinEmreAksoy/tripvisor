@@ -82,7 +82,15 @@ export function optimize(input: OptimizerInput): OptimizerOutput {
 
   const days: OptimizerDay[] = balanced.map((cluster, dayIndex) => {
     const pin = dayStartEnd[dayIndex] ?? {};
-    const startId = pin.startId ?? (dayIndex === 0 ? anchorPlaceId : undefined);
+    // Anchor pinning invariant: if the anchor lands in THIS day's cluster, it
+    // must be pinned as the day's start — regardless of whether that day is
+    // day 0. k-means with degenerate inputs (duplicate coords) can push the
+    // anchor into a non-zero cluster; without this we'd silently lose the pin.
+    // See ADR-0001 §Consequences.
+    const anchorInCluster = anchorPlaceId && cluster.includes(anchorPlaceId)
+      ? anchorPlaceId
+      : undefined;
+    const startId = pin.startId ?? anchorInCluster;
     const endId = pin.endId;
     const ordered = twoOpt(cluster, travel, {
       startId,
@@ -319,7 +327,10 @@ function twoOpt(
   travel: TravelMatrix,
   opts: { startId?: string; endId?: string; seed: number; restarts: number },
 ): string[] {
-  if (ids.length <= 2) return [...ids];
+  // Short path: 1–2 places can't be meaningfully 2-opt'd, but we must still
+  // honour start/end pins — otherwise a 2-place cluster containing the anchor
+  // at index 1 would be returned [other, anchor], violating the invariant.
+  if (ids.length <= 2) return pinEnds([...ids], opts.startId, opts.endId);
 
   const rand = mulberry32(opts.seed);
   let best: string[] = [];
@@ -333,12 +344,29 @@ function twoOpt(
     let improved = true;
     while (improved) {
       improved = false;
+      // Re-resolve pinned indices against the current `order` each pass.
+      // `pinEnds` moves startId to position 0 and endId to the last index,
+      // but we DON'T rely on those positions staying constant — we look them
+      // up fresh. This generalises the anchor-exclusion rule: whatever index
+      // the pinned place occupies, no 2-opt swap may cross it.
       const startIdx = opts.startId ? 1 : 0;
       const endIdx = opts.endId ? order.length - 1 : order.length;
+      const pinnedStartPos = opts.startId ? order.indexOf(opts.startId) : -1;
+      const pinnedEndPos = opts.endId ? order.indexOf(opts.endId) : -1;
 
       for (let i = startIdx; i < endIdx - 1; i++) {
         for (let j = i + 1; j < endIdx; j++) {
           if (j - i === 1) continue;
+          // Option B (anchor-exclusion): a 2-opt reversal of positions [i..j]
+          // mutates every index in that range. If a pinned place's current
+          // index falls within [i..j], skip the swap — otherwise the reversal
+          // would displace the pin. This is the anchor-at-any-index guard.
+          if (pinnedStartPos >= 0 && pinnedStartPos >= i && pinnedStartPos <= j) {
+            continue;
+          }
+          if (pinnedEndPos >= 0 && pinnedEndPos >= i && pinnedEndPos <= j) {
+            continue;
+          }
           const before = segmentCost(order, travel);
           const reversed = [
             ...order.slice(0, i),

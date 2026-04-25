@@ -1,7 +1,7 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 4 — Polish (🚧 **Code complete** · awaiting live smoke)
-**Last updated**: 2026-04-24
+**Current phase**: Phase 5 — Partial (source-only) · source-code fixes + CI workflow shipped; test-hardening exit criteria deferred
+**Last updated**: 2026-04-25
 
 ## Status by phase
 
@@ -12,7 +12,7 @@
 | 2 | Route optimization + day split | 🚧 Code complete · full smoke gated on Google Maps keys | backend (optimizer) + ui (map) |
 | 3 | Manual editing (drag, move-to-day, duration override) | 🚧 Code complete · full smoke gated on Google Maps keys | ui + backend |
 | 4 | Polish (offline cache, share link, .ics export, Sentry, empty states) | 🚧 Code complete · awaiting live smoke | ui + backend |
-| 5 | Test hardening (coverage, E2E, property, CI) | 📋 Planned | test-specialist |
+| 5 | Test hardening (coverage, E2E, property, CI) | 🚧 Partial — source fixes shipped 2026-04-25; test-hardening exit criteria deferred | backend + ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -665,11 +665,12 @@ All four resolved — see ADRs 0002–0005.
 
 **Goal**: Backfill coverage gaps flagged across Phase 1–4 reviews, expand Playwright beyond smoke into happy + key unhappy paths, grow the optimizer property-test net, beef up RLS integration coverage, and wire a lightweight GitHub Actions CI that runs on every PR. Outcome: future changes have automated guardrails.
 
-**Status**: 📋 Planned
+**Status**: 🚧 Partial — source-code fixes + CI workflow shipped; test-hardening (Steps 5.0–5.5, 5.7) deferred to a follow-up phase per user direction (test-specialist sub-agent removed mid-phase).
+See `docs/reviews/phase-5.md` for the reviewer sign-off on the source-code-only changes.
 **Entry criteria**:
 - Phase 4 is code-complete (reviewer report clean, docs shipped)
 - GitHub repo is public or has Actions minutes available (free tier: 2000 min/mo on private repos, unlimited on public — confirm)
-**Phase exit criteria**:
+**Phase exit criteria** (original — not yet met):
 - Jest + Deno coverage reports show ≥ 80% lines on `src/lib/**` and `supabase/functions/**`; ≥ 60% on `src/api/**`; uncovered branches explicitly called out in each feature doc
 - Playwright suite covers: signup/login flow (happy + unhappy), create-trip (happy + validation errors), add-place (happy + network error), optimize (happy + upstream 502), manual-edit (reorder + move-to-day + duration + delete), share-link (create + open + revoke + 404), `.ics` download, offline reload
 - `fast-check` property tests on optimizer cover: all invariants from Phase 2 Step 10 **plus** stability under duplicate coordinates, all-same-coordinate degenerate case, anchor at first vs. middle vs. last position, shuffled input yielding identical output (via canonicalization)
@@ -682,6 +683,7 @@ All four resolved — see ADRs 0002–0005.
 **Critical path**: Step 5.0 → Step 5.1 → Step 5.2 → Step 5.3 → Step 5.4 → Step 5.5 → Step 5.6 → Step 5.7 → Step 5.8
 
 ### Step 5.0 — Coverage gap analysis
+- **Status**: 🚧 Deferred — `docs/reviews/phase-5-gaps.md` was authored but no follow-through review completed; test-specialist removed before step could close.
 - **Agent**: reviewer
 - **Size**: S
 - **Task**: Run `npx jest --coverage` and `deno test --coverage=cov supabase/functions` locally; read `docs/reviews/phase-1.md` through `phase-4.md` for flagged gaps. Produce `docs/reviews/phase-5-gaps.md` listing each uncovered area by file + function, sorted by risk. Flag anything a bug could slip through.
@@ -695,6 +697,7 @@ All four resolved — see ADRs 0002–0005.
 - **Verification**: Report exists; each subsequent step references a line item from it
 
 ### Step 5.1 — Optimizer property-test expansion
+- **Status**: 🚧 Deferred — test files authored (`src/lib/optimizer/__tests__/property.test.ts`) but not reviewed or validated by test-specialist.
 - **Agent**: test-specialist
 - **Size**: M
 - **Task**: Extend `src/lib/optimizer/__tests__/*.test.ts` with `fast-check` generators covering: duplicate coordinates (all places at same lat/lng), degenerate single-place trips, anchor pinning at first / middle / last position, permutation-invariance (shuffle input → canonicalize output → assert equal), and visitMinutes extremes (0 and 12h). Add shrinking-friendly generators.
@@ -707,6 +710,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `src/lib/optimizer/__tests__/property.test.ts`
 
 ### Step 5.2 — Edge Function Deno test coverage
+- **Status**: 🚧 Deferred — expanded test files exist across 5 Edge Functions + new `supabase/functions/optimize-trip/test.ts`; not reviewed or validated by test-specialist.
 - **Agent**: test-specialist
 - **Size**: M
 - **Task**: For each of `places-autocomplete`, `place-details`, `distance-matrix`, `directions-polyline`, `optimize-trip`, `share-trip`: ensure tests cover Zod rejection (malformed input → 400), upstream 500 → 502 shape, CORS deny when Origin missing/unlisted, field mask correctness (assert outgoing `X-Goog-FieldMask` header), timeout → 504, `?ping` → 200. Fill gaps flagged in Step 5.0.
@@ -719,6 +723,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `supabase/functions/*/test.ts`
 
 ### Step 5.3 — RLS integration test expansion
+- **Status**: 🚧 Deferred — `tests/rls.trip-places-legs.test.ts` authored with two-user matrix; not reviewed or validated by test-specialist against a live local Supabase stack.
 - **Agent**: test-specialist
 - **Size**: M
 - **Task**: Extend `tests/rls.test.ts` with per-table two-user scenarios for `trips`, `trip_places`, `trip_legs`, `trip_shares`. For each: user A creates a row; user B should not see it via SELECT; user B should not UPDATE or DELETE it; anonymous role should not see it. Reuse the existing local-Supabase helpers.
@@ -731,6 +736,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `tests/rls.test.ts`
 
 ### Step 5.4 — Playwright happy + unhappy paths on web
+- **Status**: 🚧 Deferred — `e2e/web/phase-5-happy.spec.ts`, `phase-5-unhappy.spec.ts`, and helpers in `e2e/web/helpers/` are authored but not validated against a live stack (21 tests skipped in smoke; no live Supabase during test run).
 - **Agent**: test-specialist
 - **Size**: L
 - **Task**: Add `e2e/web/phase-5-full.spec.ts` (or split per feature) covering the full Phase 5 exit-criteria list. Use Playwright's `page.route()` to mock Edge Function responses for unhappy paths (502 on optimize, 400 on autocomplete, network offline during add-place). Use a seed helper to create fixture trips via Supabase service role before each test. Keep suite under 5 minutes wall-clock.
@@ -745,6 +751,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `e2e/web/*.spec.ts`, `e2e/web/helpers/seed.ts`
 
 ### Step 5.5 — Code-coverage thresholds in Jest
+- **Status**: 🚧 Deferred — thresholds are set in `jest.config.js` (global 50%, `src/lib/**` 80%, `src/api/**` 15%) and the `test:coverage` script exists in `package.json`, but the thresholds are aspirational and have not been stress-tested against the actual coverage output.
 - **Agent**: test-specialist
 - **Size**: S
 - **Task**: Add `jest.config.js` `coverageThreshold` — `src/lib/**: 80% lines`, `src/api/**: 60% lines`, `global: 50% lines`. Emit HTML coverage report under `coverage/`. Hook `npm run test:coverage` script.
@@ -757,6 +764,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `jest.config.js` (or `jest.config.ts`), `package.json`
 
 ### Step 5.6 — GitHub Actions CI workflow
+- **Status**: ✅ Done — `.github/workflows/ci.yml` shipped 2026-04-25 (commit `a2a24e3`). Runs Jest + Deno on PR + push to master. Playwright deferred to Phase 6. M2 globstar bug fixed by reviewer before ship (Deno step now passes `supabase/functions/` directory instead of glob). See `docs/reviews/phase-5.md`.
 - **Agent**: backend-specialist
 - **Size**: M
 - **Task**: Create `.github/workflows/ci.yml` running on `pull_request` + `push` to `master`. Steps: checkout, setup-node 20, `npm ci`, `npm run lint`, `npm test -- --coverage`, setup-deno, `deno test supabase/functions/**/test.ts`. Cache `~/.npm` + Deno cache. Do **not** run Playwright in CI yet (needs browser + Supabase stack — Phase 6 concern); add a TODO comment. Do not leak secrets — use `secrets.SUPABASE_SERVICE_ROLE_KEY` only if integration tests need it, otherwise skip.
@@ -771,6 +779,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `.github/workflows/ci.yml`
 
 ### Step 5.7 — Live web smoke + CI green on a PR
+- **Status**: 🚧 Deferred — `docs/smoke/phase-5.md` exists with partial results (Jest 137 pass, Deno 60 pass, Playwright 21 skipped). Live CI run on a real PR is gated on the repo being pushed to GitHub, which is a pre-existing blocker.
 - **Agent**: test-specialist
 - **Size**: S
 - **Task**: Open a throwaway PR containing only a whitespace change to trigger CI; observe the run; capture the summary + timings into `docs/smoke/phase-5.md`. Close PR without merge. Also run the full Playwright suite locally and log result.
@@ -783,6 +792,7 @@ All four resolved — see ADRs 0002–0005.
 - **Touched files**: `docs/smoke/phase-5.md`
 
 ### Step 5.8 — Reviewer pre-exit for Phase 5
+- **Status**: ✅ Done (scoped to source-code changes only) — `docs/reviews/phase-5.md` authored 2026-04-25. Scoped narrowly: optimizer anchor fix, `optimize-trip` thenable fix, and CI workflow. No critical or high findings. M2 fixed (Deno glob); M1 (advisory lock no-op) + L1–L3 parked. Full coverage/E2E/property-test review not completed (deferred with Steps 5.0–5.5, 5.7).
 - **Agent**: reviewer
 - **Size**: S
 - **Task**: Verify: (1) coverage thresholds enforced, (2) no flaky tests (re-run Playwright 3× locally), (3) CI workflow is minimal and fast, (4) RLS expansion actually probes both UPDATE and DELETE per table, (5) property-test `numRuns` tuned for CI time.
@@ -794,9 +804,10 @@ All four resolved — see ADRs 0002–0005.
 - **Risks**: [Low]
 
 ### Step 5.9 — Docs + plan flip
+- **Status**: ✅ Done — `docs/features/test-hardening.md` written, `plan.md` and `docs/features/overview.md` updated 2026-04-25. Phase marked partial, not done.
 - **Agent**: docs-specialist
 - **Size**: S
-- **Task**: Write a short `docs/features/test-hardening.md` (or a subsection under an existing "quality" doc) summarizing coverage thresholds, test kinds, CI contract, how to run locally. Flip Phase 5 row in `plan.md` to ✅. Add a "Running the test suite" section to `CLAUDE.md`? — **NO**, planner must not edit `CLAUDE.md`; docs-specialist owns that if needed. Restate as a plan note for docs-specialist to consider requesting that edit via the main assistant.
+- **Task**: Write a short `docs/features/test-hardening.md` (or a subsection under an existing "quality" doc) summarizing coverage thresholds, test kinds, CI contract, how to run locally. Flip Phase 5 row in `plan.md` to 🚧 Partial. Add a "Running the test suite" section to `CLAUDE.md`? — **NO**, planner must not edit `CLAUDE.md`; docs-specialist owns that if needed. Restate as a plan note for docs-specialist to consider requesting that edit via the main assistant.
 - **Inputs**: Phase 5 code + review
 - **Expected output**: Feature doc shipped; plan updated
 - **Depends on**: Step 5.8
@@ -805,9 +816,10 @@ All four resolved — see ADRs 0002–0005.
 - **Risks**: [Low]
 - **Touched files**: `docs/features/test-hardening.md` (new), `plan.md`, `docs/features/overview.md`
 
-## ⚠ Blockers (Phase 5 — one decision needed)
+## ⚠ Blockers (Phase 5)
 
 1. **GitHub Actions plan / repo visibility**: Private repo free tier gives 2000 min/mo; public is unlimited. Confirm the repo visibility so Step 5.6 can size the CI budget (run Playwright in CI later, or keep it local-only). If private + low budget, keep CI lean as planned and defer Playwright-in-CI to a later phase.
+2. **Test-specialist sub-agent removed 2026-04-25 by user**: Full test-hardening exit criteria (Steps 5.0–5.5, 5.7) deferred to a future phase. Test files were authored but are uncertified — they have not been reviewed or run against a live stack.
 
 ---
 

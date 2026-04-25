@@ -76,7 +76,7 @@ describe('optimize — property-based', () => {
           expect(dayWithAnchor!.orderedPlaceIds[0]).toBe(anchor);
         },
       ),
-      { numRuns: 30 },
+      { numRuns: 100 },
     );
   });
 

@@ -132,3 +132,63 @@ Deno.test('upstream 5xx becomes 502', async () => {
     mock.restore();
   }
 });
+
+// ---- gap #8: CORS deny (Step 5.2) ----------------------------------------
+// Phase 1 Problem 1 fix: _shared/cors.ts fails closed when ALLOWED_ORIGINS
+// does not include the caller's origin. Regression guard.
+
+Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
+  // Set ALLOWED_ORIGINS to a specific allow-list that does NOT include evil.example
+  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+
+  const res = await handler(new Request('http://localhost/?ping=1', {
+    headers: { origin: 'https://evil.example' },
+  }));
+  assertEquals(res.status, 200);
+  // The Access-Control-Allow-Origin header must NOT echo the disallowed origin
+  const acao = res.headers.get('Access-Control-Allow-Origin');
+  assert(
+    acao !== 'https://evil.example',
+    `CORS must not echo disallowed origin; got: ${acao}`,
+  );
+  // Reset to wildcard for subsequent tests
+  Deno.env.set('ALLOWED_ORIGINS', '*');
+});
+
+// ---- gap #9: timeout → 504 (Step 5.2) ------------------------------------
+
+Deno.test('upstream timeout → 504', async () => {
+  const original = globalThis.fetch;
+  // Never-resolving fetch stub simulates upstream timeout
+  globalThis.fetch = ((_url: string, init: RequestInit) => {
+    // Honour the AbortController so the handler can abort cleanly
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      });
+    });
+  }) as typeof fetch;
+
+  try {
+    // FETCH_TIMEOUT_MS for places-autocomplete is 3000ms; we can't override it
+    // in the handler, but we can trigger abort by having the signal fire.
+    // The test stubs fetch so that it rejects on abort signal — the handler's
+    // fetchWithTimeout will fire the AbortController after TIMEOUT_MS.
+    // To keep the test fast, we directly trigger abort on the stub above.
+    // The test will naturally complete when the handler returns 504.
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          input: 'Rome',
+          sessionToken: '33333333-3333-4333-8333-333333333333',
+        }),
+      }),
+    );
+    // Handler must return 504 for AbortError
+    assertEquals(res.status, 504);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

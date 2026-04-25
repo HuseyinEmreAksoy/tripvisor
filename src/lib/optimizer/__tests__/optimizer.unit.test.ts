@@ -78,6 +78,75 @@ describe('optimize — unit (fixtures)', () => {
     expect(placed.sort()).toEqual(places.map((p) => p.id).sort());
   });
 
+  // Regression: ADR-0001 anchor-pinning invariant.
+  //
+  // When k-means is fed places at (near-)identical coordinates, cluster
+  // assignment is effectively random and the anchor can end up outside day 0.
+  // Prior bug: `startId` was wired only when `dayIndex === 0`, so the anchor
+  // was silently unpinned in its day. Fix: pin the anchor on whatever day
+  // contains it AND track the pin's index inside 2-opt (Option B, generalised).
+  it('keeps anchor at position 0 when all places share the same coordinates', () => {
+    const places: OptimizerPlace[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `p${i}`,
+      lat: 0,
+      lng: 0,
+      visitMinutes: 60,
+    }));
+    const res = optimize({
+      places,
+      legs: [],
+      dailyBudgetMinutes: 240, // forces k >= 2 → rebalance across duplicate coords
+      anchorPlaceId: 'p0',
+    });
+    const dayWithAnchor = res.days.find((d) => d.orderedPlaceIds.includes('p0'));
+    expect(dayWithAnchor).toBeDefined();
+    expect(dayWithAnchor!.orderedPlaceIds[0]).toBe('p0');
+  });
+
+  // Shrunk counterexample from the property test (fast-check seed 186713638):
+  // 8 places all at (0,0) except p6 at lat=-1.8e-160, visitMinutes mixed so
+  // that totalVisitMinutes (256) > dailyBudget (240) — forces k=2 and triggers
+  // the rebalance-then-2-opt path that exposed the bug.
+  it('preserves anchor across k=2 clustering with a near-zero outlier', () => {
+    const input: OptimizerInput = {
+      places: [
+        { id: 'p0', lat: 0, lng: 0, visitMinutes: 31 },
+        { id: 'p1', lat: 0, lng: 0, visitMinutes: 21 },
+        { id: 'p2', lat: 0, lng: 0, visitMinutes: 50 },
+        { id: 'p3', lat: 0, lng: 0, visitMinutes: 17 },
+        { id: 'p4', lat: 0, lng: 0, visitMinutes: 15 },
+        { id: 'p5', lat: 0, lng: 0, visitMinutes: 86 },
+        { id: 'p6', lat: -1.801067372138143e-160, lng: 0, visitMinutes: 15 },
+        { id: 'p7', lat: 0, lng: 0, visitMinutes: 21 },
+      ],
+      legs: [],
+      dailyBudgetMinutes: 240,
+      anchorPlaceId: 'p0',
+    };
+    const res = optimize(input);
+    const dayWithAnchor = res.days.find((d) => d.orderedPlaceIds.includes('p0'));
+    expect(dayWithAnchor).toBeDefined();
+    expect(dayWithAnchor!.orderedPlaceIds[0]).toBe('p0');
+  });
+
+  // Guards the "anchor ends up in a 2-place day" path that used to slip past
+  // `pinEnds` because `twoOpt` short-circuited with `[...ids]` before pinning.
+  it('pins anchor even when its day has only two places', () => {
+    const input: OptimizerInput = {
+      places: [
+        { id: 'a', lat: 40.0, lng: -3.0, visitMinutes: 60 },
+        { id: 'hotel', lat: 40.1, lng: -3.1, visitMinutes: 0 },
+      ],
+      legs: [],
+      dailyBudgetMinutes: 600,
+      anchorPlaceId: 'hotel',
+    };
+    const res = optimize(input);
+    const dayWithAnchor = res.days.find((d) => d.orderedPlaceIds.includes('hotel'));
+    expect(dayWithAnchor).toBeDefined();
+    expect(dayWithAnchor!.orderedPlaceIds[0]).toBe('hotel');
+  });
+
   it('prefers leg data over haversine when provided', () => {
     // Two close places but leg data says they are very far apart.
     const input: OptimizerInput = {

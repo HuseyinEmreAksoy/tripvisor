@@ -108,10 +108,15 @@ export async function handler(req: Request): Promise<Response> {
   if (!trip) return errorResponse('not_found', 'Trip not found or forbidden', 404, origin);
 
   // Advisory lock (per-trip) to serialize concurrent optimize calls.
-  await admin.rpc('pg_advisory_xact_lock', { key: hashString(body.tripId) }).catch(() => {
-    // If the helper RPC isn't installed, fall back silently — idempotence via stateHash
-    // still guards against wasted work.
-  });
+  // supabase-js v2's PostgrestFilterBuilder is thenable but not a full Promise
+  // (no `.catch`), so we need a try/await/catch rather than a `.catch()` chain.
+  // If the helper RPC isn't installed, fall back silently — idempotence via
+  // stateHash still guards against wasted work.
+  try {
+    await admin.rpc('pg_advisory_xact_lock', { key: hashString(body.tripId) });
+  } catch {
+    // intentional: advisory lock is best-effort
+  }
 
   const { data: places, error: placesErr } = await user
     .from('trip_places')

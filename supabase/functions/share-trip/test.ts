@@ -647,3 +647,182 @@ Deno.test('op:revoke without auth → 404 (ownership check fails)', async () => 
     mock.restore();
   }
 });
+
+// ---- gap #8: CORS deny (Step 5.2) ----------------------------------------
+// _shared/cors.ts fails closed when ALLOWED_ORIGINS does not include the
+// caller's origin. Regression guard for Phase 1 Problem 1 fix.
+
+Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
+  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+
+  const res = await handler(new Request('http://localhost/?ping=1', {
+    headers: { origin: 'https://evil.example' },
+  }));
+  assertEquals(res.status, 200);
+  const acao = res.headers.get('Access-Control-Allow-Origin');
+  assert(
+    acao !== 'https://evil.example',
+    `CORS must not echo disallowed origin; got: ${acao}`,
+  );
+  // Reset for subsequent tests
+  Deno.env.set('ALLOWED_ORIGINS', '*');
+});
+
+// ---- gap #18: revoke-then-create idempotence (Step 5.2) ------------------
+// Create a share → revoke it → create a new share → assert:
+//   1. The second token is distinct from the first.
+//   2. Reading the first (revoked) token returns 404.
+//   3. Reading the second token returns the trip.
+
+Deno.test('revoke-then-create idempotence: second token is distinct; first is 404', async () => {
+  let capturedToken1 = '';
+  let capturedToken2 = '';
+
+  // --- STEP 1: create first share ---
+  const mock1 = mockFetch([
+    { match: /rest\/v1\/trips/, body: { id: VALID_TRIP_ID } },
+    { match: /rest\/v1\/trip_shares/, status: 201, body: [{ id: 'share-row-1' }] },
+  ]);
+  const res1 = await handler(
+    new Request('http://localhost/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+      body: JSON.stringify({ op: 'create', tripId: VALID_TRIP_ID }),
+    }),
+  );
+  mock1.restore();
+  assertEquals(res1.status, 200);
+  capturedToken1 = ((await res1.json()) as { token: string }).token;
+  assert(capturedToken1.length >= 20, 'First token must be a non-trivial string');
+
+  // --- STEP 2: revoke first share ---
+  let tripsQueried2 = false;
+  let sharesUpdated2 = false;
+  const original2 = globalThis.fetch;
+  globalThis.fetch = ((url: string, init: RequestInit) => {
+    const method = (init?.method ?? 'GET').toUpperCase();
+    if (url.includes('/trips') && !tripsQueried2) {
+      tripsQueried2 = true;
+      return Promise.resolve(
+        new Response(JSON.stringify([{ id: VALID_TRIP_ID }]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
+    if (url.includes('/trip_shares') && method === 'PATCH' && !sharesUpdated2) {
+      sharesUpdated2 = true;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    if (url.includes('/trip_shares')) {
+      return Promise.resolve(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'content-range': '0-0/1' },
+        }),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: `unmatched revoke: ${url}` }), { status: 500 }),
+    );
+  }) as typeof fetch;
+  const res2 = await handler(
+    new Request('http://localhost/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+      body: JSON.stringify({ op: 'revoke', tripId: VALID_TRIP_ID }),
+    }),
+  );
+  globalThis.fetch = original2;
+  assertEquals(res2.status, 200);
+
+  // --- STEP 3: create second share ---
+  const mock3 = mockFetch([
+    { match: /rest\/v1\/trips/, body: { id: VALID_TRIP_ID } },
+    { match: /rest\/v1\/trip_shares/, status: 201, body: [{ id: 'share-row-2' }] },
+  ]);
+  const res3 = await handler(
+    new Request('http://localhost/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+      body: JSON.stringify({ op: 'create', tripId: VALID_TRIP_ID }),
+    }),
+  );
+  mock3.restore();
+  assertEquals(res3.status, 200);
+  capturedToken2 = ((await res3.json()) as { token: string }).token;
+
+  // Assert: tokens are distinct (128-bit random — collision astronomically unlikely)
+  assert(
+    capturedToken1 !== capturedToken2,
+    `Second token must differ from first; both are: ${capturedToken1}`,
+  );
+
+  // --- STEP 4: reading the revoked (first) token → 404 ---
+  const mock4 = mockFetch([
+    // trip_shares row is revoked (revoked_at is set)
+    {
+      match: /rest\/v1\/trip_shares/,
+      body: { trip_id: VALID_TRIP_ID, revoked_at: new Date().toISOString() },
+    },
+  ]);
+  const res4 = await handler(
+    new Request('http://localhost/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'read', token: capturedToken1 }),
+    }),
+  );
+  mock4.restore();
+  assertEquals(res4.status, 404, 'Revoked first token must return 404');
+
+  // --- STEP 5: reading the second (active) token → trip data ---
+  const TRIP_ID_2 = VALID_TRIP_ID;
+  let tripSharesQueried5 = false;
+  const original5 = globalThis.fetch;
+  globalThis.fetch = ((url: string, _init: RequestInit) => {
+    if (url.includes('/trip_shares')) {
+      if (!tripSharesQueried5) {
+        tripSharesQueried5 = true;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([{ trip_id: TRIP_ID_2, revoked_at: null }]),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        );
+      }
+    }
+    if (url.includes('/trips') && !url.includes('trip_')) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([{ id: TRIP_ID_2, title: 'Second Share Trip', start_date: null, end_date: null, daily_hours_budget: 8, transport_mode: 'driving', timezone: null }]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }
+    if (url.includes('/trip_places')) {
+      return Promise.resolve(
+        new Response(JSON.stringify([]), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+    }
+    if (url.includes('/trip_legs')) {
+      return Promise.resolve(
+        new Response(JSON.stringify([]), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: `unmatched read2: ${url}` }), { status: 500 }),
+    );
+  }) as typeof fetch;
+  const res5 = await handler(
+    new Request('http://localhost/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'read', token: capturedToken2 }),
+    }),
+  );
+  globalThis.fetch = original5;
+  assertEquals(res5.status, 200, 'Second (active) token must return 200');
+  const body5 = (await res5.json()) as { trip: Record<string, unknown> };
+  assertEquals(body5.trip.id, TRIP_ID_2);
+});

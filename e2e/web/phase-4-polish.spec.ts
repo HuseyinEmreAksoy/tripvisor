@@ -61,15 +61,15 @@ test.describe('Check 1 — trips list empty state', () => {
 
     // If the user has no trips, the empty state copy appears.
     // "Plan your first trip" is the noTrips variant title.
+    // React Native Web does not render role="summary" to DOM — query by text instead.
     // If the user already has trips, the empty state won't show — skip.
-    const emptyState = page.getByRole('summary');
-    const hasSummary = await emptyState.isVisible().catch(() => false);
-    if (!hasSummary) {
+    const emptyStateText = page.getByText(/plan your first trip/i);
+    const hasEmptyState = await emptyStateText.isVisible().catch(() => false);
+    if (!hasEmptyState) {
       test.skip(true, 'User already has trips — empty state not shown; manual verification required');
     }
 
-    await expect(emptyState).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/plan your first trip/i)).toBeVisible();
+    await expect(emptyStateText).toBeVisible({ timeout: 10_000 });
     // CTA button present
     await expect(page.getByRole('button', { name: /new trip/i })).toBeVisible();
   });
@@ -103,9 +103,8 @@ test.describe('Check 2 — Map tab fallback (no Google Maps key)', () => {
     await page.waitForLoadState('networkidle');
 
     // If the map key is set, the real map renders and this is a no-op check.
-    const mapUnavailable = page.getByRole('summary', {
-      name: /map unavailable/i,
-    });
+    // React Native Web does not render role="summary" to DOM — query by text instead.
+    const mapUnavailable = page.getByText(/map unavailable/i).first();
     const mapKeySet = !!(
       process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY ||
       process.env.NEXT_PUBLIC_GOOGLE_MAPS_WEB_KEY
@@ -115,7 +114,6 @@ test.describe('Check 2 — Map tab fallback (no Google Maps key)', () => {
     }
 
     await expect(mapUnavailable).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/map unavailable/i)).toBeVisible();
   });
 });
 

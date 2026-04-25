@@ -102,3 +102,72 @@ Deno.test('unreachable routes are filtered out', async () => {
     mock.restore();
   }
 });
+
+// ---- gap #12: upstream 5xx → 502 (Step 5.2) ------------------------------
+
+Deno.test('upstream 5xx becomes 502', async () => {
+  const mock = mockGoogle({ status: 500, body: { error: 'internal server error' } });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origins: [{ lat: 38.7, lng: -9.1 }],
+          destinations: [{ lat: 38.71, lng: -9.12 }],
+          mode: 'driving',
+        }),
+      }),
+    );
+    assertEquals(res.status, 502);
+  } finally {
+    mock.restore();
+  }
+});
+
+// ---- gap #8: CORS deny (Step 5.2) ----------------------------------------
+
+Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
+  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+
+  const res = await handler(new Request('http://localhost/?ping=1', {
+    headers: { origin: 'https://evil.example' },
+  }));
+  assertEquals(res.status, 200);
+  const acao = res.headers.get('Access-Control-Allow-Origin');
+  assert(
+    acao !== 'https://evil.example',
+    `CORS must not echo disallowed origin; got: ${acao}`,
+  );
+  Deno.env.set('ALLOWED_ORIGINS', '*');
+});
+
+// ---- gap #9: timeout → 504 (Step 5.2) ------------------------------------
+
+Deno.test('upstream timeout → 504', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((_url: string, init: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      });
+    });
+  }) as typeof fetch;
+
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origins: [{ lat: 38.7, lng: -9.1 }],
+          destinations: [{ lat: 38.71, lng: -9.12 }],
+          mode: 'walking',
+        }),
+      }),
+    );
+    assertEquals(res.status, 504);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

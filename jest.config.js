@@ -4,8 +4,41 @@ module.exports = {
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-native-community|expo-modules-core|@supabase/.*|@tanstack/.*))',
   ],
-  testPathIgnorePatterns: ['/node_modules/', '/supabase/functions/'],
+  testPathIgnorePatterns: ['/node_modules/', '/supabase/functions/', '<rootDir>/e2e/'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+  },
+  // ── Coverage (Step 5.5) ────────────────────────────────────────────────────
+  coverageReporters: ['text', 'html', 'json-summary'],
+  // Platform-split counterparts that jest-expo's jsdom web preset never loads:
+  // `.native.*` files are invisible to the web resolver (it prefers `.web.*`).
+  // Excluding them prevents false 0% entries that would sink per-path thresholds.
+  // True coverage of native variants requires a second Jest run with a native preset.
+  //
+  // sentry.ts: DSN-present branch is unreachable in jsdom (Babel inlines the
+  // SENTRY_DSN env at build time; Phase 4 Problem 11 accepted as documented workaround).
+  // Excluded from thresholds to avoid a permanent failing bar for accepted tech debt.
+  coveragePathIgnorePatterns: [
+    '/node_modules/',
+    '/supabase/functions/',
+    '\\.native\\.',   // never loaded by jest-expo web preset
+    'offline\\.native\\.ts',
+    'ics\\.native\\.ts',
+    'src/lib/sentry\\.ts', // Phase 4 Problem 11 accepted: DSN branch unreachable in jsdom
+  ],
+  coverageThreshold: {
+    global: {
+      lines: 50,
+    },
+    'src/lib/**': {
+      lines: 80,
+    },
+    // src/api threshold is intentionally low: most API hooks (auth, trips,
+    // trip-places, places, routes, share, ics) are not exercised in jsdom because
+    // they depend on Supabase + TanStack Query. Only offline.web.ts is covered
+    // here. Raise this threshold once proper API-layer unit tests land.
+    'src/api/**': {
+      lines: 15,
+    },
   },
 };
