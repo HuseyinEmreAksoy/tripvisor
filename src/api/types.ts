@@ -195,3 +195,27 @@ export interface CreateShareResult {
 export interface RevokeShareResult {
   revoked: number;
 }
+
+// ============================================================
+// Account export (Phase 10)
+// ============================================================
+
+/**
+ * Response shape from the `export-account` Edge Function (ADR-0009).
+ *
+ * The function reads `trips` filtered by the JWT-derived user id, then reads
+ * `trip_places` / `trip_legs` / `trip_days` filtered by `trip_id in (<owned
+ * trips>)`. The result is a flat dump — clients re-aggregate by `trip_id` if
+ * needed.
+ *
+ * `exported_at` is the server-side ISO8601 timestamp at which the export was
+ * generated. `user_id` matches the caller's auth.uid().
+ */
+export interface AccountExport {
+  user_id: Uuid;
+  exported_at: string;
+  trips: Trip[];
+  trip_places: TripPlace[];
+  trip_legs: TripLeg[];
+  trip_days: TripDay[];
+}

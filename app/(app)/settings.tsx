@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, Heading, Screen, SegmentedControl } from '@/components';
-import { useSession, useSignOut, supabase } from '@/api';
+import { useSession, useSignOut, useExportAccount, supabase } from '@/api';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 
@@ -27,6 +27,7 @@ export default function SettingsScreen() {
   const { data: session } = useSession();
   const { mode, setMode } = useThemeControls();
   const signOut = useSignOut();
+  const exportAccount = useExportAccount();
   const qc = useQueryClient();
 
   const [isDeleting, setIsDeleting] = useState(false);
@@ -79,8 +80,13 @@ export default function SettingsScreen() {
     }
   };
 
-  // While deleting, block the whole screen from further interaction.
-  const screenDisabled = isDeleting || signOut.isPending;
+  const handleExport = () => {
+    exportAccount.reset(); // clear any prior error before retrying
+    exportAccount.mutate();
+  };
+
+  // While deleting or exporting, block the whole screen from further interaction.
+  const screenDisabled = isDeleting || signOut.isPending || exportAccount.isPending;
 
   return (
     <Screen>
@@ -124,6 +130,28 @@ export default function SettingsScreen() {
 
       {/* ─── Spacer ────────────────────────────────────────────────────── */}
       <View style={{ flex: 1 }} />
+
+      {/* ─── Export my data ────────────────────────────────────────────── */}
+      <Button
+        variant="secondary"
+        label="Export my data"
+        onPress={handleExport}
+        loading={exportAccount.isPending}
+        disabled={screenDisabled || exportAccount.isPending}
+        accessibilityLabel="Export my data as JSON"
+        accessibilityHint="Downloads a JSON file with all your trips and places."
+      />
+
+      {/* ─── Export error ──────────────────────────────────────────────── */}
+      {exportAccount.error ? (
+        <Text
+          style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {exportAccount.error.message ?? 'Failed to export data. Please try again.'}
+        </Text>
+      ) : null}
 
       {/* ─── Sign out ──────────────────────────────────────────────────── */}
       <Button

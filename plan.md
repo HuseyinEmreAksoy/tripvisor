@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 9 — Done (web; native deferred)
+**Current phase**: Phase 10 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -17,6 +17,7 @@
 | 7 | Trip lifecycle (archive / duplicate) + Settings screen (theme toggle + delete account) | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 8 | Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 9 | Notes / journal expansion (inline place notes, per-day notes, Markdown in print) + M2 mutation cleanup | ✅ Done (web; native deferred to user smoke) | ui + backend |
+| 10 | Account data export (JSON download) + L4 debounce flush-on-blur bundle | ✅ Done (web; native deferred to user smoke) | backend + ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1250,6 +1251,10 @@ Shipped 2026-04-25. Phase 8 turned the optimizer's already-cached `trip_legs` da
 
 Shipped 2026-04-25. Phase 9 turned the previously unused `trip_places.notes` column into a real journal surface and added a paired per-day notes field. The `0006_trip_day_notes.sql` migration adds `trip_days.notes text` (nullable) with no RLS change — the existing `trip_days_via_trip` policy inherits to the new column automatically. On the trip detail screen, a `PlaceNotesEditor` renders inline on each place row (debounced 500ms write via the existing `useUpdateTripPlace`; show-more/show-less toggle for notes longer than 120 characters), and a `DayNotesEditor` sits between the `DaySummaryCard` and the draggable itinerary for each day (collapsed by default, debounced 500ms write via the new `useUpdateTripDay` hook, upserts on `(trip_id, day_index)` because the optimizer does not pre-create day rows). Both editors share the new `src/lib/hooks/useDebouncedCallback.ts` utility (stale-closure-safe, cancels on unmount). The print route at `app/(app)/trip/[id]/print.tsx` renders both note types through a new in-repo Markdown renderer (`src/lib/markdown/render.ts`, linear-pass tokenizer, ~105 LOC, no new dependencies) supporting bold, italic, unordered lists, ordered lists, and links with a `http(s):/`/`mailto:` protocol allow-list; rendering is handled by `src/components/MarkdownText.tsx` using RN primitives. The M2 follow-up from Phase 8 is closed: `commitBudget` and `commitMode` on the trip detail screen now go through `useUpdateTrip(tripId).mutate(...)` after `UpdateTripPatch` was widened to include `daily_hours_budget` and `transport_mode`, removing the last raw `supabase.from('trips').update(...)` caller from the screen. Reviewer sign-off: no critical, high, or medium findings; 5 low parks (see `docs/reviews/phase-9.md`). Design decision recorded in ADR-0008 (`docs/adr/0008-notes-markdown-renderer.md`). Feature doc: `docs/features/notes-journal.md`.
 
+## Phase 10 — close-out
+
+Shipped 2026-04-25. Phase 10 added a one-click data-export surface and closed the last open correctness finding from Phase 9. The new `supabase/functions/export-account/index.ts` Edge Function follows the same JWT-verification pattern as `delete-account` (anon-client `auth.getUser(token)`, then service-role reads scoped to the verified `userId`); it returns a flat `{ user_id, exported_at, trips, trip_places, trip_legs, trip_days }` object with deterministic `order('id', { ascending: true })` ordering so two consecutive exports are byte-identical. The shared `src/api/account-export.shared.ts` helper builds the JSON string and UTC-dated filename (`tripvisor-export-<YYYY-MM-DD>.json`); platform-split `src/api/account-export.web.ts` (Blob+anchor download with Safari `setTimeout(URL.revokeObjectURL, 1000)` guard) and `src/api/account-export.native.ts` (`expo-file-system` cache write + `expo-sharing.shareAsync`) deliver the file per-platform, mirroring the proven `.ics` mechanic from Phase 4. The Settings screen (`app/(app)/settings.tsx`) gains an "Export my data" secondary button above "Sign out" with loading, disabled, and error-banner states. The Phase 9 L4 follow-up was resolved in parallel: `useDebouncedCallback` now exposes `.flush()` and `.cancel()` as properties on the returned callable (non-breaking), and both `DayNotesEditor` and `PlaceNotesEditor` call `.flush()` on `onBlur` so the last keystrokes within the debounce window are not dropped on blur; unmount cleanup continues to call `.cancel()`, not `.flush()`. Reviewer sign-off: no critical, high, or medium findings; 5 low parks (see `docs/reviews/phase-10.md`). Design decision recorded in ADR-0009 (`docs/adr/0009-account-data-export.md`). Feature doc: `docs/features/account-export.md`.
+
 ## Phase 8 — Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view)
 
 **Goal**: Ship visible itinerary-utility polish that turns the existing optimizer output into something a user actually carries on a road trip: (a) a per-trip cost rollup driven by already-cached `trip_legs.distance_meters` × a user-set `cost_per_km` (no Google call), (b) a per-day summary card showing place count, total visit hours, estimated drive time and estimated cost, and (c) a printable A4 view of the itinerary (HTML + `@media print` stylesheet, no PDF library) reachable from a "Print itinerary" button on the trip detail screen.
@@ -1603,3 +1608,199 @@ Shipped 2026-04-25. Phase 9 turned the previously unused `trip_places.notes` col
 - **Phases 2 / 3 / 5 / 6 status flips** — Phase 9 does not touch their rows; they stay 🚧 / partial as recorded.
 - **Phase 7 follow-ups** — the parallel-mutation rollback finding from `docs/reviews/phase-7.md` and the Phase 7 lows stay parked; not reopened in Phase 9 unless reviewer flags interaction.
 - **Phase 8 low findings** — L1 (JPY rate label minor-unit), L2 (`_TripLegRef` workaround), L3 (`Intl.NumberFormat` constructor allocation), L4 (`inputMode` cast), L5 (empty-patch no-op comment) all stay parked from `docs/reviews/phase-8.md`. Phase 9 does not reopen them unless touched incidentally.
+
+## Phase 10 — Account data export (JSON download) + L4 debounce flush-on-blur bundle
+
+**Goal**: Give the signed-in user a one-click "Export my data" button in Settings that downloads a single `tripvisor-export-<YYYY-MM-DD>.json` file containing every row they own across `trips`, `trip_places`, `trip_legs`, and `trip_days` (their entire data footprint, modulo Google Place fields the project never persists). Pairs with Phase 7's delete-account so users can pull their data before deleting. Bundle the Phase 9 L4 follow-up — extend `useDebouncedCallback` with an imperative `flush()` and wire it to `onBlur` on the place- and day-notes editors so the last keystrokes aren't dropped on blur.
+
+**Status**: ✅ Done — shipped 2026-04-25; reviewer sign-off (`docs/reviews/phase-10.md`); no critical/high/medium findings; 5 low parks.
+**Last updated**: 2026-04-25
+
+**Direction chosen**: Direction A (account data export) + bundled Phase 9 L4 (debounce flush-on-blur). (1) Reuses the JWT-verified Edge Function shape from `supabase/functions/delete-account/index.ts` (anon-client `auth.getUser(token)` to verify the bearer, then service-role client to read the user's rows by `user_id`) — same security model, same logger, same CORS shape. (2) Reuses the platform-split download mechanic from `src/api/ics.web.ts` (Blob + anchor + `URL.revokeObjectURL`) and `src/api/ics.native.ts` (`expo-file-system` write to cache dir + `expo-sharing.shareAsync`) — both already proven for the `.ics` flow. (3) Zero new dependencies, no Google calls, no Storage bucket, no migration, no new tables; clears all three carried-forward blockers (Google keys, leaked PAT, EAS) by design. (4) The L4 bundle is a small, naturally-aligned polish — extending `useDebouncedCallback` to expose `flush()` and adding `onBlur` handlers on `PlaceNotesEditor` + `DayNotesEditor` is ~25 LOC across three files, fits inside one step, and closes the only Phase 9 low that has a UX-visible correctness angle.
+
+**Entry criteria**:
+- Phase 9 close-out is current state; ADR-0008 + `notes-journal.md` shipped 2026-04-25
+- `src/api/trips.ts`, `src/api/trip-places.ts`, `src/api/trip-days.ts`, and `src/api/types.ts` already export the canonical row shapes for `Trip`, `TripPlace`, `TripLeg`, and `TripDay` — Phase 10's exporter consumes those types
+- `supabase/functions/delete-account/index.ts` is live and the `_shared` Edge Function helpers (`cors.ts`, `errors.ts`, `logger.ts`, `supabase-admin.ts`) work end-to-end
+- `src/api/ics.web.ts` + `src/api/ics.native.ts` are wired through `src/api/index.ts` and the Phase 4 `expo-file-system` + `expo-sharing` deps are in `package.json`
+- `src/lib/hooks/useDebouncedCallback.ts` exists with the cancel-on-unmount semantics shipped in Phase 9
+- `app/(app)/settings.tsx` is the canonical Settings surface (Phase 7) with a clear extension point above the "Sign out" button
+- User has NOT requested Google-keys provisioning, EAS provisioning, or PAT rotation in this phase — Phase 10 must not depend on any of those
+
+**Phase exit criteria**:
+- A new `supabase/functions/export-account/index.ts` Edge Function exists, modeled on `delete-account/index.ts`: `POST` (auth required) returns `{ ok: true, export: { user_id, exported_at, trips: [...], trip_places: [...], trip_legs: [...], trip_days: [...] } }` for the JWT-verified caller; `GET ?ping` returns `{ ok: true, fn: 'export-account' }`; non-POST returns 405; missing/invalid bearer returns 401; no service-role key leaks to the client; CORS uses the shared `handlePreflight` + `ALLOWED_ORIGINS`
+- The Edge Function reads only the caller's rows via `admin.from('<table>').select('*').eq('user_id'|'trip_id', ...)` filters; child-table reads (`trip_places`, `trip_legs`, `trip_days`) are scoped through the user's `trip.id` set so a malformed query cannot leak across users; ordering is deterministic (`order('id', { ascending: true })`) so two consecutive exports for the same user are byte-identical
+- A new `src/api/account-export.web.ts` exports a `useExportAccount()` TanStack Query mutation that invokes the Edge Function via `supabase.functions.invoke('export-account', { method: 'POST' })`, builds a JSON blob, and triggers a Blob+anchor download with filename `tripvisor-export-<YYYY-MM-DD>.json` (UTC date); pattern mirrors `src/api/ics.web.ts` including the `setTimeout(URL.revokeObjectURL, 1000)` Safari guard and the SSR `typeof window === 'undefined'` throw
+- A new `src/api/account-export.native.ts` exports the same `useExportAccount()` hook signature, writes the JSON to `FileSystem.cacheDirectory` and opens the system share sheet via `Sharing.shareAsync` with `mimeType: 'application/json'`; pattern mirrors `src/api/ics.native.ts`
+- `src/api/index.ts` re-exports `useExportAccount` from `./account-export` so consumers get the platform-split file resolution automatically
+- `app/(app)/settings.tsx` gains an "Export my data" `Button` (variant `secondary`) above the "Sign out" button that calls `useExportAccount().mutate()`; the button shows a loading state while the mutation runs, surfaces inline errors using the same pattern as the existing delete-account error banner, and is disabled while `signOut` or `isDeleting` are pending
+- Place- and day-notes editors flush their pending debounced write on `onBlur` so a user typing and immediately tabbing/clicking away no longer loses the last <500ms of keystrokes; `useDebouncedCallback` is extended to return a tuple `[debouncedFn, flush]` (or equivalent `flush` attached to the callback object — ui-specialist picks the API shape) without breaking existing call sites; existing call sites that don't need flush remain unchanged
+- The Edge Function never returns Google place data fields the project does not persist (reviews, photos, ratings, hours) — by virtue of reading `trip_places.*` directly and `trip_places` only stores `google_place_id` + coordinates + user-managed fields, this is automatic; reviewer confirms no field added to the response that wasn't already in the schema
+- All three platforms render the new "Export my data" button without layout breaks, and the mutation completes end-to-end on web (visual confirmation by the implementing specialist; native verification deferred to user as standard for this project)
+- `docs/features/overview.md` has a row for "Account data export (JSON)" with status reflecting Phase 10 completion
+- A short ADR exists at `docs/adr/0009-account-data-export.md` recording the decision to ship a single Edge Function returning a flat JSON object (vs. per-table CSVs, vs. a Postgres `setof json` function, vs. a streaming response)
+
+**Critical path**: Step 10.1 → Step 10.2 → Step 10.3 → Step 10.4 → Step 10.5 → Step 10.7 → Step 10.8
+
+(Step 10.6 — `useDebouncedCallback` flush + notes editor blur wiring — runs as a small parallel branch off Step 10.1 because it touches disjoint files from the export work and can land independently. Step 10.4 / 10.5 are platform-split siblings that share the same TanStack Query contract from 10.3.)
+
+### Step 10.1 — ADR for account data export shape
+- **Status**: ✅ Done
+- **Agent**: planner
+- **Size**: XS
+- **Task**: Author `docs/adr/0009-account-data-export.md` recording: (1) the export is delivered as a single Edge Function returning one flat JSON object `{ user_id, exported_at, trips, trip_places, trip_legs, trip_days }`, downloaded via Blob+anchor on web and `expo-sharing` on native; (2) rationale — single-request shape avoids partial-failure cleanup the user can't reason about, mirrors the `delete-account` JWT-verification pattern the project already trusts, and reuses the proven `ics.web.ts` / `ics.native.ts` download mechanic; (3) consequences — entire export is materialized in memory on the Edge Function and the client at once (acceptable: a heavy user has <100 trips × <1KB each, well under the Edge Function 256MB ceiling); future media exports (notes attachments, photos) would need a different streaming pattern but are explicitly out of scope; (4) alternatives considered — per-table CSV files in a zip (rejected: requires a zip lib in the Edge Function; users want machine-readable round-trippable shape, not spreadsheet rows), Postgres `setof json` RPC called from the client (rejected: forces RLS-via-anon-JWT which is fine, but doesn't centralize the export shape behind one auditable surface; harder to evolve without a migration), streaming `text/event-stream` response (rejected: overkill for the data volume; complicates client download), generated download link with signed URL (rejected: introduces Storage bucket dependency Phase 10 deliberately avoids). Standard ADR template (Context / Decision / Alternatives / Consequences). One screen max.
+- **Inputs**: This phase plan; `supabase/functions/delete-account/index.ts` for the JWT-verified Edge Function pattern; `src/api/ics.web.ts` + `src/api/ics.native.ts` for the download mechanic; cross-reference ADR-0008 (`docs/adr/0008-notes-markdown-renderer.md`) for ADR shape
+- **Expected output**: `docs/adr/0009-account-data-export.md` exists; Step 10.2 references it when authoring the Edge Function
+- **Depends on**: None
+- **Parallel with**: Step 10.6 (different files — ADR doc + UI hook + notes-editor wiring are disjoint)
+- **Platform check**: N/A (doc only)
+- **Risks**:
+  - [Low] If the JSON shape grows past the ~256MB Edge Function memory ceiling for a hypothetical heavy user, the response would 500 — Mitigation: ADR enumerates the realistic upper bound (single-digit MB per user) and lists streaming as the follow-up if anyone hits it
+- **Touched files**: `docs/adr/0009-account-data-export.md`
+
+### Step 10.2 — Edge Function: `export-account`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Create `supabase/functions/export-account/index.ts` modeled on `delete-account/index.ts`. Concretely: (a) handle `OPTIONS` via `handlePreflight` from `_shared/cors.ts`; (b) handle `GET ?ping` returning `{ ok: true, fn: 'export-account' }`; (c) reject non-POST with 405 via `errorResponse('method_not_allowed', ...)`; (d) extract bearer token via the same `extractBearer` helper shape; (e) verify with anon client's `auth.getUser(token)` and reject 401 on invalid; (f) use `makeAdminClient` from `_shared/supabase-admin.ts` to read in this order — `trips` (filter `user_id = user.id`, order `id asc`), then `trip_places` / `trip_legs` / `trip_days` filtered by `trip_id in (<trip ids from step 1>)` and ordered by `id asc`; (g) build `{ user_id: user.id, exported_at: new Date().toISOString(), trips, trip_places, trip_legs, trip_days }` and return via `jsonResponse({ ok: true, export: ... }, { origin })`; (h) on any DB error, return 500 via `errorResponse('db_error', ...)`; (i) structured logs at `stage: 'auth' | 'read_trips' | 'read_children' | 'done'` with `requestId` (no PII — log row counts, not row contents). The function is a strict read-only — no writes, no `delete`, no `auth.admin.*`. **No tests.** **No `?ping` smoke artifact.**
+- **Inputs**: Step 10.1 ADR (response shape); `supabase/functions/delete-account/index.ts` (function pattern); `supabase/functions/_shared/{cors,errors,logger,supabase-admin}.ts` (helpers); `src/api/types.ts` (canonical row shapes — Edge Function returns whatever the DB returns; type narrowing happens client-side in Step 10.3)
+- **Expected output**: New file `supabase/functions/export-account/index.ts` exists; the function compiles under Deno; `Deno.serve(handler)` is wired the same way as `delete-account`; calling it via `supabase.functions.invoke('export-account', { method: 'POST' })` from a logged-in client returns `{ ok: true, export: { ... } }` with the caller's rows; calling without auth returns 401; calling with `GET ?ping` returns 200
+- **Depends on**: Step 10.1
+- **Parallel with**: Step 10.6 (different files)
+- **Platform check**: N/A (Deno Edge Function, server-side)
+- **Risks**:
+  - [Medium] If a user's trip count grows to thousands, a single round-trip JSON response could exceed reasonable wire size — Mitigation: ADR-0009 explicitly bounds the design at single-digit MB; if reviewer or user pushes for streaming, that's a follow-up phase
+  - [Low] Reading `trip_places` / `trip_legs` / `trip_days` by `trip_id in (<list>)` requires the trip-id list to be small enough for a single `in (...)` clause — Mitigation: a heavy user has <100 trips; well under Postgres's `in (...)` parameter limits; if it ever matters, switch to a server-side join in a follow-up
+  - [Low] CORS — the `ALLOWED_ORIGINS` list must include the deployed web origin so the browser doesn't block the response — Mitigation: backend-specialist confirms the existing `_shared/cors.ts` ALLOWED_ORIGINS already covers Settings access (it does for `delete-account`, same surface)
+- **Touched files**: `supabase/functions/export-account/index.ts` (new)
+
+### Step 10.3 — Type + API surface: `AccountExport` shape, `useExportAccount` contract
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: (a) Add an `AccountExport` interface to `src/api/types.ts` describing the Edge Function response: `{ user_id: Uuid; exported_at: string; trips: Trip[]; trip_places: TripPlace[]; trip_legs: TripLeg[]; trip_days: TripDay[] }`. (b) Add a Zod schema (or simple runtime guard) at the wrapper boundary that validates the top-level shape — narrow typing only, do not validate every row's every field (the rows came from the same Postgres types we already trust); reject and throw if `export.trips` is not an array. (c) Author a single shared internal helper `src/api/account-export.shared.ts` (or inline in both files — backend-specialist picks the cleaner shape; if shared, it exports `fetchAccountExportJson()` returning `{ json: string; filename: string; bytes: number }` from the Edge Function response, since both `.web.ts` and `.native.ts` need the same pre-download work). Filename is `tripvisor-export-<YYYY-MM-DD>.json` with UTC date (`new Date().toISOString().slice(0, 10)`). (d) Re-export from `src/api/index.ts` after the platform-split files land in 10.4 / 10.5. **No tests.**
+- **Inputs**: Step 10.2 (Edge Function deployed locally); `src/api/types.ts` for canonical row types; `src/api/ics.web.ts` for the shared-helper pattern (the ICS files duplicate `fetchTripBundle` rather than sharing — Phase 10 does better and shares the JSON-build helper)
+- **Expected output**: `AccountExport` type compiles under `tsc --noEmit`; `fetchAccountExportJson()` (or equivalent shared helper) returns a JSON string + filename for both platforms to consume; types are exported from `src/api/types.ts`; nothing else in the API barrel breaks
+- **Depends on**: Step 10.2
+- **Parallel with**: Step 10.6
+- **Platform check**: All three (pure TypeScript; platform split happens in 10.4 / 10.5)
+- **Risks**:
+  - [Low] If the shared helper lives in `account-export.shared.ts`, Metro / RN-Web resolution must not accidentally treat it as a platform file — Mitigation: name it without a `.native.` / `.web.` suffix; the project already has shared helpers (`src/lib/ics/generate.ts`) that resolve correctly
+  - [Low] `Date.prototype.toISOString().slice(0, 10)` is UTC-based; users in late-evening timezones could see a "tomorrow" filename — Mitigation: acceptable; UTC is the correct deterministic choice for filenames; document in the helper's JSDoc
+- **Touched files**: `src/api/types.ts`, `src/api/account-export.shared.ts` (new, or inline if backend-specialist prefers), possibly `src/api/index.ts` (re-exports added in 10.4 / 10.5)
+
+### Step 10.4 — `useExportAccount` (web): Blob + anchor download
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Create `src/api/account-export.web.ts` exporting `useExportAccount()` — a `useMutation` that: (a) invokes the Edge Function via `supabase.functions.invoke('export-account', { method: 'POST' })`; (b) on `error`, throws so React Query surfaces it via `onError`; (c) validates the response shape via the Step 10.3 helper (or inline guard); (d) builds the JSON string + filename via the shared helper from 10.3; (e) when `typeof window === 'undefined' || typeof document === 'undefined'`, throws "Browser not available for account export download" (mirrors the SSR guard in `ics.web.ts`); (f) creates `new Blob([json], { type: 'application/json;charset=utf-8' })`, calls `URL.createObjectURL`, programmatically clicks an anchor with `download={filename}` and `rel="noopener"`, then `setTimeout(() => URL.revokeObjectURL(url), 1000)` for Safari. Returns `{ filename, bytes, shared: true }` (matches the `DownloadIcsResult` shape so callers feel familiar). Re-export from `src/api/index.ts` (the export resolves to `.web.ts` / `.native.ts` automatically at the consumer site). **No tests.**
+- **Inputs**: Step 10.3 (`AccountExport` type + shared helper); `src/api/ics.web.ts` (download mechanic to mirror); `src/api/supabase.ts` (`supabase.functions.invoke`)
+- **Expected output**: `src/api/account-export.web.ts` exists; importing `useExportAccount` from `@/api` and calling `.mutate()` on a logged-in web client kicks off a download of `tripvisor-export-<YYYY-MM-DD>.json` containing the JWT-verified caller's rows; mutation `isPending` flips correctly during the request; an unauthenticated call throws and the mutation enters `error` state
+- **Depends on**: Step 10.3
+- **Parallel with**: Step 10.5 (different file, different platform)
+- **Platform check**: Web. Sibling file `account-export.native.ts` covers iOS + Android in Step 10.5.
+- **Risks**:
+  - [Medium] Some browsers (Safari) need the anchor in the DOM before clicking — Mitigation: mirror the `ics.web.ts` flow exactly (`document.body.appendChild(a)`, `a.click()`, `a.remove()`)
+  - [Low] If `supabase.functions.invoke` returns the JSON already-parsed (it does), constructing the Blob from `JSON.stringify(data.export)` is the right shape — Mitigation: backend-specialist confirms the response wrapper shape in Step 10.2 (`{ ok, export }`); the Blob contains `JSON.stringify(data.export, null, 2)` for human-readable output (2-space indent)
+- **Touched files**: `src/api/account-export.web.ts` (new), `src/api/index.ts` (add `export * from './account-export'`)
+
+### Step 10.5 — `useExportAccount` (native): file write + share sheet
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Create `src/api/account-export.native.ts` exporting the same `useExportAccount()` hook signature. Implementation mirrors `src/api/ics.native.ts`: (a) invoke the Edge Function the same way as the web hook; (b) build JSON string + filename via the shared helper from 10.3 (same `JSON.stringify(data.export, null, 2)`); (c) write to `${FileSystem.cacheDirectory}${filename}` with `FileSystem.EncodingType.UTF8`; (d) if `Sharing.isAvailableAsync()`, call `Sharing.shareAsync(uri, { mimeType: 'application/json', UTI: 'public.json', dialogTitle: 'Export my Tripvisor data' })`; (e) return `{ filename, uri, bytes, shared }` — matches `DownloadIcsResult`'s native shape. **No tests.**
+- **Inputs**: Step 10.3 (`AccountExport` type + shared helper); `src/api/ics.native.ts` (file-write + share-sheet mechanic to mirror); `expo-file-system` + `expo-sharing` (already in `package.json` from Phase 4)
+- **Expected output**: `src/api/account-export.native.ts` exists; on a logged-in native client (iOS or Android), `useExportAccount().mutate()` writes the JSON to the cache dir and opens the system share sheet; the file shows the correct extension and the share sheet offers Files / Mail / iCloud / etc. as targets
+- **Depends on**: Step 10.3
+- **Parallel with**: Step 10.4 (different file, different platform)
+- **Platform check**: iOS + Android. Web sibling lives in 10.4.
+- **Risks**:
+  - [Low] `UTI: 'public.json'` is the iOS Uniform Type Identifier for JSON; some older iOS versions used `public.data` — Mitigation: `public.json` works on iOS 11+ which is far below Expo SDK 52's floor; if Sharing fails to find a target on a specific device, fall back to `public.data` in a follow-up
+  - [Low] Native verification is deferred to user smoke (project standard); the implementing specialist verifies on web only — Mitigation: that's the documented policy; the native implementation is a near-copy of the proven `ics.native.ts` flow so the risk surface is small
+- **Touched files**: `src/api/account-export.native.ts` (new)
+
+### Step 10.6 — Phase 9 L4 bundle: `useDebouncedCallback` flush + notes-editor onBlur
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: XS
+- **Task**: (a) Extend `src/lib/hooks/useDebouncedCallback.ts` to expose a `flush()` method alongside the debounced function. ui-specialist picks the API shape — either return a tuple `[debouncedFn, flush]` (cleaner, but breaking for existing call sites) OR attach `.flush` as a property on the returned function (non-breaking, slightly less idiomatic). Prefer the non-breaking shape: `(...args) => void` with `.flush()` and `.cancel()` attached; document the choice in the JSDoc. `flush()` synchronously invokes `fnRef.current(...lastArgs)` if a timer is pending, then clears the timer; if no timer is pending, it's a no-op. `cancel()` clears the timer without invoking. Keep the existing cancel-on-unmount behavior — cleanup calls `cancel()`, not `flush()`, so a stale mutation never fires after the component is gone (this is the safer default per Phase 9 review L4). (b) Wire `onBlur` on the place-notes `TextInput` in `app/(app)/trip/[id]/index.tsx` (or wherever `PlaceNotesEditor` lives — ui-specialist greps first) to call the debounced callback's `.flush()` so the last <500ms of keystrokes persist when the user tabs/clicks away. (c) Wire the same `onBlur` flush on the per-day `DayNotesEditor`. (d) Confirm via `tsc --noEmit` that no existing `useDebouncedCallback` caller breaks (the cost-per-km editor in Phase 8, the place-notes editor in Phase 9, the day-notes editor in Phase 9). **No tests.**
+- **Inputs**: `docs/reviews/phase-9.md` (L4 entry, lines 53–58); `src/lib/hooks/useDebouncedCallback.ts` (current implementation); the two notes editors from Phase 9
+- **Expected output**: `useDebouncedCallback` returns a callable with `.flush()` + `.cancel()` properties; `tsc --noEmit` is clean; the place- and day-notes editors flush on blur so a typed-then-blurred edit persists; existing call sites (cost-per-km debounce, etc.) continue to work unchanged
+- **Depends on**: None (independent of the export work)
+- **Parallel with**: Steps 10.1, 10.2, 10.3, 10.4, 10.5 (touches different files entirely)
+- **Platform check**: All three. `onBlur` is universal in RN.
+- **Risks**:
+  - [Low] If a future contributor calls `.flush()` from a `useEffect` cleanup function, it would fire a mutation against a torn-down query client — Mitigation: JSDoc explicitly warns against calling `flush()` from cleanup; the unmount cleanup inside the hook continues to call `cancel()`, not `flush()`
+  - [Low] Storing `lastArgs` in a ref means a `flush()` after a no-op call still has stale args — Mitigation: only set `lastArgs` when scheduling a new timer; if no timer is pending, `flush()` is a no-op; document in JSDoc
+- **Touched files**: `src/lib/hooks/useDebouncedCallback.ts`, `app/(app)/trip/[id]/index.tsx` (or the notes-editor sub-components), possibly `src/components/PlaceActionsSheet.tsx` (only if the place-notes editor lives there)
+
+### Step 10.7 — Settings UI: "Export my data" button
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: In `app/(app)/settings.tsx`, add an "Export my data" `Button` (variant `secondary`) directly above the existing "Sign out" button. Wire it to `useExportAccount()` from `@/api`: (a) `onPress` calls `exportMutation.mutate()`; (b) `loading` reflects `exportMutation.isPending`; (c) `disabled` reflects `screenDisabled || exportMutation.isPending` (same pattern as the existing Sign out / Delete account buttons); (d) on error, show an inline `Text` with `accessibilityRole="alert"` + `accessibilityLiveRegion="polite"` directly under the button (mirror the existing `deleteError` banner shape, but render only when `exportMutation.error` is set); reset error display on the next successful click via `exportMutation.reset()` in `onPress` before `mutate()`; (e) accessibility — `accessibilityLabel="Export my data as JSON"`, `accessibilityHint="Downloads a JSON file with all your trips and places."` (f) Order of buttons (top to bottom): theme picker, spacer (`flex: 1`), Export my data, Sign out, Delete account, error banners. **No tests.**
+- **Inputs**: Step 10.4 + 10.5 (`useExportAccount` available on all three platforms via platform-split resolution); existing `app/(app)/settings.tsx` for layout + button-pattern reference; `src/components/Button.tsx` for the secondary variant
+- **Expected output**: Settings screen renders an "Export my data" button above "Sign out"; clicking it on web triggers the JSON download; loading + error states are wired; accessibility labels + hints are present; the existing Sign out + Delete account buttons keep their current behavior
+- **Depends on**: Steps 10.4, 10.5
+- **Parallel with**: (none — gates 10.8)
+- **Platform check**: All three. The button itself is platform-agnostic; the underlying `useExportAccount` is platform-split.
+- **Risks**:
+  - [Low] Adding a third button between the spacer and Sign out compresses the visual hierarchy — Mitigation: ui-specialist verifies on web; if cramped, move "Export my data" above the spacer (just below the theme picker) so it reads as a "data action" rather than a "session action"
+  - [Low] If the Edge Function call returns a "Not authenticated" error because the JWT has expired between page load and click, the user sees a confusing inline message — Mitigation: surface the raw error message; the existing auth gate redirects to /login on next render anyway
+- **Touched files**: `app/(app)/settings.tsx`
+
+### Step 10.8 — Reviewer pass on Phase 10 changes
+- **Status**: ✅ Done
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read every diff introduced in Phase 10. Confirm: (1) the `export-account` Edge Function verifies the JWT via the anon client before reading any data — reject if a missing `Authorization` header path returns rows; (2) child-table reads (`trip_places` / `trip_legs` / `trip_days`) are scoped through the user's `trip.id` set so a malformed query cannot leak across users — reviewer constructs a mental two-user scenario and confirms the SQL filters prevent cross-tenant reads; (3) the function never returns Google place fields the project does not persist (reviews / photos / ratings / hours) — confirm by code-reading the response builder against `src/api/types.ts`; (4) no service-role key, no Google key, and no PAT appears anywhere in client bundles — grep `src/`; (5) no PII (notes content, place titles, emails) is logged from the Edge Function — only row counts + `requestId`; (6) the platform-split `account-export.web.ts` / `account-export.native.ts` resolve correctly under Metro / RN-Web; (7) the SSR guard in `account-export.web.ts` mirrors the `ics.web.ts` shape; (8) `useDebouncedCallback`'s new `.flush()` does not break existing call sites — reviewer reads each call site (cost-per-km editor, place-notes editor, day-notes editor) and confirms behavior is unchanged when `.flush()` is not called; (9) the unmount cleanup still calls `.cancel()`, not `.flush()`, so a stale mutation cannot fire after a component is gone (Phase 8 M1 / Phase 9 review parity); (10) the Settings button is keyboard-reachable on web (visible focus ring, correct tab order) and has correct `accessibilityLabel` + `accessibilityHint`; (11) no Google ToS regression — exported data is user-managed only; "Powered by Google" attribution is unaffected (no Place data on the Settings screen); (12) ADR-0009 reflects the implemented design and does not lie about what shipped (e.g. if the implementation diverged from the ADR's "single Edge Function" plan, reviewer flags it). Write findings to `docs/reviews/phase-10.md` with critical / high / medium / low. **Tests are out of scope; reviewer reads code only, does not run tests or smokes.**
+- **Inputs**: All Phase 10 diffs; ADR-0009; `docs/reviews/phase-9.md` for the L4 disposition wording
+- **Expected output**: `docs/reviews/phase-10.md` with findings; no critical or high blocks Step 10.9
+- **Depends on**: Steps 10.2, 10.4, 10.5, 10.6, 10.7
+- **Parallel with**: (none)
+- **Platform check**: N/A (review)
+- **Risks**:
+  - [Medium] If reviewer surfaces a critical cross-tenant leak in the Edge Function's `in (...)` filter (e.g. the trip-id list ever comes from the request body instead of being computed server-side), Phase 10 must loop back to backend-specialist — Mitigation: budget one fix loop; if the function needs a substantive rewrite, planner re-enters with a revised plan
+  - [Low] Reviewer may push back on the JSON shape (e.g. wanting `account_export.version: 1` for forward-compat) — Mitigation: cheap to add in a follow-up; ADR-0009 acknowledges shape evolution as a follow-up concern
+- **Touched files**: `docs/reviews/phase-10.md`
+
+### Step 10.9 — Docs flip
+- **Status**: ✅ Done
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: (a) Add one row to `docs/features/overview.md`: "Account data export (JSON)" → ✅ Done (web; native deferred to user smoke), Phase 10, doc `account-export.md`. (b) Create `docs/features/account-export.md` per the existing feature-doc template (intent / scope / API surface / data shape / platforms verified table — leave iOS / Android boxes unticked, tick Web only). Include a short "Exported fields" section listing the four tables (`trips`, `trip_places`, `trip_legs`, `trip_days`) and a one-line note that Google place fields (reviews / photos / ratings / hours) are explicitly NOT included because the project never persists them. Include a "Filename format" subsection documenting `tripvisor-export-<YYYY-MM-DD>.json` with UTC date. (c) Flip the Phase 10 row in `plan.md`'s top table to ✅ Done. (d) Append a one-paragraph "Phase 10 — close-out" entry under the Phase 9 close-out paragraph, summarising shipped surface (`export-account` Edge Function, platform-split `useExportAccount` mutation, Settings button, `useDebouncedCallback` flush + onBlur wiring on the notes editors). Cross-reference ADR-0009. Do NOT edit `CLAUDE.md` (planner project rule). Do NOT edit `docs/architecture.md` (planner project rule).
+- **Inputs**: Step 10.8 review (no critical / high)
+- **Expected output**: Feature doc reflects the new state; `plan.md` Phase 10 row reads ✅ Done; the new feature doc exists; close-out paragraph appended
+- **Depends on**: Step 10.8
+- **Parallel with**: (none)
+- **Platform check**: N/A (docs)
+- **Risks**:
+  - [Low] Existing feature-doc template may have evolved between Phase 9 and now — Mitigation: docs-specialist reads `docs/features/notes-journal.md` (Phase 9) as the most recent template and matches its shape
+- **Touched files**: `plan.md`, `docs/features/overview.md`, `docs/features/account-export.md` (new)
+
+## ⚠ Blockers (Phase 10 — must be cleared before Step 10.2)
+
+1. **Local Supabase stack must be reachable** for the `export-account` Edge Function to be served via `npx supabase functions serve` and tested manually by the implementing specialist. Same precondition as Phase 7 / Phase 8 / Phase 9; if the user has not run `supabase start` since the last phase, they need to before Step 10.2 lands.
+2. **Pre-existing blockers carried forward — NOT in scope for Phase 10**:
+   - Google Maps API keys — Phase 10 deliberately avoids any Google-keyed surface; the export reads user-managed data only.
+   - Leaked Supabase PAT rotation — Phase 10 uses local Supabase only; cloud PAT is irrelevant.
+   - EAS account / Apple Developer / Google Play Developer — Phase 10 is web-first; native renders the same UI by design (Settings button is universal, `expo-file-system` + `expo-sharing` are already in `package.json` from Phase 4). No native build / signing work.
+
+## Phase 10 — non-goals (explicit)
+
+- **Tests** — no Jest, no Deno tests, no fast-check, no RLS integration tests, no `*.test.ts` / `*.spec.ts` files authored or modified. The `test-specialist` sub-agent remains removed for the duration of the project.
+- **Smokes** — no Playwright execution, no manual UI smoke checklists, no `docs/smoke/phase-10.md`.
+- **Coverage / CI changes** — Phase 5 deferred work stays deferred; the existing `.github/workflows/` is not modified.
+- **Google Maps work** — no Places API, no Routes API, no optimizer changes, no map polyline updates. Export is user-managed data only.
+- **EAS / native builds** — no `eas.json` changes, no Apple / Google Play config, no native verification beyond visual confirmation by the implementing specialist.
+- **Native verification** — iOS / Android remain deferred to user smoke as standard for this project.
+- **Import / re-import flow** — Phase 10 ships export only. A round-trip "Import my data" flow (re-creating trips from a JSON file) is a separate (post-MVP) feature; not planned here.
+- **Multi-format export** — JSON only. No CSV, no XLSX, no PDF, no zip-of-files.
+- **Streaming / chunked download** — single in-memory JSON response per ADR-0009. Streaming is parked for the day a user hits the response-size ceiling.
+- **Storage bucket / signed URL** — no `tripvisor-exports` bucket, no signed download links, no expiring URLs. The Edge Function returns the bytes directly to the client.
+- **Photos / attachments** — text-only; the export does not include the (out-of-scope) future notes-attachment feature.
+- **Schema versioning of the export shape** — the JSON does not include a `schema_version` field in Phase 10. Adding one is a one-line follow-up if the shape evolves; ADR-0009 records this as a deliberate deferral.
+- **Background / scheduled exports** — no cron, no email-me-my-data flow. The user clicks the Settings button; that's the entire UX.
+- **Phase 9 L2 / L3 / L5 bundling** — only L4 (debounce flush-on-blur) bundles into Phase 10. L2 (italic tokenizer edge case), L3 (`MarkdownText` style cast), and L5 (`dayNotesIndex` Map perf) stay parked from `docs/reviews/phase-9.md`.
+- **Phases 2 / 3 / 5 / 6 status flips** — Phase 10 does not touch their rows; they stay 🚧 / partial as recorded.
+- **Phase 7 / 8 follow-ups** — the parallel-mutation rollback finding from `docs/reviews/phase-7.md` and the Phase 8 lows stay parked; not reopened in Phase 10 unless reviewer flags interaction.

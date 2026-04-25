@@ -440,6 +440,7 @@ function DayNotesEditor({
         maxLength={2000}
         value={localText}
         onChangeText={handleChange}
+        onBlur={() => debouncedSave.flush()}
         placeholder="Add notes for this day (up to 2000 characters)"
         placeholderTextColor={t.colors.textMuted}
         accessibilityLabel={`Notes for Day ${dayIndex + 1}`}
@@ -577,7 +578,7 @@ function PlaceNotesEditor({ place }: { place: TripPlace }) {
           maxLength={2000}
           value={localText}
           onChangeText={handleChange}
-          onBlur={() => setFocused(false)}
+          onBlur={() => { debouncedSave.flush(); setFocused(false); }}
           placeholder="Add notes (up to 2000 characters)"
           placeholderTextColor={t.colors.textMuted}
           accessibilityLabel={`Notes for ${place.user_title ?? 'place'}`}

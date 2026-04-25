@@ -9,3 +9,4 @@ export * from './routes';
 export * from './share';
 export * from './offline';
 export * from './ics';
+export * from './account-export';
