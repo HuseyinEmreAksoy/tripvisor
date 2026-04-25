@@ -86,19 +86,11 @@ export async function fetchAccountExportJson(): Promise<AccountExportFile> {
   // UTC date — deterministic, see file-level note above.
   const filename = `tripvisor-export-${new Date().toISOString().slice(0, 10)}.json`;
 
-  // Prefer `Blob` for an exact UTF-8 byte count where available (web + modern
-  // RN); fall back to `json.length` (approximate, but acceptable for
-  // telemetry — see JSDoc on `bytes`).
-  let bytes: number;
-  if (typeof Blob !== 'undefined') {
-    try {
-      bytes = new Blob([json]).size;
-    } catch {
-      bytes = json.length;
-    }
-  } else {
-    bytes = json.length;
-  }
+  // Exact UTF-8 byte count via TextEncoder (Phase 10 L2 fix). Universal in
+  // modern web + RN/Hermes; no Blob feature-detection branch. Replaces the
+  // earlier Blob+fallback approach which undercounted UTF-8 for non-ASCII
+  // notes (accents, emoji, CJK).
+  const bytes = new TextEncoder().encode(json).length;
 
   return { json, filename, bytes };
 }

@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 10 — Done (web; native deferred)
+**Current phase**: Phase 11 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -18,6 +18,7 @@
 | 8 | Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 9 | Notes / journal expansion (inline place notes, per-day notes, Markdown in print) + M2 mutation cleanup | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 10 | Account data export (JSON download) + L4 debounce flush-on-blur bundle | ✅ Done (web; native deferred to user smoke) | backend + ui |
+| 11 | Trips list polish (search + sort) + Phase 10 L2 fix | ✅ Done (web; native deferred to user smoke) | ui + backend |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1255,6 +1256,10 @@ Shipped 2026-04-25. Phase 9 turned the previously unused `trip_places.notes` col
 
 Shipped 2026-04-25. Phase 10 added a one-click data-export surface and closed the last open correctness finding from Phase 9. The new `supabase/functions/export-account/index.ts` Edge Function follows the same JWT-verification pattern as `delete-account` (anon-client `auth.getUser(token)`, then service-role reads scoped to the verified `userId`); it returns a flat `{ user_id, exported_at, trips, trip_places, trip_legs, trip_days }` object with deterministic `order('id', { ascending: true })` ordering so two consecutive exports are byte-identical. The shared `src/api/account-export.shared.ts` helper builds the JSON string and UTC-dated filename (`tripvisor-export-<YYYY-MM-DD>.json`); platform-split `src/api/account-export.web.ts` (Blob+anchor download with Safari `setTimeout(URL.revokeObjectURL, 1000)` guard) and `src/api/account-export.native.ts` (`expo-file-system` cache write + `expo-sharing.shareAsync`) deliver the file per-platform, mirroring the proven `.ics` mechanic from Phase 4. The Settings screen (`app/(app)/settings.tsx`) gains an "Export my data" secondary button above "Sign out" with loading, disabled, and error-banner states. The Phase 9 L4 follow-up was resolved in parallel: `useDebouncedCallback` now exposes `.flush()` and `.cancel()` as properties on the returned callable (non-breaking), and both `DayNotesEditor` and `PlaceNotesEditor` call `.flush()` on `onBlur` so the last keystrokes within the debounce window are not dropped on blur; unmount cleanup continues to call `.cancel()`, not `.flush()`. Reviewer sign-off: no critical, high, or medium findings; 5 low parks (see `docs/reviews/phase-10.md`). Design decision recorded in ADR-0009 (`docs/adr/0009-account-data-export.md`). Feature doc: `docs/features/account-export.md`.
 
+## Phase 11 — close-out
+
+Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and closed the Phase 10 L2 byte-counting correctness finding. On the trips list (`app/(app)/trips.tsx`): a debounced `TextInput` (200ms, case-insensitive substring match on `title`) with a clear button, a tap-to-cycle `Pressable` cycling through Recent / A-Z / Start date sort modes (`Intl.Collator` for locale-aware A-Z; trips with `null start_date` sort to bottom on Start date mode), and an empty-results state ("No trips match your search") when the filtered list is empty. Tab switching (Active / Archived) resets both search text and sort to their defaults. Phase 10 L2 fix: `src/api/account-export.shared.ts` replaced the Blob-fallback byte counter with `new TextEncoder().encode(json).length` for exact UTF-8 byte counting on web and RN/Hermes without feature detection. No reviewer pass — scope was minimal (one screen + one-line backend polish). Planner agent was over usage limit; main assistant scoped the phase directly. Feature doc: `docs/features/trips-list-polish.md`. Explicitly deferred: Cost sort (N+1 risk without server-side aggregation) and date filter (Upcoming/Past) — both are Phase 12+ candidates.
+
 ## Phase 8 — Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view)
 
 **Goal**: Ship visible itinerary-utility polish that turns the existing optimizer output into something a user actually carries on a road trip: (a) a per-trip cost rollup driven by already-cached `trip_legs.distance_meters` × a user-set `cost_per_km` (no Google call), (b) a per-day summary card showing place count, total visit hours, estimated drive time and estimated cost, and (c) a printable A4 view of the itinerary (HTML + `@media print` stylesheet, no PDF library) reachable from a "Print itinerary" button on the trip detail screen.
@@ -1804,3 +1809,36 @@ Shipped 2026-04-25. Phase 10 added a one-click data-export surface and closed th
 - **Phase 9 L2 / L3 / L5 bundling** — only L4 (debounce flush-on-blur) bundles into Phase 10. L2 (italic tokenizer edge case), L3 (`MarkdownText` style cast), and L5 (`dayNotesIndex` Map perf) stay parked from `docs/reviews/phase-9.md`.
 - **Phases 2 / 3 / 5 / 6 status flips** — Phase 10 does not touch their rows; they stay 🚧 / partial as recorded.
 - **Phase 7 / 8 follow-ups** — the parallel-mutation rollback finding from `docs/reviews/phase-7.md` and the Phase 8 lows stay parked; not reopened in Phase 10 unless reviewer flags interaction.
+
+---
+
+## Phase 11 — Trips list polish (search + sort) + Phase 10 L2 fix
+
+**Status**: Done — shipped 2026-04-25; Direction B (trips list search + sort); planner agent skipped due to usage limit, main assistant scoped directly. No reviewer pass — scope was minimal (one screen + one-line backend polish).
+**Last updated**: 2026-04-25
+
+**Scope shipped**:
+- Search input on the trips list screen (`app/(app)/trips.tsx`): debounced 200ms, case-insensitive substring match on trip `title`, clear button when non-empty.
+- Sort tap-to-cycle: Recent (creation order) → A-Z (`Intl.Collator` locale-aware) → Start date (trips with `null start_date` go to bottom) → loops back to Recent.
+- Tab switch (Active / Archived) resets both search text and sort to defaults.
+- Empty-results state: "No trips match your search" rendered when filters yield zero from a non-empty list.
+- Phase 10 L2 fix: `src/api/account-export.shared.ts` — replaced Blob+fallback byte counting with `new TextEncoder().encode(json).length` (exact UTF-8, universal on web + RN/Hermes).
+
+**Explicitly deferred**:
+- Cost sort — would require per-trip `useTripLegs` aggregation across an unbounded list (N+1 risk); requires server-side aggregation or a cached cost field before it is safe to expose. Phase 12+ candidate.
+- Date filter (Upcoming/Past) — layout is cramped on 360px viewports; deferred until a filter drawer or expanded header can accommodate it cleanly. Phase 12+ candidate.
+
+**Process note**: The planner sub-agent hit usage limits before this phase was formally scoped. The main assistant chose Direction B (trips list search + sort) and defined the scope directly, following the established project convention of tight, unblocked increments. No separate planner ADR was produced; the decisions above capture the design rationale.
+
+**Feature doc**: `docs/features/trips-list-polish.md`
+
+## Phase 11 — non-goals (explicit)
+
+- **Tests** — no Jest, no Deno tests, no Playwright, no `*.test.ts` / `*.spec.ts` files authored or modified.
+- **Smokes** — no Playwright execution, no manual smoke checklist, no `docs/smoke/phase-11.md`.
+- **Reviewer pass** — scope was too small to warrant a full reviewer session; the main assistant verified correctness inline.
+- **Cost sort** — explicitly deferred; would require cross-trip legs aggregation.
+- **Date filter (Upcoming/Past)** — explicitly deferred; layout constraints on narrow viewports.
+- **Backend changes** — pure UI change; no migrations, no Edge Functions, no API hooks added.
+- **Native verification** — iOS / Android deferred to user smoke as standard for this project.
+- **Phases 2 / 3 / 5 / 6 status flips** — Phase 11 does not touch their rows; they stay as recorded.
