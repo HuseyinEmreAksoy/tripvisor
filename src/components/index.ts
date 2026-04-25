@@ -14,3 +14,5 @@ export { PlaceActionsSheet } from './PlaceActionsSheet';
 export { TripActionsSheet, type TripActionsSheetProps } from './TripActionsSheet';
 export { DraggableItinerary } from './DraggableItinerary';
 export type { DraggableItem } from './DraggableItinerary';
+export { TripCostRollup } from './TripCostRollup';
+export { DaySummaryCard } from './DaySummaryCard';

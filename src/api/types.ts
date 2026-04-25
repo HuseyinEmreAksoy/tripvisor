@@ -2,6 +2,13 @@ export type Uuid = string;
 
 export type TransportMode = 'driving' | 'walking' | 'transit';
 
+/**
+ * Currencies supported by the Phase 8 cost rollup. Matches the
+ * `trips_currency_check` constraint in `0005_trip_cost_meta.sql`. If the
+ * constraint list grows, widen this union in lockstep.
+ */
+export type TripCurrency = 'USD' | 'EUR' | 'GBP' | 'TRY' | 'JPY';
+
 export interface Trip {
   id: Uuid;
   user_id: Uuid;
@@ -14,6 +21,10 @@ export interface Trip {
   timezone: string | null;
   /** ISO timestamp; null means "active". Set by archive / unarchive (Phase 7). */
   archived_at: string | null;
+  /** Phase 8: unit-of-account for the per-trip cost rollup (ADR-0007). */
+  currency: TripCurrency;
+  /** Phase 8: per-kilometer rate the client multiplies against trip_legs.distance_meters (ADR-0007). */
+  cost_per_km: number;
   created_at: string;
   updated_at: string;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Button,
@@ -12,6 +12,8 @@ import {
   Slider,
   StatusPill,
   TabBar,
+  TripCostRollup,
+  DaySummaryCard,
   type DraggableItem,
 } from '@/components';
 import { noPlaces } from '@/components/emptyStates';
@@ -28,7 +30,9 @@ import {
   useTrip,
   useTripLegs,
   useTripPlaces,
+  useUpdateTrip,
   type TransportMode,
+  type TripCurrency,
   type TripLeg,
   type TripPlace,
 } from '@/api';
@@ -95,7 +99,17 @@ export default function TripDetail() {
         <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
           <Text style={[t.typography.body, { color: t.colors.primary }]}>← Back</Text>
         </Pressable>
-        <Heading level={1}>{trip.title}</Heading>
+        <View style={styles.titleRow}>
+          <Heading level={1}>{trip.title}</Heading>
+          {/* Print button — navigates to print route on all platforms */}
+          <Button
+            label="Print itinerary"
+            variant="secondary"
+            fullWidth={false}
+            onPress={() => router.push(`/trip/${trip.id}/print` as never)}
+            accessibilityLabel="Print itinerary"
+          />
+        </View>
         <View style={styles.metaRow}>
           <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
             {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day ·{' '}
@@ -109,6 +123,9 @@ export default function TripDetail() {
             <StatusPill tone="info" label="Add places to optimize" />
           ) : null}
         </View>
+
+        {/* ── Cost rollup card (Step 8.4) ───────────────────────────────── */}
+        <TripCostRollup trip={trip} legs={legs} />
       </View>
 
       <TabBar<TabKey>
@@ -128,6 +145,7 @@ export default function TripDetail() {
           tripId={trip.id}
           places={places}
           legs={legs}
+          trip={trip}
           onOpen={(gid) => router.push(`/place/${gid}`)}
         />
       ) : (
@@ -135,6 +153,8 @@ export default function TripDetail() {
           tripId={trip.id}
           dailyHoursBudget={trip.daily_hours_budget}
           transportMode={trip.transport_mode}
+          currency={trip.currency}
+          costPerKm={trip.cost_per_km}
           hasPlaces={places.length > 0}
           onDelete={async () => {
             await deleteTrip.mutateAsync(trip.id);
@@ -196,11 +216,13 @@ function ItineraryTab({
   tripId,
   places,
   legs,
+  trip,
   onOpen,
 }: {
   tripId: string;
   places: TripPlace[];
   legs: TripLeg[];
+  trip: import('@/api').Trip;
   onOpen: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
@@ -242,6 +264,16 @@ function ItineraryTab({
                 {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
               </Text>
             </View>
+
+            {/* ── Per-day summary strip (Step 8.4) — only for scheduled days */}
+            {section.dayIndex >= 0 ? (
+              <DaySummaryCard
+                dayIndex={section.dayIndex}
+                places={places}
+                legs={legs}
+                trip={trip}
+              />
+            ) : null}
 
             <DraggableItinerary
               groupLabel={section.dayIndex < 0 ? 'Unscheduled places' : `Day ${section.dayIndex + 1}`}
@@ -336,10 +368,16 @@ function PlaceRow({
   );
 }
 
+// ── Settings tab ──────────────────────────────────────────────────────────────
+
+const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
+
 function SettingsTab({
   tripId,
   dailyHoursBudget,
   transportMode,
+  currency,
+  costPerKm,
   hasPlaces,
   onDelete,
   deleting,
@@ -347,6 +385,8 @@ function SettingsTab({
   tripId: string;
   dailyHoursBudget: number;
   transportMode: TransportMode;
+  currency: TripCurrency;
+  costPerKm: number;
   hasPlaces: boolean;
   onDelete: () => void;
   deleting: boolean;
@@ -358,6 +398,42 @@ function SettingsTab({
   // ICS export state
   const downloadIcs = useDownloadTripIcs(tripId);
   const [icsStatus, setIcsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  // ── Cost settings (Step 8.6) ──────────────────────────────────────────────
+  const updateTrip = useUpdateTrip(tripId);
+  // Local text value for the rate input so the user can type freely.
+  const [rateText, setRateText] = useState(String(costPerKm));
+  const [rateError, setRateError] = useState<string | null>(null);
+  // Keep a stable timer ref to implement a simple 500ms debounce without
+  // a library. A new ref on each render is fine; we only mutate .current.
+  const rateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending debounce timer on unmount so a delayed setTimeout doesn't
+  // fire a stealth mutation against a stale tripId after the user navigates
+  // away (M1 from Phase 8 review).
+  useEffect(() => {
+    return () => {
+      if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
+    };
+  }, []);
+
+  function handleRateChange(raw: string) {
+    setRateText(raw);
+    setRateError(null);
+    if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
+    rateTimerRef.current = setTimeout(() => {
+      const parsed = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setRateError('Enter a positive number, e.g. 0.20');
+        return;
+      }
+      updateTrip.mutate({ cost_per_km: parsed });
+    }, 500);
+  }
+
+  function handleCurrencyChange(value: TripCurrency) {
+    updateTrip.mutate({ currency: value });
+  }
 
   async function commitBudget(v: number) {
     setBudget(v);
@@ -423,6 +499,50 @@ function SettingsTab({
           { value: 'transit', label: 'Transit' },
         ]}
       />
+
+      {/* ── Cost settings (Step 8.6) ─────────────────────────────────────── */}
+      <SectionHeading label="Cost settings" t={t} />
+      <SegmentedControl<TripCurrency>
+        label="Currency"
+        value={currency}
+        onChange={handleCurrencyChange}
+        options={CURRENCIES.map((c) => ({ value: c, label: c }))}
+      />
+      <View style={{ gap: t.spacing.xs }}>
+        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+          Cost per km ({currency})
+        </Text>
+        <TextInput
+          value={rateText}
+          onChangeText={handleRateChange}
+          keyboardType="decimal-pad"
+          // inputMode is a web-standard hint; RN ≥ 0.72 honours it on web.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          inputMode={"decimal" as any}
+          accessibilityLabel="Cost per kilometre"
+          accessibilityHint="Enter the fuel or transport cost per kilometre"
+          style={[
+            styles.rateInput,
+            {
+              borderColor: rateError ? t.colors.danger : t.colors.border,
+              borderRadius: t.radius.sm,
+              color: t.colors.text,
+              backgroundColor: t.colors.bgElevated,
+              ...t.typography.body,
+            },
+          ]}
+          placeholder="0.20"
+          placeholderTextColor={t.colors.textMuted}
+        />
+        {rateError ? (
+          <Text
+            style={[t.typography.caption, { color: t.colors.danger }]}
+            accessibilityLiveRegion="polite"
+          >
+            {rateError}
+          </Text>
+        ) : null}
+      </View>
 
       {/* ── Share ───────────────────────────────────────────────────────── */}
       <SectionHeading label="Share" t={t} />
@@ -510,6 +630,13 @@ function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: Trip
 }
 
 const styles = StyleSheet.create({
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   metaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -519,4 +646,10 @@ const styles = StyleSheet.create({
   },
   dayHeader: { borderLeftWidth: 4, paddingLeft: 12 },
   placeCard: { borderWidth: 1 },
+  rateInput: {
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    height: 44,
+  },
 });

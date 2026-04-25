@@ -15,6 +15,8 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     transport_mode: 'walking',
     timezone: 'Europe/Lisbon',
     archived_at: null,
+    currency: 'USD',
+    cost_per_km: 0.2,
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,

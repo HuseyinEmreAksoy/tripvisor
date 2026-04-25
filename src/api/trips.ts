@@ -203,6 +203,57 @@ export function useUnarchiveTrip() {
   });
 }
 
+// ============================================================
+// Phase 8: in-place metadata edits (title / currency / cost_per_km)
+// ============================================================
+
+/**
+ * Patch shape for `useUpdateTrip`. Intentionally narrow — only fields the UI
+ * actually edits in place (title from the rename affordance; currency +
+ * cost_per_km from the Phase 8 cost rollup card). Add fields here as new
+ * inline-editable surfaces land; do NOT widen to `Partial<Trip>` since that
+ * would let callers blindly overwrite immutable fields like `id` /
+ * `user_id` / `created_at`.
+ */
+export type UpdateTripPatch = Partial<Pick<Trip, 'title' | 'currency' | 'cost_per_km'>>;
+
+/**
+ * Update editable trip metadata. Mirrors the `useArchiveTrip` shape: the
+ * `.eq('user_id', userId)` is defense-in-depth on top of RLS, and on
+ * settle we invalidate both the lists (in case `title` changed) and the
+ * detail (so the trip screen recomputes the cost rollup with the new rate).
+ *
+ * Bound to a specific `tripId` at hook time — callers do
+ * `useUpdateTrip(id).mutate({ cost_per_km: 0.35 })` rather than threading
+ * the id through the variables. This matches how the UI surfaces consume
+ * it (one card per trip detail screen).
+ */
+export function useUpdateTrip(tripId: Uuid) {
+  const qc = useQueryClient();
+  return useMutation<Uuid, Error, UpdateTripPatch>({
+    mutationFn: async (patch) => {
+      // Empty patch is a no-op; avoid issuing a pointless UPDATE that would
+      // still bump updated_at via the trigger.
+      if (Object.keys(patch).length === 0) return tripId;
+      const userId = await getCallerId();
+      const { error } = await supabase
+        .from('trips')
+        .update(patch)
+        .eq('id', tripId)
+        .eq('user_id', userId);
+      if (error) throw error;
+      return tripId;
+    },
+    onSuccess: () => {
+      // Invalidate both list partitions (active/archived) so a renamed trip
+      // shows fresh in whichever tab is mounted, plus the detail cache so
+      // the cost rollup recomputes with the new rate.
+      qc.invalidateQueries({ queryKey: tripsKeys.all });
+      qc.invalidateQueries({ queryKey: tripsKeys.detail(tripId) });
+    },
+  });
+}
+
 /**
  * Duplicate a trip via the `duplicate_trip(p_trip_id)` Postgres RPC. The
  * server-side function (security definer) clones the trip + its places per

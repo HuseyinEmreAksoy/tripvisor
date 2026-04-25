@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 7 — Done (web; native deferred)
+**Current phase**: Phase 8 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -15,6 +15,7 @@
 | 5 | Test hardening (coverage, E2E, property, CI) | 🚧 Partial — source fixes shipped 2026-04-25; test-hardening exit criteria deferred | backend + ui |
 | 6 | Phase 4 web close-out (live smoke + small polish) | 🚧 Partial — Step 6.0 (stack ready) + Step 6.4 (UX polish) shipped 2026-04-25; smoke (6.1–6.3, 6.5–6.7) skipped per user direction | backend + ui |
 | 7 | Trip lifecycle (archive / duplicate) + Settings screen (theme toggle + delete account) | ✅ Done (web; native deferred to user smoke) | ui + backend |
+| 8 | Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -1239,3 +1240,182 @@ Once these are done, the main assistant can delegate Phase 1 to `planner` → `b
 ## Phase 7 — close-out
 
 Shipped 2026-04-25. Phase 7 landed two independent user-visible surfaces with no dependency on Google Maps keys, EAS, or native provisioning. Trip lifecycle: the `trips.archived_at` column (migration `0004_trip_lifecycle.sql`), partial index `trips_user_active_idx`, `duplicate_trip` RPC (clones places only per ADR-0006, not legs), and `delete_account_cascade` RPC backed by the new `delete-account` Edge Function are all live on the local stack; client mutations `useArchiveTrip`, `useUnarchiveTrip`, `useDuplicateTrip`, and query-key partitioning ship in `src/api/trips.ts`. Settings screen: `app/(app)/settings.tsx` exposes email (read-only), Light/Dark/System theme picker with `Appearance` listener and persistence, Sign out, and Delete account with destructive confirm. The M1 race (sign-out after delete-account) was fixed inline. M2 (parallel-mutation rollback footgun) and all low findings from `docs/reviews/phase-7.md` are parked as follow-ups. Web golden path confirmed visually; iOS and Android deferred to user smoke.
+
+## Phase 8 — close-out
+
+Shipped 2026-04-25. Phase 8 turned the optimizer's already-cached `trip_legs` data into a usable road-trip artifact with zero new Google API calls. The `0005_trip_cost_meta.sql` migration adds `trips.currency` (fixed list: USD/EUR/GBP/TRY/JPY, check constraint) and `trips.cost_per_km numeric(8,4)` (default 0.20) to the schema. Client-side cost math (`Sigma leg.distance_meters / 1000 * cost_per_km`) lives in `TripCostRollup.tsx` (memoized per-trip rollup card) and `DaySummaryCard.tsx` (per-day place count, visit hours, drive time, distance, and cost). The trip detail screen gains an inline "Cost settings" section — currency SegmentedControl and debounced rate TextInput — wired to the new `useUpdateTrip(tripId)` mutation. A new route `app/(app)/trip/[id]/print.tsx` renders a read-only itinerary view on all three platforms; on web it injects an `@media print { @page { size: A4 portrait } ... }` stylesheet via runtime `require('expo-router/head')` and exposes a "Print this page" button that calls `window.print()` (gated by `Platform.OS === 'web'`); on native it renders the same content as a scrollable read-only view with an inline note directing users to the web to print. Reviewer sign-off: no critical or high findings; M1 (debounce timer not cleared on unmount) fixed inline; M2 (`commitBudget`/`commitMode` bypass pattern) and all low findings parked as Phase-9 candidates. Feature doc: `docs/features/cost-and-print.md`.
+
+## Phase 8 — Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view)
+
+**Goal**: Ship visible itinerary-utility polish that turns the existing optimizer output into something a user actually carries on a road trip: (a) a per-trip cost rollup driven by already-cached `trip_legs.distance_meters` × a user-set `cost_per_km` (no Google call), (b) a per-day summary card showing place count, total visit hours, estimated drive time and estimated cost, and (c) a printable A4 view of the itinerary (HTML + `@media print` stylesheet, no PDF library) reachable from a "Print itinerary" button on the trip detail screen.
+**Status**: ✅ Done — shipped 2026-04-25; reviewer sign-off (`docs/reviews/phase-8.md`); M1 fixed inline; M2 + lows parked.
+**Last updated**: 2026-04-25
+
+**Direction chosen**: Direction 5 (cost / itinerary visibility polish). All three sub-features ride on data the schema already caches from Phase 2 (`trip_legs.distance_meters`, `trip_legs.duration_seconds`, `trip_places.visit_duration_minutes`), so the phase makes zero Google API calls and needs no keys. Independent of all three carried-forward blockers (Google keys, leaked PAT, EAS / Apple / Google Play) — only a tiny `0005_trip_cost_meta.sql` migration adds `currency` + `cost_per_km` to `trips`. Complements Phase 7: a duplicated trip + a printable A4 view = the actual usable artifact for a road trip. Rejected the alternatives quickly — trip notes/journal is less visible per step, trips-list search/filter is low-impact until users have many trips, place-reordering polish lands on Google-key-gated optimizer territory, and PWA polish needs the kind of careful platform smoke-testing that this phase explicitly rules out. No sixth direction surfaced as a stronger fit.
+
+**Entry criteria**:
+- Phase 7 close-out is current state; `trips.archived_at`, `duplicate_trip`, `delete_account_cascade`, and the `delete-account` Edge Function are live on local Supabase
+- `src/api/trips.ts` exposes `useTrip(id)` and reads `trip_places` + `trip_legs` for the trip detail screen (Phase 2 surface; not rewritten here)
+- Local Supabase stack is reachable so the `0005_trip_cost_meta.sql` migration can be applied (`npx supabase db reset`)
+- User has NOT requested Google-keys provisioning, EAS provisioning, or PAT rotation in this phase — Phase 8 must not depend on any of those
+
+**Phase exit criteria**:
+- A new `0005_trip_cost_meta.sql` migration adds `currency text` (default `'USD'`) and `cost_per_km numeric(8,4)` (default `0.20`) to `public.trips`; existing rows backfill with the defaults; RLS unchanged
+- The `Trip` TypeScript type in `src/api/types.ts` includes `currency: string` and `cost_per_km: number`; `useUpdateTrip` (or an equivalent existing mutation) accepts both fields
+- The trip edit / settings surface (in-place on the trip detail screen, not a separate route) lets the user pick `currency` (small fixed list: USD / EUR / GBP / TRY / JPY) and edit `cost_per_km` as a numeric input; the value persists and is read back on reload
+- The trip detail screen shows a **per-trip cost rollup** (one card at the top of the trip page or in the trip header) computed client-side as `sum(trip_legs.distance_meters) / 1000 * trip.cost_per_km`, formatted with the trip's currency; displays a "—" placeholder when the trip has zero legs (not yet optimized) and a small "estimate" caveat
+- Each day section on the trip detail screen renders a **per-day summary card** at the top of that day showing: place count (from `trip_places` filtered by `day_index`), total visit hours (sum of `visit_duration_minutes / 60`), estimated drive time (sum of `trip_legs.duration_seconds / 60` for that `day_index`), estimated drive distance (sum of `distance_meters / 1000`), and estimated cost (distance × `cost_per_km`); placeholders when legs are missing
+- A **"Print itinerary"** button on the trip detail screen opens a print-friendly route (`/trip/[id]/print` on web; same screen on native rendering as a read-only summary view) that lays out the full itinerary day-by-day (day header, summary numbers, ordered places, notes, per-day map placeholder NOT implemented — text-only) and applies an `@media print` stylesheet that hides app chrome and fits a single trip on A4 portrait, with the cost rollup at the top and a "Powered by Google" attribution footer (because the place data on the printed page came from Google Places)
+- Web "Print itinerary" triggers `window.print()` from a button on the print page; the resulting browser print preview is legible (visual confirmation by the implementing specialist on whatever browser they have running — no recorded smoke)
+- Native "Print itinerary" renders the same content as a scrollable read-only view (no `window.print` on native; native PDF / share is out of scope and parked as a follow-up); a small inline note on native says "Open this trip on the web to print"
+- All three platforms render the new cost rollup, per-day summary card, and the print route without layout breaks (visual confirmation; native verification deferred to user as standard for this project)
+- `docs/features/overview.md` has a row for "Cost & itinerary visibility (rollup, daily summary, print)" with status reflecting Phase 8 completion
+- A short ADR exists at `docs/adr/0002-cost-rollup-client-side.md` recording the decision to compute cost client-side from cached `trip_legs` (vs. a server view / generated column), since this is the only non-obvious design call in the phase
+
+**Critical path**: Step 8.1 → Step 8.2 → Step 8.3 → Step 8.4 → Step 8.6 → Step 8.7 → Step 8.8
+
+(Step 8.5 — print route — parallels Step 8.4 on the same critical-path tier, since they touch disjoint files. Step 8.3 — cost-edit UI — gates 8.4 on the `trip.cost_per_km` field being editable, but the rollup math itself can be developed against the migration default and wired to the edit surface last.)
+
+### Step 8.1 — ADR for client-side cost rollup
+- **Status**: ✅ Done
+- **Agent**: planner
+- **Size**: XS
+- **Task**: Author `docs/adr/0002-cost-rollup-client-side.md` recording: (1) cost is computed in the React UI from `trip_legs.distance_meters` and `trip.cost_per_km`, not from a Postgres view or generated column; (2) rationale — the trip detail screen already reads both pieces via existing queries, the math is trivial (`meters / 1000 * rate`), keeping it client-side avoids a migration/view per currency-aware feature and lets the user re-tune `cost_per_km` without recomputing server-side state; (3) consequences — cost is always derived, never persisted, so duplicate-trip flows automatically get correct costs once optimizer runs; (4) alternatives considered — server view (rejected: extra surface for one read), generated column on `trip_legs` (rejected: forces currency to live on `trip_legs` rows or duplicates rate everywhere), nightly batch (rejected: pointless for a derived value). Use the standard ADR template (Context / Decision / Alternatives / Consequences). One screen max.
+- **Inputs**: This phase plan; `0001_init.sql` schema for `trip_legs`
+- **Expected output**: `docs/adr/0002-cost-rollup-client-side.md` exists; Step 8.4 references it when authoring the rollup component
+- **Depends on**: None
+- **Parallel with**: (none — gates the design intent for 8.4 / 8.6, but takes <30 min)
+- **Platform check**: N/A (doc only)
+- **Risks**:
+  - [Low] If Step 8.2's migration adds `currency` per-row but the ADR assumes a single trip-level currency (it does — that's the choice), reviewer or user may push for multi-currency per-leg later — Mitigation: ADR explicitly states "trip-level currency only; multi-currency parked"
+- **Touched files**: `docs/adr/0002-cost-rollup-client-side.md`
+
+### Step 8.2 — Migration: `trips.currency` + `trips.cost_per_km`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Add `supabase/migrations/0005_trip_cost_meta.sql` that: (1) adds `currency text not null default 'USD'` to `public.trips` with a check constraint `check (currency in ('USD','EUR','GBP','TRY','JPY'))` — picks a small fixed list to keep the UI a segmented control / picker (no free-form ISO list); (2) adds `cost_per_km numeric(8,4) not null default 0.20` to `public.trips`; (3) backfills existing rows with the defaults (the `not null default` does this on `alter table` automatically — no separate `update`); (4) does not touch RLS — the existing `trips_owner_all` policy already gates by `user_id` and the new columns inherit that policy. No new index needed (cost columns are read on a single-row trip query, not filtered on). Migration must apply cleanly via `npx supabase db reset` against the local stack. **No tests.**
+- **Inputs**: ADR from Step 8.1
+- **Expected output**: `0005_trip_cost_meta.sql` applies without error; `\d public.trips` shows the two new columns; existing trips return `'USD'` and `0.20` on `select currency, cost_per_km from trips`; `update trips set cost_per_km = 0.35 where id = '<id>'` succeeds
+- **Depends on**: Step 8.1
+- **Parallel with**: (none — gates 8.3, 8.4, 8.6)
+- **Platform check**: N/A (DB migration)
+- **Risks**:
+  - [Medium] The fixed currency list may need to grow (CHF, CAD, AUD common road-trip currencies) — Mitigation: keep the check constraint loose-but-bounded; if reviewer or user pushes for more, add them to the constraint list in the same migration before merge
+  - [Low] `cost_per_km` precision `(8,4)` allows up to `9999.9999` per km, which is overkill but harmless — Mitigation: leave as-is; cheaper than a future widening migration
+- **Touched files**: `supabase/migrations/0005_trip_cost_meta.sql`
+
+### Step 8.3 — Type + API extensions: `currency`, `cost_per_km`, `useUpdateTrip`
+- **Status**: ✅ Done
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: (a) Extend `Trip` in `src/api/types.ts` with `currency: 'USD' | 'EUR' | 'GBP' | 'TRY' | 'JPY'` (literal union matching the migration's check constraint) and `cost_per_km: number`. (b) In `src/api/trips.ts`, confirm `useUpdateTrip` (or whichever mutation handles in-place trip metadata edits) accepts a `Partial<Pick<Trip, 'currency' | 'cost_per_km' | 'title' | ...>>` patch shape; if no such mutation exists yet, add `useUpdateTrip(tripId)` that runs `update trips set ... where id = $1` and invalidates `['trips']` + `['trip', id]`. (c) Re-export from `src/api/index.ts`. Run `tsc --noEmit` locally and fix any breakages caused by the type widening (likely zero, since these fields are new and additive). **No tests.**
+- **Inputs**: Step 8.2 (columns exist in DB)
+- **Expected output**: `Trip` type includes the two new fields; `useUpdateTrip(tripId).mutate({ cost_per_km: 0.35 })` writes to the DB and the `useTrip(tripId)` cache reflects the change after invalidation; `tsc --noEmit` is clean
+- **Depends on**: Step 8.2
+- **Parallel with**: Step 8.5 (print route shell — disjoint files)
+- **Platform check**: All three (pure JS / TanStack Query)
+- **Risks**:
+  - [Low] If `useUpdateTrip` already exists with a stricter patch shape, widening it may force callers to update — Mitigation: keep the patch shape `Partial<...>` so existing callers compile unchanged
+  - [Low] The literal union for `currency` may diverge from the migration constraint if the constraint list grows in 8.2 review — Mitigation: cross-reference the migration's check list before declaring the type
+- **Touched files**: `src/api/trips.ts`, `src/api/types.ts`, `src/api/index.ts`
+
+### Step 8.4 — Per-trip cost rollup card + per-day summary card
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) Create `src/components/TripCostRollup.tsx` that takes `{ trip: Trip, legs: TripLeg[] }` and renders a single card showing: total estimated cost (`legs.reduce((s, l) => s + l.distance_meters, 0) / 1000 * trip.cost_per_km`, formatted via `Intl.NumberFormat(undefined, { style: 'currency', currency: trip.currency })`), total distance (km), total drive time (humanised — `Xh Ym`); show a "—" placeholder card with "Optimize the trip to see cost estimate" if `legs.length === 0`. Add a small "estimate · powered by Google" footer (Google attribution because the underlying place coordinates are Google-derived). (b) Create `src/components/DaySummaryCard.tsx` that takes `{ dayIndex: number, places: TripPlace[], legs: TripLeg[], trip: Trip }` and renders place count, total visit hours (sum `visit_duration_minutes / 60`), drive time, drive distance, and estimated cost for that day only — same currency formatting. Placeholders when legs for that `day_index` are empty. (c) Wire both into `app/(app)/trip/[id]/index.tsx`: rollup goes at the top of the trip page (above or below the existing trip header), summary cards go at the top of each day section. Memoise the reductions with `useMemo` keyed on `legs` + `cost_per_km` to avoid recomputation on unrelated re-renders. **No tests.**
+- **Inputs**: Step 8.3 (types updated); existing `useTrip` + `useTripLegs` (or equivalent) hooks in `src/api/`; existing `Card` / `Heading` / `StatusPill` primitives
+- **Expected output**: Trip detail page renders the rollup card on web; switching `cost_per_km` via the Step 8.6 edit surface updates the rollup live (no manual reload); each day section shows its own summary; trips with zero legs show the placeholder copy
+- **Depends on**: Step 8.3
+- **Parallel with**: Step 8.5
+- **Platform check**: All three. `Intl.NumberFormat` is universal in modern RN + web. No platform-split needed; pure JSX + RN primitives.
+- **Risks**:
+  - [Medium] `Intl.NumberFormat` with `{ style: 'currency', currency: 'TRY' }` may render ₺ awkwardly in some RN locales — Mitigation: ui-specialist visually confirms each currency renders sensibly on web; if a currency renders as ISO code rather than symbol, accept it (still legible)
+  - [Medium] Trip detail screen layout may already be cramped; adding two new cards risks overflow on narrow viewports — Mitigation: ui-specialist collapses summary cards into a single dense row of pills if the full card looks crowded on a 360px-wide phone simulator
+  - [Low] `useMemo` dependency arrays must include `trip.cost_per_km` and `trip.currency`, not just `legs` — Mitigation: explicit dep list; ui-specialist double-checks
+- **Touched files**: `src/components/TripCostRollup.tsx` (new), `src/components/DaySummaryCard.tsx` (new), `app/(app)/trip/[id]/index.tsx`
+
+### Step 8.5 — Print route shell + `@media print` stylesheet
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Create a new Expo Router route `app/(app)/trip/[id]/print.tsx` that (a) reads the same trip + places + legs as the detail screen via existing hooks; (b) renders a single read-only itinerary view: trip title, date range, currency + cost rate, the cost rollup, then for each day a DaySummaryCard followed by an ordered list of places (title, category, visit duration, notes), separated by `<hr>` or equivalent visual rule; (c) on web, applies an `@media print` block via a platform-specific style entry — concretely, add a `<style>{`@media print { body { background: #fff; } [data-no-print] { display: none; } @page { size: A4 portrait; margin: 1.5cm; } }`}</style>` block (or equivalent in the Expo web entry — ui-specialist picks the cleanest hook; one option is `expo-router`'s `Head` component for web-only style injection); (d) tags app chrome (header, tab bar) with `data-no-print` so it disappears in print preview; (e) renders a "Powered by Google" attribution footer because place data is Google-derived; (f) on native, renders the same content as a scrollable read-only view with a small inline note "Open this trip on the web to print" — no native PDF / share. **No tests.** **No `window.print()` invocation in this step — that's the button wiring in 8.6.**
+- **Inputs**: Existing `useTrip`, `useTripPlaces`, `useTripLegs` hooks; existing `Card` / `Heading` / `EmptyState` primitives; Step 8.4 components (`TripCostRollup`, `DaySummaryCard`) — re-used
+- **Expected output**: Navigating to `/trip/<id>/print` on web renders the full itinerary in a single scrollable view; opening browser print preview (Ctrl+P) shows the itinerary on A4 portrait with app chrome hidden; on native the same route renders content but does not attempt to print
+- **Depends on**: Step 8.4 (re-uses the rollup + day summary components)
+- **Parallel with**: Step 8.4 (different files — `src/components/*` vs. `app/(app)/trip/[id]/print.tsx`); ui-specialist may interleave
+- **Platform check**: Web (full print support), iOS + Android (read-only view, no print). The `@media print` CSS is web-only; native ignores it. The route exists on all three platforms but the print button on native is hidden or replaced with the inline note. Document the platform split in the file with a comment.
+- **Risks**:
+  - [Medium] Expo Router web's HTML structure may make `body` selectors fragile — Mitigation: target the route's root view via a stable className (`tripvisor-print-root`) and apply print CSS to `.tripvisor-print-root`, not `body`
+  - [Medium] React Native primitives (`<View>`, `<Text>`) compile to `<div>` / `<span>` on web with inline styles, which `@media print` can override but can't easily restyle — Mitigation: keep the print page as visually plain as possible; rely on hiding chrome rather than restyling cards
+  - [Low] Long itineraries (>50 places) may overflow A4 portrait — Mitigation: out of scope; A4 is single-page best-effort, multi-page splitting handled by browser print engine naturally
+- **Touched files**: `app/(app)/trip/[id]/print.tsx` (new), possibly `src/components/PrintItinerary.tsx` (new — only if 8.5's body grows past ~200 lines)
+
+### Step 8.6 — In-place cost editor (currency + rate) + "Print itinerary" button
+- **Status**: ✅ Done
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) On the trip detail screen `app/(app)/trip/[id]/index.tsx`, add an inline editor for `currency` + `cost_per_km` — concretely, a small "Cost settings" section near the rollup card with: a `SegmentedControl` (or `Picker`) for currency (USD / EUR / GBP / TRY / JPY) and a numeric `TextInput` for cost-per-km. Wire both to `useUpdateTrip(tripId)` from Step 8.3; debounce the rate input by 500ms so we don't flood the DB on every keystroke. Validate the rate as a positive number; show an inline `EmptyState`-style hint if invalid (no toast lib). (b) Add a "Print itinerary" `Button` to the trip detail screen header (or the cost-settings section, whichever fits the layout). On web, the button uses `router.push('/trip/' + id + '/print')` and the print page itself contains a second "Print this page" button that calls `window.print()`. On native, the button uses the same `router.push` but the destination renders the read-only summary view from 8.5 and hides the `window.print()` button. (c) Confirm the rollup updates live as the user changes the rate (it should via TanStack Query cache invalidation from `useUpdateTrip`). **No tests.**
+- **Inputs**: Steps 8.3, 8.4, 8.5
+- **Expected output**: Cost settings inline section persists changes; rollup card recomputes within ~500ms of the rate input settling; "Print itinerary" navigates to the print route on all three platforms; on web the print page's `window.print()` button opens the browser print dialog
+- **Depends on**: Steps 8.3, 8.4, 8.5
+- **Parallel with**: (none — integration step that ties 8.3 / 8.4 / 8.5 together)
+- **Platform check**: All three. The `window.print()` call is web-only and gated by `Platform.OS === 'web'`; the navigation works everywhere; native renders the print route as a scrollable view.
+- **Risks**:
+  - [Medium] Debouncing with React Native `TextInput` requires `useDebouncedValue` or a small `useEffect`-based debounce; ui-specialist must avoid spawning a new `setTimeout` on every render — Mitigation: use a stable debounce hook; if none exists in the repo, write a 10-line `useDebounce` in the same file
+  - [Medium] `Platform.OS` checks for `window.print()` should fall through to a no-op on native, not crash — Mitigation: ui-specialist confirms native builds still compile (Metro will fail loudly if `window` is referenced unguarded)
+  - [Low] The numeric input may accept `NaN` if user types letters — Mitigation: parse with `Number(...)` and bail on `Number.isFinite(...) === false`
+- **Touched files**: `app/(app)/trip/[id]/index.tsx`, `app/(app)/trip/[id]/print.tsx` (final wiring of `window.print()` button)
+
+### Step 8.7 — Reviewer pass on Phase 8 changes
+- **Status**: ✅ Done
+- **Agent**: reviewer
+- **Size**: S
+- **Task**: Read every diff introduced in Phase 8. Confirm: (1) the new `currency` + `cost_per_km` columns inherit the existing `trips_owner_all` RLS policy (they do — the policy gates the row, not the column, but the SQL should be sanity-checked); (2) the cost rollup math is correct — `meters / 1000 * cost_per_km` per leg, summed; rounding behaviour is reasonable (no premature `Math.round` that loses sub-unit precision); (3) `Intl.NumberFormat` is invoked with valid currency codes from the literal union — no runtime mismatch between TS type and migration check constraint; (4) the print route does not log PII or trip data to Sentry / console; (5) the print page's "Powered by Google" attribution is present (Tripvisor rule — every Place-data screen); (6) `window.print()` is gated by `Platform.OS === 'web'` and does not appear in native bundles; (7) no Google ToS regressions — the print page must NOT include Google reviews / photos / ratings / hours (those aren't persisted anyway, but reviewer confirms the print template only reads from `trip_places` columns); (8) `useUpdateTrip` debouncing does not race with optimistic updates from Phase 7's archive / unarchive (different cache keys, but reviewer confirms). Write findings to `docs/reviews/phase-8.md` with critical / high / medium / low. **Tests are out of scope; reviewer reads code only, does not run tests or smokes.**
+- **Inputs**: All Phase 8 diffs
+- **Expected output**: `docs/reviews/phase-8.md` with findings; no critical or high blocks Step 8.8
+- **Depends on**: Step 8.6
+- **Parallel with**: (none)
+- **Platform check**: N/A (review)
+- **Risks**:
+  - [Medium] If reviewer surfaces a critical (e.g. `window.print` leaks into native bundle, attribution missing), Phase 8 must loop back to ui-specialist — Mitigation: budget one fix loop; if more than one critical surfaces, planner re-enters with a revised plan
+  - [Low] Reviewer may push back on the fixed currency list — Mitigation: parked as a follow-up unless it's a blocker for the user
+- **Touched files**: `docs/reviews/phase-8.md`
+
+### Step 8.8 — Docs flip
+- **Status**: ✅ Done
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: (a) Add one row to `docs/features/overview.md`: "Cost & itinerary visibility (rollup, daily summary, print)" → ✅ Done (web; native deferred to user smoke), Phase 8, doc `cost-and-print.md`. (b) Create `docs/features/cost-and-print.md` per the existing feature-doc template (intent / scope / API surface / data model / platforms verified table — leave iOS / Android boxes unticked, tick Web only). Include a short "Print on native" section noting the deliberate native limitation and the inline "Open this trip on the web to print" copy. (c) Flip the Phase 8 row in `plan.md`'s top table to ✅ Done. (d) Append a one-paragraph "Phase 8 — close-out" entry under the Phase 7 close-out paragraph, summarising shipped surface (cost rollup, per-day summary, in-place cost editor, web print route + A4 stylesheet, native read-only print view). Do NOT edit `CLAUDE.md` (planner project rule).
+- **Inputs**: Step 8.7 review (no critical / high)
+- **Expected output**: Feature doc reflects the new state; `plan.md` Phase 8 row reads ✅ Done; the new feature doc exists
+- **Depends on**: Step 8.7
+- **Parallel with**: (none)
+- **Platform check**: N/A (docs)
+- **Risks**:
+  - [Low] Existing feature-doc template may have evolved between Phase 7 and now — Mitigation: docs-specialist reads `docs/features/trip-lifecycle.md` (Phase 7) as the most recent template and matches its shape
+- **Touched files**: `plan.md`, `docs/features/overview.md`, `docs/features/cost-and-print.md` (new)
+
+## ⚠ Blockers (Phase 8 — must be cleared before Step 8.2)
+
+1. **Local Supabase stack must be reachable** for the migration to apply (`npx supabase db reset`). Same precondition as Phase 7 Step 7.2; if the user has not run `supabase start` since Phase 7, they need to before Step 8.2 lands.
+2. **Pre-existing blockers carried forward — NOT in scope for Phase 8**:
+   - Google Maps API keys — Phase 8 deliberately avoids any Google-keyed surface; cost is computed from already-cached `trip_legs.distance_meters` written during Phase 2 optimization. No new Google calls.
+   - Leaked Supabase PAT rotation — Phase 8 uses local Supabase only; cloud PAT is irrelevant.
+   - EAS account / Apple Developer / Google Play Developer — Phase 8 is web-first for print; native renders a read-only view by design. No native build / signing work.
+
+## Phase 8 — non-goals (explicit)
+
+- **Tests** — no Jest, no Deno tests, no fast-check, no RLS integration tests, no `*.test.ts` / `*.spec.ts` files authored or modified. The `test-specialist` sub-agent is removed for the duration of the project.
+- **Smokes** — no Playwright execution, no manual UI smoke checklists, no `docs/smoke/phase-8.md`.
+- **Coverage / CI changes** — Phase 5 deferred work stays deferred; the existing `.github/workflows/` is not modified.
+- **Google Maps work** — no Places API, no Routes API, no optimizer changes, no map polyline updates. Cost is derived purely from already-cached `trip_legs.distance_meters` and `duration_seconds`.
+- **EAS / native builds** — no `eas.json` changes, no Apple / Google Play config, no native verification beyond visual confirmation by the implementing specialist.
+- **Native verification** — iOS / Android remain deferred to user smoke as standard for this project.
+- **Native PDF / share** — printing on native is explicitly out of scope; the native `print` route renders a read-only view with an inline note pointing the user to the web. No `expo-print`, no `expo-sharing`, no platform PDF generation.
+- **Multi-currency per leg** — trip-level currency only; per-place or per-leg currencies are parked.
+- **Free-form ISO 4217 currency list** — fixed list of 5 currencies (USD / EUR / GBP / TRY / JPY) chosen so the editor can be a segmented control. Expanding the list is a one-line follow-up.
+- **Per-day map screenshots in print** — text-only print template; embedding a static map image would require a Google call and a key. Parked.
+- **Phases 2 / 3 / 5 / 6 status flips** — Phase 8 does not touch their rows; they stay 🚧 / partial as recorded.
+- **Phase 7 follow-ups** — M2 (parallel-mutation rollback) and the parked Phase 7 lows from `docs/reviews/phase-7.md` stay parked; not reopened in Phase 8 unless reviewer flags interaction with the new mutations.
