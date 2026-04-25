@@ -24,7 +24,7 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Cost & itinerary visibility (rollup, daily summary, print) | ✅ Done (web; native deferred to user smoke) | 8 | [cost-and-print.md](cost-and-print.md) |
 | Trip notes / journal (per-place + per-day, Markdown in print) | ✅ Done (web; native deferred to user smoke) | 9 | [notes-journal.md](notes-journal.md) |
 | Account data export (JSON) | ✅ Done (web; native deferred to user smoke) | 10 | [account-export.md](account-export.md) |
-| Trips list polish (search + sort) | ✅ Done (web; native deferred to user smoke) | 11 | [trips-list-polish.md](trips-list-polish.md) |
+| Trips list polish (search + sort + Cost sort + date filter All/Upcoming/Past) | ✅ Done (web; native deferred to user smoke) | 11–12 | [trips-list-polish.md](trips-list-polish.md) |
 
 Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 In progress.
 

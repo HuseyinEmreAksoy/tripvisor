@@ -3,7 +3,7 @@
 **Status**: Done (Web). Native deferred to user smoke.
 **Owner agents**: ui-specialist, backend-specialist
 **Depends on**: trip-lifecycle (Phase 7 — Active/Archived tab segmented control)
-**Shipped on**: 2026-04-25 — Phase 11
+**Shipped on**: 2026-04-25 — Phase 11 (search + 3-key sort); Phase 12 (Cost sort + date filter)
 
 ## Platforms verified
 - ☐ iOS — deferred to user smoke
@@ -16,22 +16,24 @@ Make the trips list usable as the number of trips grows beyond a handful of entr
 
 ## Scope
 
-### Shipped
+### Shipped (Phase 11)
 - **Search input**: `TextInput` at the top of the trips list, debounced 200ms, case-insensitive substring match on `trip.title`. Shows a clear (×) button when non-empty. Filtering is pure client-side — no new API call.
-- **Sort tap-to-cycle**: a `Pressable` label that cycles through three modes on each tap:
+- **Sort tap-to-cycle** (3 keys): a `Pressable` label cycling through:
   - Recent — descending creation order (default, matches the API's existing ordering)
   - A-Z — locale-aware ascending by `title` via `Intl.Collator`
   - Start date — ascending by `start_date`; trips with `null start_date` sort to the bottom
-- **Tab-switch reset**: switching between the Active and Archived tabs resets both the search text and the sort mode to their defaults (empty search, Recent sort).
+- **Tab-switch reset**: switching between the Active and Archived tabs resets search, sort, and date filter to defaults.
 - **Empty-results state**: when the filtered list is empty but the underlying trip list is non-empty, renders "No trips match your search" in place of the list.
 
-### Deferred
-- **Cost sort** — would require aggregating `trip_legs.distance_meters` across all trips in the list (effectively one `useTripLegs` call per trip card — N+1). Needs a server-side cost-rollup field or a batched aggregation query before it is safe to expose. Phase 12+ candidate.
-- **Date filter (Upcoming/Past)** — a segmented "Upcoming / Past" filter based on `start_date` relative to today. Deferred because the current trips list header is already space-constrained on 360px-wide viewports; a filter drawer or expandable header is needed first. Phase 12+ candidate.
+### Shipped (Phase 12)
+- **Cost sort** (4th sort key) — batched `useAllTripLegs(tripIds)` hook in `src/api/routes.ts` issues a single `select trip_id, distance_meters from trip_legs where trip_id in (...)` with a sorted, stable query key (`TripLegCostRow` type). Trips with no legs sink to the bottom of the list.
+- **Date filter** — `FilterSheet` (`src/components/FilterSheet.tsx`) exposes All / Upcoming / Past options. Applied after search, before sort. `FilterSheet` wraps the existing platform-split `BottomSheet`; uses `accessibilityRole="radiogroup"` on the list and `radio` + `accessibilityState={{ checked }}` per row. Tab-switch resets the filter to All alongside search/sort reset.
 
 ## API surface
 
-Pure UI change. No new Edge Functions. No new TanStack Query hooks. No schema changes. All filtering and sorting operate on the already-fetched `useTrips()` result in local component state.
+Phase 11: pure UI change — no new Edge Functions, no new hooks, no schema changes.
+
+Phase 12 addition: `useAllTripLegs(tripIds: readonly Uuid[])` in `src/api/routes.ts`. Batched Supabase query (`select trip_id, distance_meters from trip_legs where trip_id in (...)`); sorted query key for cache stability. Returns `{ ...query, byTripId: Map<Uuid, TripLegCostRow[]> }`. No Edge Function; no schema change.
 
 ## Data
 
@@ -53,5 +55,4 @@ Pure UI change. No new Edge Functions. No new TanStack Query hooks. No schema ch
 
 ## Open follow-ups
 
-- **Cost sort**: compute legs aggregations server-side (e.g. a `trips` view or a materialized `total_cost` column updated by a trigger) or cache in the existing `useTrips` payload before exposing as a sort option. Primary concern is avoiding N+1 hook calls per trip card.
-- **Date filter (Upcoming/Past)**: implement when layout supports a filter surface on narrow viewports — candidate for a slide-down filter drawer or a chips row below the search input.
+None. Cost sort and date filter were both closed in Phase 12.

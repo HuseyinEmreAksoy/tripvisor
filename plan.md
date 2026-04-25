@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 11 — Done (web; native deferred)
+**Current phase**: Phase 12 — Done (web; native deferred)
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -19,6 +19,7 @@
 | 9 | Notes / journal expansion (inline place notes, per-day notes, Markdown in print) + M2 mutation cleanup | ✅ Done (web; native deferred to user smoke) | ui + backend |
 | 10 | Account data export (JSON download) + L4 debounce flush-on-blur bundle | ✅ Done (web; native deferred to user smoke) | backend + ui |
 | 11 | Trips list polish (search + sort) + Phase 10 L2 fix | ✅ Done (web; native deferred to user smoke) | ui + backend |
+| 12 | Advisory lock fix (Phase 5 M1) + Cost sort + Date filter (Phase 11 M1/L4 deferred) | ✅ Done (web; native deferred to user smoke) | backend + ui |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -798,7 +799,7 @@ See `docs/reviews/phase-5.md` for the reviewer sign-off on the source-code-only 
 - **Touched files**: `docs/smoke/phase-5.md`
 
 ### Step 5.8 — Reviewer pre-exit for Phase 5
-- **Status**: ✅ Done (scoped to source-code changes only) — `docs/reviews/phase-5.md` authored 2026-04-25. Scoped narrowly: optimizer anchor fix, `optimize-trip` thenable fix, and CI workflow. No critical or high findings. M2 fixed (Deno glob); M1 (advisory lock no-op) + L1–L3 parked. Full coverage/E2E/property-test review not completed (deferred with Steps 5.0–5.5, 5.7).
+- **Status**: ✅ Done (scoped to source-code changes only) — `docs/reviews/phase-5.md` authored 2026-04-25. Scoped narrowly: optimizer anchor fix, `optimize-trip` thenable fix, and CI workflow. No critical or high findings. M2 fixed (Deno glob); M1 (advisory lock no-op) parked — closed by Phase 12; L1–L3 parked. Full coverage/E2E/property-test review not completed (deferred with Steps 5.0–5.5, 5.7).
 - **Agent**: reviewer
 - **Size**: S
 - **Task**: Verify: (1) coverage thresholds enforced, (2) no flaky tests (re-run Playwright 3× locally), (3) CI workflow is minimal and fast, (4) RLS expansion actually probes both UPDATE and DELETE per table, (5) property-test `numRuns` tuned for CI time.
@@ -1258,7 +1259,7 @@ Shipped 2026-04-25. Phase 10 added a one-click data-export surface and closed th
 
 ## Phase 11 — close-out
 
-Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and closed the Phase 10 L2 byte-counting correctness finding. On the trips list (`app/(app)/trips.tsx`): a debounced `TextInput` (200ms, case-insensitive substring match on `title`) with a clear button, a tap-to-cycle `Pressable` cycling through Recent / A-Z / Start date sort modes (`Intl.Collator` for locale-aware A-Z; trips with `null start_date` sort to bottom on Start date mode), and an empty-results state ("No trips match your search") when the filtered list is empty. Tab switching (Active / Archived) resets both search text and sort to their defaults. Phase 10 L2 fix: `src/api/account-export.shared.ts` replaced the Blob-fallback byte counter with `new TextEncoder().encode(json).length` for exact UTF-8 byte counting on web and RN/Hermes without feature detection. No reviewer pass — scope was minimal (one screen + one-line backend polish). Planner agent was over usage limit; main assistant scoped the phase directly. Feature doc: `docs/features/trips-list-polish.md`. Explicitly deferred: Cost sort (N+1 risk without server-side aggregation) and date filter (Upcoming/Past) — both are Phase 12+ candidates.
+Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and closed the Phase 10 L2 byte-counting correctness finding. On the trips list (`app/(app)/trips.tsx`): a debounced `TextInput` (200ms, case-insensitive substring match on `title`) with a clear button, a tap-to-cycle `Pressable` cycling through Recent / A-Z / Start date sort modes (`Intl.Collator` for locale-aware A-Z; trips with `null start_date` sort to bottom on Start date mode), and an empty-results state ("No trips match your search") when the filtered list is empty. Tab switching (Active / Archived) resets both search text and sort to their defaults. Phase 10 L2 fix: `src/api/account-export.shared.ts` replaced the Blob-fallback byte counter with `new TextEncoder().encode(json).length` for exact UTF-8 byte counting on web and RN/Hermes without feature detection. No reviewer pass — scope was minimal (one screen + one-line backend polish). Planner agent was over usage limit; main assistant scoped the phase directly. Feature doc: `docs/features/trips-list-polish.md`. Explicitly deferred: Cost sort (N+1 risk without server-side aggregation) and date filter (Upcoming/Past) — both are Phase 12+ candidates. Both closed by Phase 12.
 
 ## Phase 8 — Cost / itinerary visibility polish (per-trip cost rollup, per-day summary card, printable A4 view)
 
@@ -1825,8 +1826,8 @@ Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and 
 - Phase 10 L2 fix: `src/api/account-export.shared.ts` — replaced Blob+fallback byte counting with `new TextEncoder().encode(json).length` (exact UTF-8, universal on web + RN/Hermes).
 
 **Explicitly deferred**:
-- Cost sort — would require per-trip `useTripLegs` aggregation across an unbounded list (N+1 risk); requires server-side aggregation or a cached cost field before it is safe to expose. Phase 12+ candidate.
-- Date filter (Upcoming/Past) — layout is cramped on 360px viewports; deferred until a filter drawer or expanded header can accommodate it cleanly. Phase 12+ candidate.
+- Cost sort — would require per-trip `useTripLegs` aggregation across an unbounded list (N+1 risk); requires server-side aggregation or a cached cost field before it is safe to expose. Phase 12+ candidate. **Closed by Phase 12** (batched `useAllTripLegs` query, projected to `trip_id, distance_meters`).
+- Date filter (Upcoming/Past) — layout is cramped on 360px viewports; deferred until a filter drawer or expanded header can accommodate it cleanly. Phase 12+ candidate. **Closed by Phase 12** (`FilterSheet` component + All / Upcoming / Past filter on trips list).
 
 **Process note**: The planner sub-agent hit usage limits before this phase was formally scoped. The main assistant chose Direction B (trips list search + sort) and defined the scope directly, following the established project convention of tight, unblocked increments. No separate planner ADR was produced; the decisions above capture the design rationale.
 
@@ -1837,8 +1838,17 @@ Shipped 2026-04-25. Phase 11 added search and sort to the trips list screen and 
 - **Tests** — no Jest, no Deno tests, no Playwright, no `*.test.ts` / `*.spec.ts` files authored or modified.
 - **Smokes** — no Playwright execution, no manual smoke checklist, no `docs/smoke/phase-11.md`.
 - **Reviewer pass** — scope was too small to warrant a full reviewer session; the main assistant verified correctness inline.
-- **Cost sort** — explicitly deferred; would require cross-trip legs aggregation.
-- **Date filter (Upcoming/Past)** — explicitly deferred; layout constraints on narrow viewports.
+- **Cost sort** — explicitly deferred in Phase 11; closed by Phase 12.
+- **Date filter (Upcoming/Past)** — explicitly deferred in Phase 11; closed by Phase 12.
 - **Backend changes** — pure UI change; no migrations, no Edge Functions, no API hooks added.
 - **Native verification** — iOS / Android deferred to user smoke as standard for this project.
 - **Phases 2 / 3 / 5 / 6 status flips** — Phase 11 does not touch their rows; they stay as recorded.
+
+---
+
+## Phase 12 — Advisory lock fix + Cost sort + Date filter
+
+**Status**: Done — shipped 2026-04-25; web verified; native deferred to user smoke.
+**Last updated**: 2026-04-25
+
+Closed three carried-forward deferred items in one bundle. (1) Phase 5 M1 — the silent no-op advisory lock in `optimize-trip` is replaced by a real session-scoped lock pair: new migration `0007_advisory_lock_wrappers.sql` adds `try_lock_trip(uuid)` / `unlock_trip(uuid)` SECURITY DEFINER RPCs wrapping `pg_try_advisory_lock` / `pg_advisory_unlock` keyed by `hashtextextended(trip_id::text, 0)`, granted to `service_role` only (not `authenticated`). `optimize-trip` now returns HTTP 409 `already_optimizing` when another optimize is in flight for the same trip; the `finally` block calls `unlock_trip` and emits `unlock_error` / `unlock_session_mismatch` warn logs for observability. Known limitation: PgBouncer transaction pooling can swap the backend connection between the lock and unlock RPCs, weakening the session-scope guarantee; the `unlock_session_mismatch` log provides telemetry to measure swap frequency — see `docs/features/optimization.md` for detail. (2) Phase 11 M1 — Cost sort added as the 4th sort mode on the trips list; backed by new `useAllTripLegs(tripIds)` hook in `src/api/routes.ts` that issues a single batched `select trip_id, distance_meters from trip_legs where trip_id in (...)` with a sorted, stable query key; trips with no legs sort to the bottom. (3) Phase 11 L4 — Date filter added via new generic `FilterSheet` component (`src/components/FilterSheet.tsx`) wrapping the existing platform-split `BottomSheet`; options: All / Upcoming / Past, applied after search and before sort; tab-switch resets search + sort + filter together. `FilterSheet` uses `accessibilityRole="radiogroup"` with per-row `radio` + `accessibilityState={{ checked }}`. Reviewer finding H2/H3 (auth-grant griefing) closed in-phase by revoking RPCs from `public`. M2 (silent unlock failure) closed in-phase by warn logs. Feature docs updated: `docs/features/trips-list-polish.md`, `docs/features/optimization.md`. Review: `docs/reviews/phase-12.md`.
