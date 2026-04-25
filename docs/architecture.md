@@ -9,8 +9,35 @@
 ## Backend
 
 - Supabase project: Postgres + Auth + Edge Functions.
-- Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`. See `supabase/migrations/0001_init.sql`.
+- Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`, `trip_expenses`. See `supabase/migrations/0001_init.sql` and `supabase/migrations/0010_trip_budget_categories.sql`.
 - **RLS on every table**; child tables scoped via `trips.user_id`.
+
+## Data model additions (Phase 20)
+
+### `trips.total_budget`
+
+New nullable column `total_budget numeric` added in migration `0010_trip_budget_categories.sql`. Represents the user's overall financial budget for the trip (not per-km). No unit enforcement — currency is inherited from `trips.currency`. The existing `cost_per_km` column is retained for backwards compatibility but deprecated via `COMMENT ON COLUMN`.
+
+### `trip_expenses` table
+
+Tracks categorized estimated and actual expenses for a trip.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid pk` | default `gen_random_uuid()` |
+| `trip_id` | `uuid fk trips` | cascade on delete |
+| `category` | `text` | CHECK IN (`accommodation`, `food`, `transport`, `shopping`, `activities`, `other`) |
+| `kind` | `text` | CHECK IN (`estimated`, `actual`) |
+| `amount` | `numeric` | CHECK `amount >= 0` |
+| `label` | `text null` | optional user description |
+| `day_index` | `int null` | links to a specific trip day; null means trip-level |
+| `created_at` | `timestamptz` | default `now()` |
+
+**RLS**: four policies (select / insert / update / delete) all scoped via `trip_id IN (SELECT id FROM trips WHERE user_id = auth.uid())`.
+
+**Client API** (`src/api/trip-expenses.ts`): Zod schema + types; `useTripExpenses(tripId)`, `useCreateTripExpense()`, `useUpdateTripExpense()`, `useDeleteTripExpense()`. Query keys live in the shared `src/api/_keys.ts` leaf module.
+
+**UI**: deferred to Phase 21 — the data layer is live but no expense entry UI exists yet.
 
 ### RLS special case — `trip_shares`
 
@@ -21,11 +48,59 @@
 
 These constraints are documented via `COMMENT ON POLICY` in `supabase/migrations/0009_share_insert_policy_note.sql`.
 
+## Edge Function error envelopes
+
+All Edge Functions return errors in the shape `{ error: { code: string, message: string } }` with an appropriate HTTP status.
+
+### `EdgeFunctionError` hierarchy (Phase 20)
+
+`src/api/_errors.ts` defines a shared base class:
+
+```ts
+class EdgeFunctionError extends Error {
+  constructor(public code: string, public message: string, public status: number) { ... }
+}
+```
+
+Concrete subclasses:
+
+- **`OptimizeError`** (`src/api/routes.ts`) — extends `EdgeFunctionError`; known codes: `already_optimizing`, `too_many_places`, `matrix_failed`, `not_found`, `rpc_failed`, `db_error`, `invalid_input`, `method_not_allowed`.
+- **`PlacesError`** (`src/api/places.ts`) — extends `EdgeFunctionError`; includes the special code `server_misconfigured` returned when `GOOGLE_MAPS_SERVER_KEY` is absent from Edge Function secrets.
+
+### `server_misconfigured` envelope
+
+When `GOOGLE_MAPS_SERVER_KEY` is not set, the Edge Functions `places-autocomplete`, `place-details`, `distance-matrix`, and `directions-polyline` all return:
+
+```json
+{ "error": { "code": "server_misconfigured", "message": "Google Maps server key is not configured. See docs/google-maps-setup.md." } }
+```
+
+The client (`src/api/places.ts`) parses this into a `PlacesError` instance. `app/(app)/trip/[id]/add.tsx` renders a setup banner when this code is detected.
+
+## Web layout breakpoints (Phase 20)
+
+`src/hooks/useBreakpoint.ts` returns the current breakpoint based on window width:
+
+| Name | Threshold | Screens using it |
+|---|---|---|
+| `mobile` | < 768 px | default (single-column) |
+| `tablet` | 768–1023 px | tablet-optimised spacing |
+| `desktop` | ≥ 1024 px | two-column auth; 2-col trips grid; trip detail 60/40 split |
+| `desktopWide` | ≥ 1440 px | trips list 3-col grid |
+
+Screens with desktop-specific layouts:
+- `app/(auth)/login.tsx` + `app/(auth)/signup.tsx` — two-column (imagery left, form right) at ≥1024 px.
+- `app/(app)/trips.tsx` — 2-col grid at ≥1024 px; 3-col at ≥1440 px.
+- `app/(app)/trip/[id]/index.tsx` — side-by-side map + itinerary (~60/40) at ≥1024 px; collapses to two tabs on mobile.
+- `app/(app)/trip/[id]/add.tsx` — 720 px max-width centered on desktop.
+
 ## Third-party APIs
 
 - **Google Maps Platform** — Places API (New), Routes API, Maps SDK (native), Maps JS (web).
 - **Client-side key** (bundled): Maps SDK only. Restricted by bundle id + SHA1 (native) or HTTP referer (web).
 - **Server-side key** (Supabase secret): everything else — Places HTTP, Routes HTTP. Never ships to client.
+
+For the full two-key setup guide (Cloud Console steps, where each key lives, verification curl commands, and free-tier guidance) see `docs/google-maps-setup.md`. The project deliberately separates the server key (API-restricted to Places + Routes, no referrer restriction) from the web JS key (restricted to Maps JavaScript API + HTTP referrer) so each leaked key has bounded blast radius.
 
 ## Auth
 

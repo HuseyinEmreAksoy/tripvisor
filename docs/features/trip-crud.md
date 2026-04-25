@@ -1,13 +1,13 @@
 # trip-crud
 
-**Status**: 🚧 In progress (code complete, awaiting live Supabase smoke)
+**Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred to user smoke.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: auth
 
 ## Platforms verified
-- ☐ iOS
-- ☐ Android
-- ☐ Web
+- ☐ iOS — deferred to user smoke
+- ☐ Android — deferred to user smoke
+- ✅ Web — Phase 20 smoke green 2026-04-25 (trips list + create form confirmed)
 
 ## User story
 As a traveler, I want to create, view, and delete trips so I can organize my upcoming holidays.
@@ -24,9 +24,17 @@ Platform differences:
 - Delete confirmation: `Alert.alert` on native, `window.confirm` on web
 
 ## Data
-Tables: `trips`, `trip_days`, `trip_places`, `trip_legs` (schema from Phase 0).
+Tables: `trips`, `trip_days`, `trip_places`, `trip_legs` (schema from Phase 0); `trip_expenses` (Phase 20 — see [expenses.md](expenses.md)).
 Phase 1 only writes to `trips` (create, delete) and `trip_places` (read).
+Phase 20 adds `trips.total_budget numeric null` (migration `0010_trip_budget_categories.sql`) for the overall trip budget. The old `cost_per_km` column is deprecated via SQL COMMENT but not dropped.
 RLS policies scope every query via `auth.uid()` / `trips.user_id`.
+
+## Phase 20 changes
+
+- **Time-first copy**: new-trip form labels updated to "Destination or trip name" and "Daily plan time (hours)". Empty-state copy updated to "Where to next?" (`src/components/emptyStates.ts`).
+- **Desktop trips list**: `app/(app)/trips.tsx` renders a 2-col grid at ≥1024 px and 3-col grid at ≥1440 px via `useBreakpoint`.
+- **`BackButton` on new-trip**: `app/(app)/trip/new.tsx` now includes the reusable `BackButton` component.
+- **`TripCard` DOM fix**: outer `Pressable` changed to `accessibilityRole="link"` to eliminate `<button>` inside `<button>` DOM nesting on web.
 
 ## APIs
 - `useTrips()` — `.from('trips').select('*').order('created_at', { ascending: false })`

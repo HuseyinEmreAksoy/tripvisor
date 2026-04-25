@@ -5,9 +5,9 @@
 **Depends on**: trip-crud, place-search
 
 ## Platforms verified
-- ☐ iOS
-- ☐ Android
-- ☐ Web
+- ☐ iOS — deferred to user smoke
+- ☐ Android — deferred to user smoke
+- ✅ Web — Phase 20 smoke green 2026-04-25 (`phase-2-optimize.spec.ts` passes; `EdgeFunctionError` refactor is shared client code, no platform-specific surface)
 
 ## User story
 As a traveler, I want the app to arrange my saved places into an efficient multi-day route so I don't waste time criss-crossing the city.
@@ -37,11 +37,13 @@ See [ADR-0001](../adr/0001-kmeans-2opt-over-or-tools.md).
 - Polyline only fetched for days with ≥ 2 places
 - Trip capped at 25 places for MVP (Routes API element billing scales quadratically)
 
-## Error surfacing (Phase 16)
+## Error surfacing (Phase 16 + Phase 20)
 
 The Edge Function has returned structured envelopes (`{ error: { code, message } }`) since Phase 2. Phase 16 wires up client-side parsing so the UI can show accurate status instead of a generic red pill.
 
-**`OptimizeError`** — `src/api/routes.ts`. Extends `Error`; adds `{ code: string, message: string, status: number }`. Re-exported via `src/api/index.ts`. The JSDoc in that file is the canonical list of all 8 known codes (mirroring `supabase/functions/optimize-trip/index.ts`).
+**`EdgeFunctionError`** — `src/api/_errors.ts` (Phase 20). Shared base class: `class EdgeFunctionError extends Error { constructor(public code: string, public message: string, public status: number) }`. Extracted in Phase 20 to eliminate circular imports between `routes.ts` and `places.ts`. Query keys for all tables also moved to the new `src/api/_keys.ts` leaf module.
+
+**`OptimizeError`** — `src/api/routes.ts`. Extends `EdgeFunctionError` (changed from raw `Error` in Phase 20). Re-exported via `src/api/index.ts`. The JSDoc in that file is the canonical list of all 8 known codes (mirroring `supabase/functions/optimize-trip/index.ts`).
 
 **`pillForOptimizeError(err)`** — `app/(app)/trip/[id]/index.tsx`. Maps known codes to `(tone, label)` pairs for `<StatusPill>`:
 - `already_optimizing` → info / "Optimizing in progress…" (the common 409 double-click race; not a failure)

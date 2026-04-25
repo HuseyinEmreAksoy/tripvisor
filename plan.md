@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 20 — Planned from 2026-04-25 user feedback
+**Current phase**: Phase 21 — Budget tracking + collaboration + accommodation tracking
 **Last updated**: 2026-04-25
 
 ## Status by phase
@@ -27,7 +27,7 @@
 | 17 | Recent place searches in the add flow | ✅ Done (web verified; native shares same code path — AsyncStorage cross-platform) | ui |
 | 18 | Duplicate place warning in add flow | ✅ Done (web verified; native shares same code path) | ui |
 | 19 | Test restoration + share-revoke production bug fix | ✅ Done | test + ui + backend |
-| 20 | UX / navigation / maps recovery + expense model cleanup | 📋 Planned (user-priority backlog added 2026-04-25) | ui + backend + docs |
+| 20 | UX / navigation / maps recovery + expense model cleanup | ✅ Done (web smoke green 2026-04-25; native deferred to user smoke) | ui + backend + docs |
 | 21 | Budget tracking + collaboration + accommodation tracking | 📋 Planned (promoted from brainstorm on 2026-04-25) | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
@@ -2097,7 +2097,7 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
 ## Phase 20 — UX / navigation / maps recovery + expense model cleanup
 
 **Goal**: Turn the current app from a functional prototype into a usable travel product by fixing broken map flows, strengthening navigation, improving visual appeal, and correcting the planning / expense model.
-**Status**: 📋 Planned
+**Status**: ✅ Done — shipped 2026-04-25; smoke green 24 passed / 0 failed / 13 skipped; see `docs/smoke/phase-20.md`.
 **Entry criteria**:
 - Phase 19 is shipped
 - Local Supabase stack and web app can run for smoke
@@ -2111,9 +2111,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
 
 **Critical path**: Step 1 → Step 2 → Step 3 → Step 5 → Step 6 → Step 7 → Step 8
 
-### Step 1 — Travel-first auth / empty-state / landing visual overhaul
+### Step 1 — Travel-first auth / empty-state / landing visual overhaul ✅ Done 2026-04-25
 - **Agent**: ui-specialist
 - **Size**: L
+- **Shipped**: Hero redesign on login/signup with Unsplash CDN imagery and lifted form card; `noTrips` copy changed to "Where to next?"; new `heroOverlay`/`heroChipBg`/`heroChipText` tokens; TS literal-type widening bug in `tokens.ts` fixed.
 - **Task**: Redesign the auth screen, empty states, and first-impression surfaces to feel like a travel product using imagery, stronger hierarchy, richer calls-to-action, and clearer onboarding cues.
 - **Expected output**: updated auth and empty-state UI across web + native-shared surfaces
 - **Depends on**: None
@@ -2121,9 +2122,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Medium] Over-design can fight existing form ergonomics — Mitigation: keep forms readable and task-first; visual richness must not reduce clarity
 - **Verification**: live smoke shows a visually richer first-run experience on web, with no regression to auth flow completion
 
-### Step 2 — Navigation clarity + back affordances
+### Step 2 — Navigation clarity + back affordances ✅ Done 2026-04-25
 - **Agent**: ui-specialist
 - **Size**: M
+- **Shipped**: New `BackButton` component (`src/components/BackButton.tsx`) — chevron-left, 44 px touch target, `accessibilityRole="button"`, optional `noPrint` attr; wired into `print.tsx`, `add.tsx`, and `new.tsx`.
 - **Task**: Add consistent back affordances and navigation cues on deep screens, especially add-place, place details, trip detail subflows, and web page transitions.
 - **Expected output**: visible back navigation pattern used consistently across app flows
 - **Depends on**: Step 1
@@ -2131,9 +2133,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Low] Duplication with platform navigation chrome — Mitigation: use a shared pattern that complements Expo Router rather than fighting it
 - **Verification**: every deep-linkable screen has an obvious path back during smoke
 
-### Step 3 — Maps + add-place recovery path
+### Step 3 — Maps + add-place recovery path ✅ Done 2026-04-25
 - **Agent**: backend-specialist
 - **Size**: M
+- **Shipped**: Defensive `?? []` coercions in `Map.web.tsx` + `MapUnavailable.tsx`; `server_misconfigured` envelope returned by all four Edge Functions when `GOOGLE_MAPS_SERVER_KEY` absent; `PlacesError` typed error in `src/api/places.ts`; setup banner in `add.tsx`; new `docs/google-maps-setup.md`; `supabase/functions/.env.example` template.
 - **Task**: Fix the broken Google Maps / add-place path end-to-end, including clearer handling for missing `GOOGLE_MAPS_SERVER_KEY`, local/dev secret expectations, and any edge-function misconfiguration surface.
 - **Expected output**: add-place and maps have actionable error handling and a working configured path
 - **Depends on**: None
@@ -2141,9 +2144,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [High] Local success may still differ from hosted key restrictions — Mitigation: document env-specific key requirements and smoke both local and hosted assumptions
 - **Verification**: add-place no longer throws `server_misconfigured` when the server key is present; when absent, the app shows a clear actionable message
 
-### Step 4 — Desktop web layout pass
+### Step 4 — Desktop web layout pass ✅ Done 2026-04-25
 - **Agent**: ui-specialist
 - **Size**: L
+- **Shipped**: New `useBreakpoint` hook (mobile <768, tablet 768–1023, desktop ≥1024, desktopWide ≥1440); auth two-column layout at ≥1024 px; trips list 2/3-col grid; trip detail side-by-side 60/40 split on desktop; add-place 720 px max-width; `TripCard` outer `accessibilityRole="link"` (fixes `<button>` nesting); `BottomSheet.web.tsx` `shadow*` → `boxShadow` migration; nine E2E specs updated for new tab structure.
 - **Task**: Introduce desktop-aware layout treatments for web on primary screens instead of relying on mobile-stretched layouts.
 - **Expected output**: responsive desktop layouts for auth, trips list, trip detail, and add-place on web
 - **Depends on**: Step 1
@@ -2151,9 +2155,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Medium] Web-only divergence may fragment design system — Mitigation: keep shared tokens but split layout structure where needed
 - **Verification**: 1280px web smoke reads as an intentional desktop app, not a narrow mobile column
 
-### Step 5 — Planning terminology cleanup (`duration` / `time` first)
+### Step 5 — Planning terminology cleanup (`duration` / `time` first) ✅ Done 2026-04-25
 - **Agent**: ui-specialist
 - **Size**: M
+- **Shipped**: New-trip form labels updated to "Destination or trip name" and "Daily plan time (hours)"; empty-state copy refreshed in Step 1; time-first framing confirmed in the trip detail settings section.
 - **Task**: Audit user-facing wording and screens so trip planning emphasizes duration / time budgets where that is the real concept, reducing misleading generic `cost` language.
 - **Expected output**: clearer time-first planning copy and UI labels
 - **Depends on**: Step 1
@@ -2161,9 +2166,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Low] Mixed terminology may remain in older screens — Mitigation: create a copy audit checklist during implementation
 - **Verification**: planner-related screens consistently distinguish time budgets from financial budgets
 
-### Step 6 — Expense model redesign (remove `cost per km`, add categories)
+### Step 6 — Expense model redesign (remove `cost per km`, add categories) ✅ Done 2026-04-25
 - **Agent**: backend-specialist
 - **Size**: L
+- **Shipped**: Migration `0010_trip_budget_categories.sql` adds `trips.total_budget` and new `trip_expenses` table (categories: accommodation/food/transport/shopping/activities/other; kind: estimated/actual; optional `day_index`; RLS via trip ownership); `cost_per_km` deprecated via SQL COMMENT; full TanStack Query API in `src/api/trip-expenses.ts`; shared `EdgeFunctionError` base class in `src/api/_errors.ts`; circular import resolved via `src/api/_keys.ts`.
 - **Task**: Re-scope expense tracking around total-trip budget plus categorized entries (`accommodation`, `food`, `transport`, `shopping`, etc.), explicitly removing `cost per km` as the primary model.
 - **Expected output**: updated data model / API contract plan for categorized expenses and total-budget entry
 - **Depends on**: Step 5
@@ -2171,9 +2177,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Medium] Existing cost UI and data may need migration — Mitigation: keep schema additive and deprecate old fields behind compatibility shims first
 - **Verification**: expense entry flow supports categories and total-trip budget without relying on per-km cost
 
-### Step 7 — Itinerary runtime bug investigation (`markers` / `useMemo`)
-- **Agent**: reviewer
+### Step 7 — Itinerary runtime bug investigation (`markers` / `useMemo`) ✅ Done 2026-04-25
+- **Agent**: reviewer + ui-specialist
 - **Size**: M
+- **Shipped**: Root cause identified as JS `Map` constructor shadowed by the `Map` component import in `index.tsx`; fix: import renamed to `Map as TripMap`; `selectedDay` reset logic replaced with render-time `effectiveSelectedDay` derivation eliminating React 18 hook-tape corruption.
 - **Task**: Reproduce and isolate the itinerary `markers` / `useMemo` runtime failure, identify the owning layer, and file a structured fix report before implementation.
 - **Expected output**: concrete bug report with file/line ownership and fix direction
 - **Depends on**: Steps 2, 4
@@ -2181,9 +2188,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Medium] Reproduction may depend on map state / platform timing — Mitigation: capture reproduction steps and runtime logs during smoke
 - **Verification**: a deterministic repro or a documented reason why it could not yet be reproduced
 
-### Step 8 — Smoke-first testing / reporting pass for the broken golden path
+### Step 8 — Smoke-first testing / reporting pass for the broken golden path ✅ Done 2026-04-25
 - **Agent**: test-specialist
 - **Size**: M
+- **Shipped**: First smoke run found BLOCKER (Map import shadowing JS Map constructor — see Step 8b); second run after fix: 24 passed / 0 failed / 13 skipped. Five implicit-any callbacks typed; `DateField.ts` barrel created. Full results in `docs/smoke/phase-20.md`.
 - **Task**: Run live smoke against the updated UX and core flow, explicitly checking maps, add-place, navigation, desktop-web layout, and runtime errors; file findings instead of relying only on automated tests.
 - **Expected output**: smoke log plus structured findings for any remaining user-visible blockers
 - **Depends on**: Steps 3, 4, 6, 7
@@ -2191,9 +2199,10 @@ A real production bug was surfaced and fixed. The RLS share test had been assert
   - [Low] Some hosted-only issues may remain — Mitigation: log local vs hosted behavior separately
 - **Verification**: `docs/smoke/phase-20.md` records the golden path and any residual blockers
 
-### Step 9 — Docs / roadmap sync for the UX recovery pass
+### Step 9 — Docs / roadmap sync for the UX recovery pass ✅ Done 2026-04-25
 - **Agent**: docs-specialist
 - **Size**: S
+- **Shipped**: `plan.md` and `docs/features/overview.md` updated; `docs/architecture.md` updated (data model, Edge Function error hierarchy, web breakpoints, maps setup link); `docs/features/auth.md`, `place-search.md`, `trip-crud.md`, and `optimization.md` updated; new `docs/features/expenses.md` created.
 - **Task**: Update roadmap/docs to reflect shipped UX, navigation, map, and expense-model decisions after the phase lands.
 - **Expected output**: `plan.md` status updated and relevant feature docs queued or refreshed
 - **Depends on**: Step 8

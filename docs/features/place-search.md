@@ -33,6 +33,14 @@ As a trip planner, I want to search Google Places and add results to my trip wit
 - Session token generated on screen mount via `useAutocompleteSessionToken`, kept stable for the mount lifetime
 - Upstream timeout (>3s) surfaces as an inline error; previous suggestions stay visible
 - Duplicate add: inline warning banner shown when the picked place is already in the trip (Phase 18). User can still proceed — banner is informational only.
+- **Server misconfigured**: when `GOOGLE_MAPS_SERVER_KEY` is absent, all four Edge Functions return `{ error: { code: "server_misconfigured", ... } }`. `src/api/places.ts` parses this into a typed `PlacesError` (extends `EdgeFunctionError` from `src/api/_errors.ts`). `app/(app)/trip/[id]/add.tsx` renders a prominent setup banner linking to `docs/google-maps-setup.md` when this error code is detected. (Phase 20)
+
+## Phase 20 changes
+
+- **`PlacesError` typed error** — `src/api/places.ts` now imports `EdgeFunctionError` from `src/api/_errors.ts` and exports `PlacesError` for typed `server_misconfigured` handling. Previously, misconfiguration produced an unhandled exception.
+- **Setup banner** — `add.tsx` shows an in-screen banner ("Maps key not configured — see setup guide") when `PlacesError.code === 'server_misconfigured'`, replacing the previous unhandled error state.
+- **Desktop layout** — add-place screen constrained to 720 px max-width centered on desktop, courtesy of `useBreakpoint` (Phase 20 Step 4).
+- **`BackButton`** — `app/(app)/trip/[id]/add.tsx` includes the shared `BackButton` component.
 
 ## Test plan
 - Edge Function: `places-autocomplete/test.ts` covers happy path, `?ping`, method not allowed, invalid input, upstream error ✅

@@ -4,15 +4,16 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
 | Feature | Status | Phase | Doc |
 |---|---|---|---|
-| Auth (magic link) | 🚧 In progress | 1 | [auth.md](auth.md) |
-| Trip CRUD | 🚧 In progress | 1 | [trip-crud.md](trip-crud.md) |
-| Place search (autocomplete) + recent places + duplicate warning | 🚧 In progress (base code complete; Phase 17 recents — web verified, iOS/Android deferred to user smoke; Phase 18 duplicate warning — web verified, native shares same code path) | 1, 17, 18 | [place-search.md](place-search.md) |
+| Auth (magic link) | 🚧 In progress (Phase 20: hero redesign + two-column desktop layout shipped; web verified; iOS/Android deferred to user smoke) | 1, 20 | [auth.md](auth.md) |
+| Trip CRUD | 🚧 In progress (Phase 20: time-first copy + `total_budget` column + desktop trips-list grid shipped; web verified; iOS/Android deferred to user smoke) | 1, 20 | [trip-crud.md](trip-crud.md) |
+| Place search (autocomplete) + recent places + duplicate warning | 🚧 In progress (Phase 20: `PlacesError` typed error + `server_misconfigured` setup banner shipped; web verified; iOS/Android deferred to user smoke) | 1, 17, 18, 20 | [place-search.md](place-search.md) |
 | Place details + Google reviews | 🚧 In progress | 1 | [place-details.md](place-details.md) |
-| Route optimization (k-means + 2-opt) | 🚧 In progress | 2 | [optimization.md](optimization.md) |
+| Route optimization (k-means + 2-opt) | 🚧 In progress (Phase 20: `EdgeFunctionError` base class extracted; `OptimizeError` refactored to extend it; web verified) | 2, 20 | [optimization.md](optimization.md) |
 | Day split by time budget | 🚧 In progress | 2 | [day-split.md](day-split.md) |
-| Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (base map code complete; per-day filter shipped Phase 15 — web verified, native deferred to user smoke) | 2, 15 | [map.md](map.md) |
+| Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (Phase 20: Map import shadowing JS Map fixed; desktop split-view; web verified; native deferred to user smoke) | 2, 15, 20 | [map.md](map.md) |
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
 | Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
+| Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20 (migration, RLS, TanStack Query API); UI deferred to Phase 21 | 20 | [expenses.md](expenses.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
 | Shareable read-only link | ✅ Done (web verified; iOS/Android deferred to user smoke — Head is web-only no-op, no native re-verification needed for Phase 14 unfurl; Phase 19 fixed share-revoke production bug — tokens that appeared revoked were live until this fix) | 4, 14, 19 | [share.md](share.md) |
 | .ics calendar export | 🚧 Code complete · awaiting native smoke | 4 | [ics-export.md](ics-export.md) |

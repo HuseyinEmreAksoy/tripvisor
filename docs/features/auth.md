@@ -1,15 +1,19 @@
 # auth
 
-**Status**: 🚧 In progress (code complete, awaiting live Supabase smoke)
+**Status**: 🚧 In progress — Phase 20 visual overhaul shipped 2026-04-25; web verified; native deferred to user smoke.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: —
 
 ## Platforms verified
-- ☐ iOS (native) — pending user `eas build --profile development`
-- ☐ Android (native) — pending user `eas build --profile development`
-- ☐ Web — pending user `npm install && npm run web`
+- ☐ iOS (native) — deferred to user smoke
+- ☐ Android (native) — deferred to user smoke
+- ✅ Web — Phase 20 smoke green 2026-04-25 (auth flow + hero screens confirmed)
 
-Cannot be ticked until Supabase project is provisioned and magic-link mail arrives end-to-end.
+## Phase 20 changes
+
+`app/(auth)/login.tsx` and `app/(auth)/signup.tsx` received a hero redesign: full-bleed Unsplash CDN destination image, semi-transparent overlay using the new `heroOverlay` token, a floating chip strip (`heroChipBg`/`heroChipText`) for destination badges, and a lifted form card. At desktop widths (≥1024 px, via `useBreakpoint`) the screens render in two-column layout — imagery left, form right.
+
+`src/theme/tokens.ts` additions: `heroOverlay`, `heroChipBg`, `heroChipText`. Also fixed a latent TS bug where `darkColors: typeof lightColors` was widening string literal types to `string`; switched to `Record<keyof typeof lightColors, string>`.
 
 ## User story
 As a traveler, I want to sign in with just my email so that I don't have to remember another password.
