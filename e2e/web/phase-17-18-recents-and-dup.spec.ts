@@ -100,7 +100,7 @@ test.describe('Phase 17-18 — recent places', () => {
     });
 
     // Navigate to an existing trip.
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips — seed data required');
@@ -220,7 +220,7 @@ test.describe('Phase 17-18 — duplicate place warning', () => {
     });
 
     // Navigate to an existing trip.
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips — seed data required');
@@ -273,7 +273,9 @@ test.describe('Phase 17-18 — duplicate place warning', () => {
       page.getByPlaceholder(/restaurant, museum/i),
     ).first();
     await searchInput2.fill('Sagrada');
-    await expect(page.getByText('Sagrada Familia (E2E Dup)')).toBeVisible({ timeout: 5_000 });
+    // Use .first() to avoid strict-mode violation when the place name appears in
+    // both the autocomplete suggestion row and the itinerary card simultaneously.
+    await expect(page.getByText('Sagrada Familia (E2E Dup)').first()).toBeVisible({ timeout: 5_000 });
     await page.getByText('Sagrada Familia (E2E Dup)').first().click();
 
     // The duplicate warning banner should appear.

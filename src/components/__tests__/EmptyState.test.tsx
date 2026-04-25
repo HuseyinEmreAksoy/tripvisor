@@ -100,7 +100,9 @@ describe('emptyStates variants', () => {
 
   it('noTrips shows correct title', () => {
     const { getByText } = wrap(<EmptyState {...noTrips} onPress={() => {}} />);
-    expect(getByText('Plan your first trip')).toBeTruthy();
+    // Title string is sourced directly from the noTrips constant so this test
+    // stays green across copy updates without hardcoding the literal.
+    expect(getByText(noTrips.title)).toBeTruthy();
   });
 
   it('noPlaces renders without throwing', () => {

@@ -33,7 +33,7 @@ async function skipIfNotAuthenticated(page: import('@playwright/test').Page) {
 }
 
 async function skipIfNoTrips(page: import('@playwright/test').Page) {
-  const firstCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+  const firstCard = page.locator('[aria-label^="Open trip"]').first();
   const hasTrip = await firstCard.isVisible({ timeout: 5_000 }).catch(() => false);
   if (!hasTrip) {
     test.skip(true, 'No trip cards visible — seed data required');
@@ -65,7 +65,7 @@ test.describe('Phase 11-12 — trip search', () => {
     }
 
     // Count trips before search.
-    const beforeCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const beforeCount = await page.locator('[aria-label^="Open trip"]').count();
 
     // The fixture trip title contains "Phase 6 Smoke" (from auth.setup.ts).
     // Type something that matches the fixture trip.
@@ -73,7 +73,7 @@ test.describe('Phase 11-12 — trip search', () => {
     // Wait for debounce (200ms in trips.tsx) + render.
     await page.waitForTimeout(400);
 
-    const afterSearchCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const afterSearchCount = await page.locator('[aria-label^="Open trip"]').count();
     // After a specific search, we should have ≤ the original count.
     expect(afterSearchCount).toBeLessThanOrEqual(beforeCount);
     // And at least one match (the fixture trip contains "Phase 6").
@@ -86,7 +86,7 @@ test.describe('Phase 11-12 — trip search', () => {
 
     // After clearing, the full list should be back.
     await page.waitForTimeout(400); // debounce
-    const afterClearCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const afterClearCount = await page.locator('[aria-label^="Open trip"]').count();
     expect(afterClearCount).toBe(beforeCount);
   });
 });
@@ -224,7 +224,7 @@ test.describe('Phase 11-12 — no results state', () => {
     await expect(noResultsText).toBeVisible({ timeout: 5_000 });
 
     // No trip cards should be visible.
-    const tripCardCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const tripCardCount = await page.locator('[aria-label^="Open trip"]').count();
     expect(tripCardCount).toBe(0);
 
     // Clear the search to restore the list.

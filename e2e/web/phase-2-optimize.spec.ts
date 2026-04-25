@@ -27,15 +27,19 @@ test.describe('Phase 2 — optimize + day split + map', () => {
     // Create trip
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/);
-    // Use getByRole to avoid ambiguity with the visual "Title" label text.
-    await page.getByRole('textbox', { name: /^title$/i }).fill(`Smoke ${Date.now()}`);
-    await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
+    // Phase 20 Step 5 renamed the title field to "Destination or trip name"
+    // and the budget field to "Daily plan time (hours)".
+    await page.getByRole('textbox', { name: /destination or trip name/i }).fill(`Smoke ${Date.now()}`);
+    await page.getByRole('textbox', { name: /daily plan time/i }).fill('8');
     await page.getByRole('button', { name: /create trip/i }).click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/);
 
-    // Trip detail tabs exist
+    // Trip detail tabs exist.
+    // Phase 20 Step 4: desktop layout collapses Map+Itinerary into one tab
+    // "Map & Itinerary". On desktop (≥1024px) the itinerary tab no longer
+    // exists as a separate role="tab" — only "Map & Itinerary" and "Settings".
+    // The regex /map/i matches "Map & Itinerary"; /settings/i matches "Settings".
     await expect(page.getByRole('tab', { name: /map/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /itinerary/i })).toBeVisible();
     await expect(page.getByRole('tab', { name: /settings/i })).toBeVisible();
   });
 });

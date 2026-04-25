@@ -52,17 +52,20 @@ test.describe('Phase 5 happy — create trip', () => {
     await expect(page).toHaveURL(/\/trip\/new$/);
 
     const title = `E2E Trip ${Date.now()}`;
-    // Use getByRole('textbox') to avoid strict-mode ambiguity with the visual label Text.
-    await page.getByRole('textbox', { name: /^title$/i }).fill(title);
-    await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
+    // Phase 20 Step 5: title field renamed to "Destination or trip name",
+    // budget field renamed to "Daily plan time (hours)".
+    await page.getByRole('textbox', { name: /destination or trip name/i }).fill(title);
+    await page.getByRole('textbox', { name: /daily plan time/i }).fill('8');
     await page.getByRole('button', { name: /create trip/i }).click();
 
     // Should redirect to the trip detail page
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
 
-    // Tabs are rendered
+    // Tabs are rendered.
+    // Phase 20 Step 4: desktop layout (≥1024px) collapses Map + Itinerary into
+    // "Map & Itinerary" tab. /map/i matches that combined label. "Settings" is
+    // still a separate tab. There is no standalone "Itinerary" tab on desktop.
     await expect(page.getByRole('tab', { name: /map/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /itinerary/i })).toBeVisible();
     await expect(page.getByRole('tab', { name: /settings/i })).toBeVisible();
   });
 });
@@ -120,13 +123,13 @@ test.describe('Phase 5 happy — add place (mocked autocomplete)', () => {
     });
 
     // Navigate to a trip or create one first
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
-      // Create a trip first
+      // Create a trip first. Phase 20 Step 5: field labels updated.
       await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
-      await page.getByRole('textbox', { name: /^title$/i }).fill(`E2E Add Place ${Date.now()}`);
-      await page.getByRole('textbox', { name: /daily hours budget/i }).fill('8');
+      await page.getByRole('textbox', { name: /destination or trip name/i }).fill(`E2E Add Place ${Date.now()}`);
+      await page.getByRole('textbox', { name: /daily plan time/i }).fill('8');
       await page.getByRole('button', { name: /create trip/i }).click();
       await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     } else {
@@ -197,7 +200,7 @@ test.describe('Phase 5 happy — optimize (mocked optimize-trip)', () => {
     });
 
     // Navigate to any trip detail that has the itinerary tab
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available — create a trip with places first');
@@ -206,9 +209,15 @@ test.describe('Phase 5 happy — optimize (mocked optimize-trip)', () => {
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
 
-    // Wait for the itinerary tab to be visible (it contains the StatusPill)
-    await expect(page.getByRole('tab', { name: /itinerary/i })).toBeVisible();
-    await page.getByRole('tab', { name: /itinerary/i }).click();
+    // Phase 20 Step 4: on desktop (≥1024px) the itinerary is always visible in
+    // the side-by-side split view — there is no separate "Itinerary" tab.
+    // On mobile there is an "Itinerary" tab. Click it if it exists; otherwise
+    // (desktop) the itinerary content is already in the split view.
+    const itineraryTab = page.getByRole('tab', { name: /^itinerary$/i });
+    const hasItineraryTab = await itineraryTab.isVisible({ timeout: 3_000 }).catch(() => false);
+    if (hasItineraryTab) {
+      await itineraryTab.click();
+    }
 
     // Look for a StatusPill-like indicator (optimized / pending / error states)
     // The exact text depends on the StatusPill implementation
@@ -234,7 +243,7 @@ test.describe('Phase 5 happy — manual edit operations', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available');
@@ -242,7 +251,12 @@ test.describe('Phase 5 happy — manual edit operations', () => {
 
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
-    await page.getByRole('tab', { name: /itinerary/i }).click();
+    // Phase 20 Step 4: on desktop the itinerary is always visible in the split
+    // view — no separate "Itinerary" tab exists. Click if present (mobile).
+    const itinTab1 = page.getByRole('tab', { name: /^itinerary$/i });
+    if (await itinTab1.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await itinTab1.click();
+    }
 
     // Look for a place row with a "Move to day" or day selector control
     const moveDayControl = page
@@ -263,7 +277,7 @@ test.describe('Phase 5 happy — manual edit operations', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available');
@@ -271,7 +285,11 @@ test.describe('Phase 5 happy — manual edit operations', () => {
 
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
-    await page.getByRole('tab', { name: /itinerary/i }).click();
+    // Phase 20 Step 4: on desktop the itinerary is always visible.
+    const itinTab2 = page.getByRole('tab', { name: /^itinerary$/i });
+    if (await itinTab2.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await itinTab2.click();
+    }
 
     // Look for a duration stepper +/- button
     const plusBtn = page
@@ -292,7 +310,7 @@ test.describe('Phase 5 happy — manual edit operations', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available');
@@ -302,7 +320,11 @@ test.describe('Phase 5 happy — manual edit operations', () => {
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     // Dismiss LogBox overlays from SSR warnings before interacting with tabs.
     await dismissDevOverlay(page);
-    await page.getByRole('tab', { name: /itinerary/i }).click();
+    // Phase 20 Step 4: on desktop the itinerary is always visible in split view.
+    const itinTab3 = page.getByRole('tab', { name: /^itinerary$/i });
+    if (await itinTab3.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await itinTab3.click();
+    }
     await dismissDevOverlay(page);
 
     // Look for a delete button within a place row

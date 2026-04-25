@@ -49,8 +49,8 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/, { timeout: 10_000 });
 
-    // Use getByRole to avoid strict-mode ambiguity with the visual label Text element.
-    const titleInput = page.getByRole('textbox', { name: /^title$/i });
+    // Phase 20 Step 5: title field renamed to "Destination or trip name".
+    const titleInput = page.getByRole('textbox', { name: /destination or trip name/i });
     await titleInput.clear();
 
     // Attempt submit
@@ -83,8 +83,8 @@ test.describe('Phase 5 unhappy — create trip validation', () => {
     await page.getByRole('button', { name: /(new trip|create trip)/i }).first().click();
     await expect(page).toHaveURL(/\/trip\/new$/, { timeout: 10_000 });
 
-    // Fill title so it's valid. Use getByRole to avoid ambiguity with visual label Text.
-    await page.getByRole('textbox', { name: /^title$/i }).fill('Invalid Dates Trip');
+    // Phase 20 Step 5: title field renamed to "Destination or trip name".
+    await page.getByRole('textbox', { name: /destination or trip name/i }).fill('Invalid Dates Trip');
 
     // Try to fill end date before start date (if date fields exist)
     const startDateInput = page.getByLabel(/start date/i);
@@ -139,7 +139,7 @@ test.describe('Phase 5 unhappy — add place network error', () => {
     });
 
     // Navigate to a trip detail
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available — create a trip first');
@@ -197,7 +197,7 @@ test.describe('Phase 5 unhappy — optimize upstream 502', () => {
       });
     });
 
-    const existingTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const existingTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await existingTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No trips available');
@@ -206,7 +206,12 @@ test.describe('Phase 5 unhappy — optimize upstream 502', () => {
     await existingTrip.click();
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     await dismissDevOverlay(page);
-    await page.getByRole('tab', { name: /itinerary/i }).click();
+    // Phase 20 Step 4: on desktop the itinerary is visible in split view without
+    // a separate "Itinerary" tab. Click the tab only if it exists (mobile layout).
+    const itinTab = page.getByRole('tab', { name: /^itinerary$/i });
+    if (await itinTab.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await itinTab.click();
+    }
     // Use a fixed wait instead of networkidle — TanStack Query polling prevents idle.
     await page.waitForTimeout(2000);
     // Dismiss any LogBox overlays from prior render errors (e.g. SSR warnings).

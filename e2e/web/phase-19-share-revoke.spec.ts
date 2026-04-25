@@ -63,7 +63,7 @@ test.describe('Phase 19 — share link revoke regression', () => {
     await skipIfNotAuthenticated(page);
 
     // ── Step 1: Navigate to first trip's Settings tab ─────────────────────────
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips — seed data required');
@@ -72,12 +72,14 @@ test.describe('Phase 19 — share link revoke regression', () => {
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     await dismissDevOverlay(page);
 
-    // Switch to Settings tab.
+    // Switch to Settings tab. Settings tab exists on both desktop (2-tab: Map &
+    // Itinerary / Settings) and mobile (3-tab: Map / Itinerary / Settings).
+    // Wait up to 15s for trip data to load before the tab bar renders.
     const settingsTab = page
       .getByRole('tab', { name: /settings/i })
       .or(page.getByRole('button', { name: /^settings$/i }))
       .first();
-    await expect(settingsTab).toBeVisible({ timeout: 5_000 });
+    await expect(settingsTab).toBeVisible({ timeout: 15_000 });
     await settingsTab.click();
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);

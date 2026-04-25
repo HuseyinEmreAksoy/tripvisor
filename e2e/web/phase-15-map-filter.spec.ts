@@ -132,7 +132,7 @@ test.describe('Phase 15 — Map tab day-filter chips', () => {
 
     // Navigate to the seeded multi-day trip.
     const mapFilterCard = page
-      .locator('[role="button"][aria-label*="E2E Map Filter Test Trip"]')
+      .locator('[aria-label*="E2E Map Filter Test Trip"]')
       .first();
     const hasCard = await mapFilterCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCard) {
@@ -144,10 +144,19 @@ test.describe('Phase 15 — Map tab day-filter chips', () => {
     await dismissDevOverlay(page);
 
     // Switch to Map tab.
-    const mapTab = page.getByRole('button', { name: /^map$/i }).or(
-      page.locator('[role="tab"]', { hasText: /map/i }),
-    ).first();
-    await expect(mapTab).toBeVisible({ timeout: 5_000 });
+    // Phase 20 Step 4: on desktop the tab is "Map & Itinerary" (not "Map").
+    // getByRole('tab', { name: /map/i }) matches both "Map" (mobile) and
+    // "Map & Itinerary" (desktop) via substring regex.
+    // On desktop (≥1024px) the map is visible in the split view by default —
+    // the "Map & Itinerary" tab may already be active. We click it to ensure
+    // the map column is in the correct rendering state.
+    const mapTab = page.getByRole('tab', { name: /map/i }).first();
+    const mapTabVisible = await mapTab.isVisible({ timeout: 10_000 }).catch(() => false);
+    if (!mapTabVisible) {
+      // Dismiss any Expo error overlay that might be blocking rendering.
+      await dismissDevOverlay(page);
+    }
+    await expect(mapTab).toBeVisible({ timeout: 10_000 });
     await mapTab.click();
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);
@@ -192,7 +201,7 @@ test.describe('Phase 15 — Map tab day-filter chips', () => {
     }
 
     const mapFilterCard = page
-      .locator('[role="button"][aria-label*="E2E Map Filter Test Trip"]')
+      .locator('[aria-label*="E2E Map Filter Test Trip"]')
       .first();
     const hasCard = await mapFilterCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasCard) {
@@ -203,10 +212,10 @@ test.describe('Phase 15 — Map tab day-filter chips', () => {
     await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
     await dismissDevOverlay(page);
 
-    const mapTab = page.getByRole('button', { name: /^map$/i }).or(
-      page.locator('[role="tab"]', { hasText: /map/i }),
-    ).first();
-    await mapTab.click();
+    // Phase 20 Step 4: tab is "Map & Itinerary" on desktop; regex /map/i matches both.
+    const mapTab2 = page.getByRole('tab', { name: /map/i }).first();
+    await expect(mapTab2).toBeVisible({ timeout: 10_000 });
+    await mapTab2.click();
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);
 

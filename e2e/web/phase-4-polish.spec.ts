@@ -62,18 +62,19 @@ test.describe('Check 1 — trips list empty state', () => {
     await skipIfNotAuthenticated(page);
 
     // If the user has no trips, the empty state copy appears.
-    // "Plan your first trip" is the noTrips variant title.
+    // Phase 20 Step 1: noTrips title changed from "Plan your first trip"
+    // to "Where to next?" with updated body copy.
     // React Native Web does not render role="summary" to DOM — query by text instead.
     // If the user already has trips, the empty state won't show — skip.
-    const emptyStateText = page.getByText(/plan your first trip/i);
+    const emptyStateText = page.getByText(/where to next\?/i);
     const hasEmptyState = await emptyStateText.isVisible().catch(() => false);
     if (!hasEmptyState) {
       test.skip(true, 'User already has trips — empty state not shown; manual verification required');
     }
 
     await expect(emptyStateText).toBeVisible({ timeout: 10_000 });
-    // CTA button present
-    await expect(page.getByRole('button', { name: /new trip/i })).toBeVisible();
+    // CTA button present — Phase 20 Step 1: CTA changed from "New trip" to "Plan a trip".
+    await expect(page.getByRole('button', { name: /plan a trip/i })).toBeVisible();
   });
 });
 
@@ -94,14 +95,17 @@ test.describe('Check 2 — Map tab fallback (no Google Maps key)', () => {
     await skipIfNotAuthenticated(page);
 
     // Try to navigate to the first available trip's Map tab.
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips — create a trip first');
     }
     await firstTrip.click();
 
-    await page.getByRole('tab', { name: /map/i }).click();
+    // Phase 20 Step 4: on desktop "Map & Itinerary" is the combined tab label.
+    // regex /map/i matches both "Map" (mobile) and "Map & Itinerary" (desktop).
+    // Wait up to 15s for trip data to load before the tab bar renders.
+    await page.getByRole('tab', { name: /map/i }).click({ timeout: 15_000 });
     await page.waitForLoadState('networkidle');
 
     // If the map key is set, the real map renders and this is a no-op check.
@@ -130,14 +134,16 @@ test.describe('Check 3 — share link create + anonymous read', () => {
     await skipIfNotAuthenticated(page);
 
     // Navigate to first trip's Settings tab
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips — create a trip first');
     }
     await firstTrip.click();
 
-    await page.getByRole('tab', { name: /settings/i }).click();
+    // Settings tab exists on both mobile (3-tab) and desktop (2-tab) layouts.
+    // Wait up to 15s for trip data to load before the tab bar renders.
+    await page.getByRole('tab', { name: /settings/i }).click({ timeout: 15_000 });
     await page.waitForLoadState('networkidle');
 
     // Look for the Share section and Create share link button
@@ -209,13 +215,15 @@ test.describe('Check 4 — share link revoke', () => {
     await skipIfNotAuthenticated(page);
 
     // Navigate to first trip Settings tab
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips');
     }
     await firstTrip.click();
-    await page.getByRole('tab', { name: /settings/i }).click();
+    // Settings tab exists on both mobile (3-tab) and desktop (2-tab) layouts.
+    // Wait up to 15s for trip data to load before the tab bar renders.
+    await page.getByRole('tab', { name: /settings/i }).click({ timeout: 15_000 });
 
     const createBtn = page.getByRole('button', { name: /create a read-only share link/i });
     const hasCreateBtn = await createBtn.isVisible({ timeout: 5_000 }).catch(() => false);
@@ -285,13 +293,15 @@ test.describe('Check 5 — .ics export download', () => {
     await skipIfNotAuthenticated(page);
 
     // Navigate to first trip Settings tab
-    const firstTrip = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstTrip = page.locator('[aria-label^="Open trip"]').first();
     const hasTrip = await firstTrip.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTrip) {
       test.skip(true, 'No existing trips');
     }
     await firstTrip.click();
-    await page.getByRole('tab', { name: /settings/i }).click();
+    // Settings tab exists on both mobile (3-tab) and desktop (2-tab) layouts.
+    // Wait up to 15s for trip data to load before the tab bar renders.
+    await page.getByRole('tab', { name: /settings/i }).click({ timeout: 15_000 });
     await page.waitForLoadState('networkidle');
 
     // Look for an Export or Download .ics button.

@@ -48,8 +48,8 @@ async function firstTripCardTitle(
 ): Promise<string | null> {
   // Trip cards use aria-label "Open trip <title>"
   const selector = titleFragment
-    ? `[role="button"][aria-label*="Open trip"][aria-label*="${titleFragment}"]`
-    : '[role="button"][aria-label^="Open trip"]';
+    ? `[aria-label*="Open trip"][aria-label*="${titleFragment}"]`
+    : '[aria-label^="Open trip"]';
   const card = page.locator(selector).first();
   const visible = await card.isVisible({ timeout: 5_000 }).catch(() => false);
   if (!visible) return null;
@@ -68,7 +68,7 @@ test.describe('Phase 7 — archive / unarchive', () => {
     await skipIfNotAuthenticated(page);
 
     // Find the first trip card.
-    const firstCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstCard = page.locator('[aria-label^="Open trip"]').first();
     const hasTripCard = await firstCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTripCard) {
       test.skip(true, 'No trip cards visible — seed data required');
@@ -80,7 +80,7 @@ test.describe('Phase 7 — archive / unarchive', () => {
 
     // Open trip actions sheet via the overflow ⋮ button.
     const overflowBtn = page
-      .locator('[role="button"][aria-label^="Open trip"]')
+      .locator('[aria-label^="Open trip"]')
       .first()
       .locator('xpath=following-sibling::*')
       .first()
@@ -113,11 +113,11 @@ test.describe('Phase 7 — archive / unarchive', () => {
 
     // The trip should appear in the archived list.
     if (tripTitle) {
-      const archivedCard = page.locator(`[role="button"][aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
+      const archivedCard = page.locator(`[aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
       await expect(archivedCard).toBeVisible({ timeout: 8_000 });
     } else {
       // At minimum, some trip card should appear in the archived tab.
-      const anyCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+      const anyCard = page.locator('[aria-label^="Open trip"]').first();
       await expect(anyCard).toBeVisible({ timeout: 8_000 });
     }
 
@@ -139,10 +139,10 @@ test.describe('Phase 7 — archive / unarchive', () => {
 
     // The trip should be back in the active list.
     if (tripTitle) {
-      const restoredCard = page.locator(`[role="button"][aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
+      const restoredCard = page.locator(`[aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
       await expect(restoredCard).toBeVisible({ timeout: 8_000 });
     } else {
-      const anyCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+      const anyCard = page.locator('[aria-label^="Open trip"]').first();
       await expect(anyCard).toBeVisible({ timeout: 8_000 });
     }
   });
@@ -158,14 +158,14 @@ test.describe('Phase 7 — duplicate trip', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    const firstCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstCard = page.locator('[aria-label^="Open trip"]').first();
     const hasTripCard = await firstCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTripCard) {
       test.skip(true, 'No trip cards visible — seed data required');
     }
 
     // Count trips before duplicate.
-    const beforeCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const beforeCount = await page.locator('[aria-label^="Open trip"]').count();
 
     const actionsBtn = page.locator('[role="button"][aria-label="Trip actions"]').first();
     const hasActions = await actionsBtn.isVisible({ timeout: 5_000 }).catch(() => false);
@@ -190,12 +190,12 @@ test.describe('Phase 7 — duplicate trip', () => {
     for (let i = 0; i < 10; i++) {
       await page.waitForTimeout(1000);
       await dismissDevOverlay(page);
-      afterCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+      afterCount = await page.locator('[aria-label^="Open trip"]').count();
       if (afterCount > beforeCount) break;
     }
 
     // The new trip should contain "(copy)" or the original title text.
-    const allLabels = await page.locator('[role="button"][aria-label^="Open trip"]').evaluateAll(
+    const allLabels = await page.locator('[aria-label^="Open trip"]').evaluateAll(
       (els) => els.map((el) => el.getAttribute('aria-label') ?? ''),
     );
     const hasCopy = allLabels.some((lbl) => /copy/i.test(lbl));
@@ -214,7 +214,7 @@ test.describe('Phase 7 — delete trip', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    const firstCard = page.locator('[role="button"][aria-label^="Open trip"]').first();
+    const firstCard = page.locator('[aria-label^="Open trip"]').first();
     const hasTripCard = await firstCard.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTripCard) {
       test.skip(true, 'No trip cards visible — seed data required');
@@ -256,7 +256,7 @@ test.describe('Phase 7 — delete trip', () => {
     await dismissDevOverlay(page);
 
     // Count before delete.
-    const beforeCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const beforeCount = await page.locator('[aria-label^="Open trip"]').count();
 
     // Find the "E2E Delete Me" trip's actions button.
     const deleteTripCard = page.locator('[aria-label*="E2E Delete Me"]').first();
@@ -316,7 +316,7 @@ test.describe('Phase 7 — delete trip', () => {
     await page.waitForTimeout(2000);
     await dismissDevOverlay(page);
 
-    const afterCount = await page.locator('[role="button"][aria-label^="Open trip"]').count();
+    const afterCount = await page.locator('[aria-label^="Open trip"]').count();
     expect(afterCount, 'Expected one fewer trip after delete').toBeLessThan(beforeCount);
   });
 });
