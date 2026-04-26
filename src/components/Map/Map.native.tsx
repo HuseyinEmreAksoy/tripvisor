@@ -40,14 +40,37 @@ export function Map(props: MapViewProps) {
         initialRegion={region}
         accessibilityLabel="Trip map"
       >
-        {props.polylines.map((line) => (
-          <Polyline
-            key={line.id}
-            coordinates={line.points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
-            strokeColor={dayColor(line.dayIndex)}
-            strokeWidth={4}
-          />
-        ))}
+        {props.polylines.map((line) => {
+          const color = dayColor(line.dayIndex);
+
+          // Phase 23 Step 23.9: transit mode — no real polyline, render a
+          // dashed straight line from start to end using lineDashPattern.
+          if (line.isDashed && line.from && line.to) {
+            return (
+              <Polyline
+                key={line.id}
+                coordinates={[
+                  { latitude: line.from.lat, longitude: line.from.lng },
+                  { latitude: line.to.lat, longitude: line.to.lng },
+                ]}
+                strokeColor={color}
+                strokeWidth={3}
+                lineDashPattern={[6, 6]}
+                geodesic
+              />
+            );
+          }
+
+          // Normal solid polyline for driving / walking / bicycling.
+          return (
+            <Polyline
+              key={line.id}
+              coordinates={line.points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+              strokeColor={color}
+              strokeWidth={4}
+            />
+          );
+        })}
         {props.markers.map((m) => (
           <Marker
             key={m.id}

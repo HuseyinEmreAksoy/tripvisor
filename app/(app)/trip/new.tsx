@@ -17,7 +17,8 @@ const Schema = z
     start_date: z.string().nullable(),
     end_date: z.string().nullable(),
     daily_hours_budget: z.number().positive().max(24),
-    transport_mode: z.enum(['driving', 'walking', 'transit']),
+    // Phase 23: bicycling added to match trips_transport_mode_check constraint.
+    transport_mode: z.enum(['driving', 'walking', 'bicycling', 'transit']),
   })
   .refine(
     (v) => !v.start_date || !v.end_date || v.start_date <= v.end_date,
@@ -29,9 +30,11 @@ type FormValues = z.infer<typeof Schema>;
 const detectedTz =
   (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || null;
 
-const TRANSPORT_OPTIONS: Array<{ value: 'driving' | 'walking' | 'transit'; icon: string; label: string }> = [
+// Phase 23: bicycling sits between walking and transit per spec.
+const TRANSPORT_OPTIONS: Array<{ value: 'driving' | 'walking' | 'bicycling' | 'transit'; icon: string; label: string }> = [
   { value: 'driving', icon: '🚗', label: 'Drive' },
   { value: 'walking', icon: '🚶', label: 'Walk' },
+  { value: 'bicycling', icon: '🚲', label: 'Bike' },
   { value: 'transit', icon: '🚆', label: 'Transit' },
 ];
 
@@ -52,7 +55,7 @@ export default function NewTrip() {
       start_date: null,
       end_date: null,
       daily_hours_budget: 8,
-      transport_mode: 'driving',
+      transport_mode: 'driving' as const,
     },
     mode: 'onBlur',
   });

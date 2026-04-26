@@ -1,10 +1,26 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+/**
+ * add.tsx — Add a place to the trip.
+ *
+ * Phase 23 Step 23.7:
+ *   - Day picker horizontal chip row above the search box. Chips drive the
+ *     `selectedDayIndex` for the place save. Default comes from a `day`
+ *     URL param set by MapTab (if passed), else the first scheduled day.
+ *   - Active chip is highlighted with the day color.
+ *   - Stepper: "Switch to Day N+1" advances one day; at the last day it
+ *     becomes "Add to Unscheduled" (day_index = null).
+ *   - After save the form clears the search + query but stays on screen with
+ *     the same selectedDayIndex so the user can add another place to the same
+ *     day immediately.
+ *   - Brief inline toast "Added to Day N" appears after a successful save.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { BackButton, Button, EmptyState, Heading, PoweredByGoogle, Screen, TextField } from '@/components';
 import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { dayColor } from '@/components/Map';
 import {
   PlacesError,
   useAutocompleteSessionToken,
@@ -31,9 +47,10 @@ function useDebounced<T>(value: T, ms = 250): T {
 }
 
 // Max content width for the desktop centred layout of the add-place screen.
-// 720px keeps the search input + results comfortably readable without feeling
-// uncomfortably wide on large monitors.
 const ADD_DESKTOP_MAX_WIDTH = 720;
+
+// How many milliseconds the "Added to Day N" toast stays visible.
+const TOAST_DURATION_MS = 2500;
 
 const mapsSetupErrorCodes = new Set([
   'server_misconfigured',
@@ -52,7 +69,7 @@ function getMapsSetupError(...errors: Array<PlacesError | Error | null | undefin
 }
 
 export default function AddPlace() {
-  const { id: tripId } = useLocalSearchParams<{ id: string }>();
+  const { id: tripId, day: dayParam } = useLocalSearchParams<{ id: string; day?: string }>();
   const router = useRouter();
   const t = useTheme();
   const bp = useBreakpoint();
@@ -88,16 +105,49 @@ export default function AddPlace() {
 
   const { data: existingPlaces = [] } = useTripPlaces(tripId);
 
+  // ── Day picker (Step 23.7) ────────────────────────────────────────────────
+  // All day indexes that have at least one assigned place, plus any that exist
+  // in the date range. We build a simple 0..max list for the picker chips.
+  const availableDays = useMemo(() => {
+    const seen = new Set<number>();
+    for (const p of existingPlaces) {
+      if (p.day_index !== null && p.day_index >= 0) seen.add(p.day_index);
+    }
+    // Always include at least Day 0 so the picker has something to show.
+    seen.add(0);
+    return [...seen].sort((a, b) => a - b);
+  }, [existingPlaces]);
+
+  // Default to the URL param if provided (MapTab may pass the selected day),
+  // else the first available day.
+  const initialDay = useMemo(() => {
+    const parsed = dayParam != null ? parseInt(dayParam, 10) : NaN;
+    if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
+    return availableDays[0] ?? 0;
+    // Only computed once at mount — intentionally not reactive to dayParam changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // null = unscheduled bucket (day_index = null)
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(initialDay);
+
+  // ── Toast state ───────────────────────────────────────────────────────────
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), TOAST_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
   const createTripPlace = useCreateTripPlace();
 
-  // ─── Recent places — local AsyncStorage state (not server state) ─────────────
+  // ─── Recent places — local AsyncStorage state (not server state) ──────────
   const [recents, setRecents] = useState<RecentPlace[]>([]);
 
   useEffect(() => {
     getRecentPlaces().then(setRecents);
   }, []);
 
-  // True when the query is too short for autocomplete and recents are available.
   const showRecents = debounced.length < 2 && recents.length > 0;
 
   async function handleConfirm() {
@@ -112,14 +162,19 @@ export default function AddPlace() {
       lat: picked.location.latitude,
       lng: picked.location.longitude,
     });
-    // Fire-and-forget: slow storage write must not block navigation.
-    // addRecentPlace swallows its own errors internally.
+    // Fire-and-forget recent places write.
     addRecentPlace({
       placeId: picked.placeId,
       mainText: picked.displayName,
       secondaryText: picked.formattedAddress,
     });
-    router.back();
+
+    // Step 23.7: show toast + stay on screen (clear search only).
+    const dayLabel =
+      selectedDayIndex !== null ? `Day ${selectedDayIndex + 1}` : 'Unscheduled';
+    setToastMessage(`Added to ${dayLabel}`);
+    setPickedId(null);
+    setQuery('');
   }
 
   function handleClearRecents() {
@@ -128,16 +183,33 @@ export default function AddPlace() {
   }
 
   // Derived from React Query cache — no extra useState needed.
-  // Guard on `picked` so we never access `picked.placeId` while still loading.
   const isDuplicate =
     !!picked &&
     existingPlaces.some((p) => p.google_place_id === picked.placeId);
 
-  // On desktop, the screen content is constrained to ADD_DESKTOP_MAX_WIDTH and centred.
-  // `desktopWrap` applies only when isDesktop so native is untouched.
+  // Step 23.7: stepper — advance to next day or switch to Unscheduled.
+  const maxDayIndex = Math.max(...availableDays, selectedDayIndex ?? 0);
+  const isLastDay =
+    selectedDayIndex === null ||
+    selectedDayIndex >= maxDayIndex;
+  const isUnscheduled = selectedDayIndex === null;
+
+  function handleStepNext() {
+    if (isUnscheduled) return;
+    if (selectedDayIndex !== null && selectedDayIndex >= maxDayIndex) {
+      // At last scheduled day → switch to Unscheduled
+      setSelectedDayIndex(null);
+    } else if (selectedDayIndex !== null) {
+      setSelectedDayIndex(selectedDayIndex + 1);
+    }
+  }
+
   const desktopWrap = isDesktop
     ? { maxWidth: ADD_DESKTOP_MAX_WIDTH, width: '100%' as const, alignSelf: 'center' as const }
     : undefined;
+
+  // All chip values: day indexes + "Unscheduled"
+  const chipValues: Array<number | 'unscheduled'> = [...availableDays, 'unscheduled'];
 
   return (
     <Screen padded={false}>
@@ -149,6 +221,99 @@ export default function AddPlace() {
             Search for restaurants, museums, viewpoints, or any destination to add to your itinerary.
           </Text>
         </View>
+
+        {/* ── Day picker chips (Step 23.7) ────────────────────────────── */}
+        <View style={{ gap: t.spacing.xs }}>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+            Add to
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: t.spacing.sm }}
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Select day to add place"
+          >
+            {chipValues.map((value) => {
+              const isUnsch = value === 'unscheduled';
+              const dayIdx = isUnsch ? null : (value as number);
+              const isSelected = isUnsch
+                ? selectedDayIndex === null
+                : selectedDayIndex === dayIdx;
+              const chipColor = !isUnsch && dayIdx !== null ? dayColor(dayIdx) : undefined;
+              const chipLabel = isUnsch ? 'Unscheduled' : `Day ${(dayIdx as number) + 1}`;
+
+              return (
+                <Pressable
+                  key={String(value)}
+                  accessibilityRole="radio"
+                  accessibilityLabel={chipLabel}
+                  accessibilityState={{ checked: isSelected }}
+                  onPress={() => setSelectedDayIndex(dayIdx)}
+                  style={[
+                    addStyles.chip,
+                    {
+                      borderColor: isSelected
+                        ? (chipColor ?? t.colors.primary)
+                        : t.colors.border,
+                      backgroundColor: isSelected
+                        ? (chipColor ?? t.colors.primary)
+                        : t.colors.bgElevated,
+                      borderRadius: t.radius.md,
+                    },
+                  ]}
+                >
+                  {chipColor && !isUnsch ? (
+                    <View
+                      style={[addStyles.chipDot, { backgroundColor: isSelected ? '#fff' : chipColor }]}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no"
+                    />
+                  ) : null}
+                  <Text
+                    style={[
+                      t.typography.caption,
+                      {
+                        color: isSelected ? (chipColor ? '#fff' : t.colors.primaryText) : t.colors.text,
+                        fontWeight: isSelected ? '600' : '400',
+                      },
+                    ]}
+                  >
+                    {chipLabel}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* ── Stepper (Step 23.7) — advance to next day ───────────────── */}
+        {!isUnscheduled && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              isLastDay
+                ? 'Switch to Unscheduled'
+                : `Switch to Day ${(selectedDayIndex ?? 0) + 2}`
+            }
+            onPress={handleStepNext}
+            style={[
+              addStyles.stepper,
+              {
+                borderColor: t.colors.border,
+                borderRadius: t.radius.sm,
+                backgroundColor: t.colors.bgElevated,
+              },
+            ]}
+          >
+            <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+              {isLastDay
+                ? '→ Add to Unscheduled'
+                : `→ Switch to Day ${(selectedDayIndex ?? 0) + 2}`}
+            </Text>
+          </Pressable>
+        )}
+
         <TextField
           label="Search places"
           autoFocus
@@ -157,17 +322,30 @@ export default function AddPlace() {
           value={query}
           onChangeText={setQuery}
         />
-        {mapsSetupError ? (
-          // Setup-required banner. Same visual pattern as the duplicate-place
-          // warning below (Phase 18): `bgElevated` background with a
-          // `borderLeftWidth: 3` accent. Tone is `warning` because this is
-          // not a transient failure — the user (or the operator) needs to
-          // act on the docs link to resolve it.
-          // accessibilityRole="alert" + accessibilityLiveRegion="polite"
-          // announces the banner to screen readers when it appears.
+
+        {/* ── Toast notification (Step 23.7) ───────────────────────────── */}
+        {toastMessage ? (
           <View
             style={[
-              styles.setupBanner,
+              addStyles.toast,
+              {
+                backgroundColor: t.colors.primary,
+                borderRadius: t.radius.md,
+                padding: t.spacing.sm,
+              },
+            ]}
+            accessibilityLiveRegion="polite"
+          >
+            <Text style={[t.typography.caption, { color: t.colors.primaryText }]}>
+              {toastMessage}
+            </Text>
+          </View>
+        ) : null}
+
+        {mapsSetupError ? (
+          <View
+            style={[
+              addStyles.setupBanner,
               {
                 backgroundColor: t.colors.bgElevated,
                 borderLeftColor: t.colors.warning,
@@ -216,12 +394,9 @@ export default function AddPlace() {
               </Text>
               <PoweredByGoogle />
               {isDuplicate ? (
-                // accessibilityRole="alert" + accessibilityLiveRegion="polite"
-                // announces the banner to screen readers when it appears, matching
-                // the pattern established in settings.tsx for inline error notices.
                 <View
                   style={[
-                    styles.duplicateWarning,
+                    addStyles.duplicateWarning,
                     {
                       backgroundColor: t.colors.bgElevated,
                       borderLeftColor: t.colors.warning,
@@ -256,21 +431,15 @@ export default function AddPlace() {
           )}
         </View>
       ) : (
-        // ── Search / Recents area ───────────────────────────────────────────────
-        // Layout: Recents section (pinned, non-scrolling) sits above the
-        // autocomplete FlatList. Both share the same horizontal padding so
-        // visual alignment stays consistent. Using a sibling <View> rather than
-        // ListHeaderComponent keeps the recents header visible while the user
-        // scrolls a long autocomplete list.
-        <View style={[styles.searchArea, desktopWrap]}>
+        // ── Search / Recents area ─────────────────────────────────────────────
+        <View style={[addStyles.searchArea, desktopWrap]}>
           {showRecents && (
             <View style={{ paddingHorizontal: t.spacing.lg }}>
-              {/* Section header — styled pill label for better visual hierarchy */}
-              <View style={[styles.recentsSectionHeader, { marginVertical: t.spacing.sm }]}>
+              <View style={[addStyles.recentsSectionHeader, { marginVertical: t.spacing.sm }]}>
                 <Text
                   style={[
                     t.typography.caption,
-                    styles.recentsHeader,
+                    addStyles.recentsHeader,
                     { color: t.colors.textMuted },
                   ]}
                 >
@@ -284,7 +453,7 @@ export default function AddPlace() {
                     accessibilityRole="button"
                     accessibilityLabel={`Recent: ${item.mainText}`}
                     onPress={() => setPickedId(item.placeId)}
-                    style={[styles.row, { paddingVertical: t.spacing.md }]}
+                    style={[addStyles.row, { paddingVertical: t.spacing.md }]}
                   >
                     <Text
                       style={[t.typography.bodyStrong, { color: t.colors.text }]}
@@ -301,7 +470,6 @@ export default function AddPlace() {
                       </Text>
                     ) : null}
                   </Pressable>
-                  {/* Separator between rows (not after the last one) */}
                   {index < recents.length - 1 && (
                     <View style={{ height: 1, backgroundColor: t.colors.border }} />
                   )}
@@ -319,7 +487,6 @@ export default function AddPlace() {
                 </Text>
               </Pressable>
 
-              {/* Divider between recents section and the empty-state below */}
               <View style={{ height: 1, backgroundColor: t.colors.border }} />
             </View>
           )}
@@ -339,8 +506,6 @@ export default function AddPlace() {
                   <EmptyState {...noSearchResults} />
                 )
               ) : (
-                // Only show the search prompt when there are no recents to display.
-                // When recents are shown above, the empty state would be redundant.
                 !showRecents ? <EmptyState {...searchPrompt} /> : null
               )
             }
@@ -350,7 +515,7 @@ export default function AddPlace() {
                 accessibilityRole="button"
                 accessibilityLabel={`Choose ${item.mainText}`}
                 onPress={() => setPickedId(item.placeId)}
-                style={[styles.row, { paddingVertical: t.spacing.md }]}
+                style={[addStyles.row, { paddingVertical: t.spacing.md }]}
               >
                 <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
                   {item.mainText}
@@ -369,15 +534,41 @@ export default function AddPlace() {
   );
 }
 
-const styles = StyleSheet.create({
+const addStyles = StyleSheet.create({
   row: { flexDirection: 'column', gap: 2 },
   searchArea: { flex: 1 },
   recentsHeader: { textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '600' },
-  // Wrapper for the "Recent searches" section label — keeps it left-aligned
-  // with slightly more visual weight than plain caption text.
   recentsSectionHeader: { flexDirection: 'row', alignItems: 'center' },
-  // Structural properties only; color-dependent tokens are applied inline
-  // alongside this style so theme switching works correctly.
   duplicateWarning: { borderLeftWidth: 3 },
   setupBanner: { borderLeftWidth: 3 },
+  // Day picker chip styles
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
+    gap: 6,
+  },
+  chipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  // Stepper affordance
+  stepper: {
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    justifyContent: 'center',
+  },
+  // Toast
+  toast: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+  },
 });

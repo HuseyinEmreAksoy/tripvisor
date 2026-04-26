@@ -1,26 +1,27 @@
 /**
  * DaySummaryCard
  *
- * Per-day summary: place count, total visit hours, drive time, drive distance,
- * and estimated cost. Filters places + legs by dayIndex internally.
+ * Per-day summary: place count, total visit time, total travel time,
+ * total day time, drive distance, and estimated cost.
+ * Filters places + legs by dayIndex internally.
+ *
+ * Phase 23 Step 23.8: three time columns added:
+ *   - Total visit   (sum of visit_duration_minutes)
+ *   - Total travel  (sum of trip_legs.duration_seconds for that day)
+ *   - Total day     (sum of the two)
  *
  * Usage:
  *   <DaySummaryCard dayIndex={0} places={places} legs={legs} trip={trip} />
  *
- * When no legs exist for this day the drive metrics show "—" but visit hours
- * and place count still render.
- *
  * Memoization: reductions are in useMemo keyed on the filtered slices plus
  * cost_per_km and currency so unrelated parent renders don't cause extra work.
- *
- * TripLeg.day_index is confirmed present in src/api/types.ts (number, non-null).
- * No derivation needed.
  */
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import type { Trip, TripLeg, TripPlace } from '@/api/types';
 import { humanizeDuration } from './TripCostRollup';
+import { formatDuration } from '@/lib/formatDuration';
 
 export interface DaySummaryCardProps {
   dayIndex: number;
@@ -45,24 +46,33 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
   // Reductions — dep array covers all inputs that affect the derived values.
   const derived = useMemo(() => {
     const visitMinutes = dayPlaces.reduce((s, p) => s + p.visit_duration_minutes, 0);
-    const visitHours = visitMinutes / 60;
 
     if (dayLegs.length === 0) {
       return {
-        visitHours,
-        driveSeconds: null,
+        visitMinutes,
+        travelSeconds: null,
         distanceMeters: null,
         cost: null,
       };
     }
 
-    const driveSeconds = dayLegs.reduce((s, l) => s + l.duration_seconds, 0);
+    const travelSeconds = dayLegs.reduce((s, l) => s + l.duration_seconds, 0);
     const distanceMeters = dayLegs.reduce((s, l) => s + l.distance_meters, 0);
     const cost = (distanceMeters / 1000) * trip.cost_per_km;
 
-    return { visitHours, driveSeconds, distanceMeters, cost };
+    return { visitMinutes, travelSeconds, distanceMeters, cost };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayPlaces, dayLegs, trip.cost_per_km, trip.currency]);
+
+  const travelMinutes =
+    derived.travelSeconds !== null ? Math.floor(derived.travelSeconds / 60) : null;
+
+  const totalMinutes =
+    travelMinutes !== null ? derived.visitMinutes + travelMinutes : derived.visitMinutes;
+
+  const formattedVisit = formatDuration(derived.visitMinutes);
+  const formattedTravel = travelMinutes !== null ? formatDuration(travelMinutes) : '—';
+  const formattedTotal = formatDuration(totalMinutes);
 
   const formattedCost =
     derived.cost !== null
@@ -80,17 +90,19 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
       : '—';
 
   const formattedDrive =
-    derived.driveSeconds !== null ? humanizeDuration(derived.driveSeconds) : '—';
+    derived.travelSeconds !== null ? humanizeDuration(derived.travelSeconds) : '—';
 
-  // Step 5: "Est. travel cost" in the a11y label makes clear this is the
-  // fuel/transport cost derived from distance × rate, not the full budget.
+  // Accessibility label covering all the key numbers.
   const accessLabel = [
     `${dayPlaces.length} place${dayPlaces.length !== 1 ? 's' : ''}`,
-    `${derived.visitHours.toFixed(1)}h visit time`,
-    `Drive ${formattedDrive}`,
+    `Total visit ${formattedVisit}`,
+    `Total travel ${formattedTravel}`,
+    `Total day ${formattedTotal}`,
     `${formattedDistance}`,
     `Est. travel cost ${formattedCost}`,
   ].join(', ');
+
+  void formattedDrive; // retained for future use; drive label is now superseded by formattedTravel
 
   return (
     <View
@@ -114,10 +126,22 @@ export function DaySummaryCard({ dayIndex, places, legs, trip }: DaySummaryCardP
           label={`${dayPlaces.length} place${dayPlaces.length !== 1 ? 's' : ''}`}
           t={t}
         />
-        <Chip label={`${derived.visitHours.toFixed(1)}h visit`} t={t} />
-        <Chip label={`Drive ${formattedDrive}`} t={t} />
+        {/* Step 23.8: three distinct time chips */}
+        <Chip
+          label={`Visit ${formattedVisit}`}
+          t={t}
+        />
+        <Chip
+          label={`Travel ${formattedTravel}`}
+          t={t}
+        />
+        <Chip
+          label={`Day ${formattedTotal}`}
+          t={t}
+          highlight
+        />
         <Chip label={formattedDistance} t={t} />
-        <Chip label={formattedCost} t={t} highlight />
+        <Chip label={formattedCost} t={t} />
       </View>
     </View>
   );

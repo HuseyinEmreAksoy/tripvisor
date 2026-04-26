@@ -8,6 +8,11 @@
  *
  * Map.native.tsx is untouched — native API keys live in app.json and are never
  * exposed to the web bundle.
+ *
+ * Phase 23 Step 23.9: transit legs (polyline === null from backend) are passed
+ * in with `isDashed: true` + `from`/`to` coordinates. The Polylines component
+ * draws a dashed straight line for those legs using the Google Maps `icons`
+ * stroke-dash pattern on a semi-transparent Polyline.
  */
 import { useEffect, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -19,7 +24,7 @@ import {
   useMap,
 } from '@vis.gl/react-google-maps';
 import Constants from 'expo-constants';
-import { dayColor, type MapViewProps } from './types';
+import { dayColor, type MapViewProps, type MapPolyline } from './types';
 import { MapUnavailable } from '../MapUnavailable';
 
 /**
@@ -93,28 +98,80 @@ export function Map(props: MapViewProps) {
   );
 }
 
-function Polylines({ polylines }: { polylines: MapViewProps['polylines'] }) {
+// ── GMaps type helpers ────────────────────────────────────────────────────────
+// Typed minimally — just what we use from the global google.maps namespace
+// so we don't depend on @types/google.maps (not in devDeps).
+type LatLngLiteral = { lat: number; lng: number };
+type PolylineOptions = {
+  path?: LatLngLiteral[];
+  strokeColor?: string;
+  strokeOpacity?: number;
+  strokeWeight?: number;
+  icons?: unknown[];
+  geodesic?: boolean;
+  map?: unknown;
+};
+type GMapsPolyline = {
+  setMap: (m: unknown) => void;
+};
+type GMaps = {
+  Polyline: new (opts: PolylineOptions) => GMapsPolyline;
+};
+
+function Polylines({ polylines }: { polylines: MapPolyline[] }) {
   const map = useMap();
   const safe = polylines ?? [];
 
   useEffect(() => {
     if (!map) return;
-    type GMaps = {
-      Polyline: new (opts: Record<string, unknown>) => { setMap: (m: unknown) => void };
-    };
     const gmaps = (globalThis as unknown as { google?: { maps: GMaps } }).google?.maps;
     if (!gmaps) return;
 
-    const instances = safe.map(
-      (line) =>
-        new gmaps.Polyline({
-          path: line.points.map((p) => ({ lat: p.lat, lng: p.lng })),
-          strokeColor: dayColor(line.dayIndex),
+    const instances = safe.map((line) => {
+      const color = dayColor(line.dayIndex);
+
+      // Phase 23 Step 23.9: transit fallback — dashed straight line.
+      // We use the `icons` array with a dash symbol for the stroke pattern.
+      if (line.isDashed && line.from && line.to) {
+        const dashSymbol = {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          path: (globalThis as any).google?.maps?.SymbolPath?.CIRCLE ?? 'M 0,-1 0,1',
+          scale: 3,
+          strokeColor: color,
           strokeOpacity: 1,
-          strokeWeight: 4,
+          fillColor: color,
+          fillOpacity: 1,
+        };
+        return new gmaps.Polyline({
+          path: [
+            { lat: line.from.lat, lng: line.from.lng },
+            { lat: line.to.lat, lng: line.to.lng },
+          ],
+          strokeColor: color,
+          strokeOpacity: 0,
+          strokeWeight: 3,
+          geodesic: true,
+          icons: [
+            {
+              icon: dashSymbol,
+              offset: '0',
+              repeat: '12px',
+            },
+          ],
           map,
-        }),
-    );
+        });
+      }
+
+      // Normal solid polyline.
+      return new gmaps.Polyline({
+        path: line.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+        strokeColor: color,
+        strokeOpacity: 1,
+        strokeWeight: 4,
+        map,
+      });
+    });
+
     return () => {
       for (const poly of instances) poly.setMap(null);
     };

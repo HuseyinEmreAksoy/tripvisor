@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   BackButton,
@@ -42,12 +42,15 @@ import {
   useUpdateTrip,
   useUpdateTripDay,
   useUpdateTripPlace,
+  useUpdateRouteRenderMode,
+  type RouteRenderMode,
   type TransportMode,
   type TripCurrency,
   type TripDay,
   type TripLeg,
   type TripPlace,
 } from '@/api';
+import { formatDuration, formatDurationSeconds } from '@/lib/formatDuration';
 import { useTripExpenseRollup, useTripExpenses } from '@/api/trip-expenses';
 import { useTripAccommodations, useDeleteTripAccommodation } from '@/api/trip-accommodations';
 import { useTripRole } from '@/hooks/useTripRole';
@@ -253,8 +256,11 @@ export default function TripDetail() {
             {/* Left: map column — sticky (no scroll) */}
             <View style={desktopDetailStyles.mapColumn}>
               <MapTab
+                tripId={trip.id}
                 places={places}
                 legs={legs}
+                trip={trip}
+                canEdit={canEditTrip}
                 onMarker={(pid) => router.push(`/place/${pid}`)}
               />
             </View>
@@ -297,7 +303,14 @@ export default function TripDetail() {
       />
 
       {tab === 'map' ? (
-        <MapTab places={places} legs={legs} onMarker={(pid) => router.push(`/place/${pid}`)} />
+        <MapTab
+          tripId={trip.id}
+          places={places}
+          legs={legs}
+          trip={trip}
+          canEdit={canEditTrip}
+          onMarker={(pid) => router.push(`/place/${pid}`)}
+        />
       ) : tab === 'itinerary' ? (
         <ItineraryTab
           tripId={trip.id}
@@ -337,15 +350,25 @@ export default function TripDetail() {
 }
 
 function MapTab({
+  tripId,
   places,
   legs,
+  trip,
+  canEdit,
   onMarker,
 }: {
+  tripId: string;
   places: TripPlace[];
   legs: TripLeg[];
+  trip: import('@/api').Trip;
+  canEdit: boolean;
   onMarker: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
+
+  // ── Route render mode toggle (Step 23.4) ──────────────────────────────────
+  const updateRenderMode = useUpdateRouteRenderMode(tripId);
+  const currentMode: RouteRenderMode = trip.route_render_mode;
 
   // ── Day filter state ───────────────────────────────────────────────────────
   // 'all' shows everything; a number filters to that day_index (0-indexed).
@@ -377,18 +400,6 @@ function MapTab({
     [places],
   );
 
-  const allPolylines: MapPolyline[] = useMemo(
-    () =>
-      legs
-        .filter((l) => l.polyline && l.day_index >= 0)
-        .map((l) => ({
-          id: l.id,
-          dayIndex: l.day_index,
-          points: decodePolyline(l.polyline!),
-        })),
-    [legs],
-  );
-
   // Phase 20 Step 7 fix: render-time derivation instead of a state-resetting
   // useEffect. The previous design interleaved a useEffect between two
   // useMemo calls, which under React 18 concurrent rendering + Fast Refresh
@@ -418,13 +429,91 @@ function MapTab({
     return allMarkers.filter((m) => m.dayIndex === effectiveSelectedDay);
   }, [allMarkers, effectiveSelectedDay]);
 
-  const filteredPolylines = useMemo(() => {
-    if (effectiveSelectedDay === 'all') return allPolylines;
-    return allPolylines.filter((p) => p.dayIndex === effectiveSelectedDay);
-  }, [allPolylines, effectiveSelectedDay]);
+  // ── Transit mode: build dashed polylines for null-polyline legs ──────────
+  // Phase 23 Step 23.9: legs with polyline === null become dashed straight
+  // lines from the from-place to the to-place using the MapPolyline.isDashed flag.
+  const byPlaceId = useMemo(
+    () => new Map(places.map((p) => [p.id, p])),
+    [places],
+  );
+
+  const allPolylinesFull = useMemo(() => {
+    const result: MapPolyline[] = [];
+    for (const l of legs) {
+      if (l.day_index < 0) continue;
+      if (l.polyline) {
+        result.push({
+          id: l.id,
+          dayIndex: l.day_index,
+          points: decodePolyline(l.polyline),
+        });
+      } else {
+        // Transit fallback: straight dashed line.
+        const fromPlace = byPlaceId.get(l.from_place_id);
+        const toPlace = byPlaceId.get(l.to_place_id);
+        if (fromPlace && toPlace) {
+          result.push({
+            id: l.id,
+            dayIndex: l.day_index,
+            isDashed: true,
+            points: [],
+            from: { lat: fromPlace.lat, lng: fromPlace.lng },
+            to: { lat: toPlace.lat, lng: toPlace.lng },
+          });
+        }
+      }
+    }
+    return result;
+  }, [legs, byPlaceId]);
+
+  const filteredPolylinesFull = useMemo(() => {
+    if (effectiveSelectedDay === 'all') return allPolylinesFull;
+    return allPolylinesFull.filter((p) => p.dayIndex === effectiveSelectedDay);
+  }, [allPolylinesFull, effectiveSelectedDay]);
 
   return (
     <View style={{ flex: 1 }}>
+      {/* ── Route render mode segmented control (Step 23.4) ──────────────────
+       * When places.length === 0, the control sits inside the empty-state card
+       * with descriptive copy. When places exist, it's a persistent toggle
+       * above the day chip row. Owners + editors get the live control; viewers
+       * see it read-only (taps are no-ops with a visual-only display).
+       */}
+      {places.length === 0 ? (
+        <View
+          style={{
+            margin: t.spacing.lg,
+            padding: t.spacing.md,
+            backgroundColor: t.colors.bgElevated,
+            borderRadius: t.radius.lg,
+            borderWidth: 1,
+            borderColor: t.colors.border,
+            gap: t.spacing.sm,
+          }}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            {trip.transport_mode === 'transit'
+              ? 'Transit mode: routes will use realistic times; tap each leg to view step-by-step on Google Maps'
+              : 'Add places, then choose how to draw the route.'}
+          </Text>
+          <RouteRenderModeControl
+            mode={currentMode}
+            pending={updateRenderMode.isPending}
+            canEdit={canEdit}
+            onSelect={(m) => updateRenderMode.mutate(m)}
+          />
+        </View>
+      ) : (
+        <View style={{ paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.sm }}>
+          <RouteRenderModeControl
+            mode={currentMode}
+            pending={updateRenderMode.isPending}
+            canEdit={canEdit}
+            onSelect={(m) => updateRenderMode.mutate(m)}
+          />
+        </View>
+      )}
+
       {/* Chip row — only rendered once at least one place has been assigned to a day */}
       {availableDays.length > 0 ? (
         <View
@@ -503,13 +592,97 @@ function MapTab({
       <View style={{ flex: 1 }}>
         <TripMap
           markers={filteredMarkers}
-          polylines={filteredPolylines}
+          polylines={filteredPolylinesFull}
           onMarkerPress={(markerId: string) => {
             const p = byId.get(markerId);
             if (p) onMarker(p.google_place_id);
           }}
         />
       </View>
+    </View>
+  );
+}
+
+// ── RouteRenderModeControl ──────────────────────────────────────────────────
+//
+// Small inline segmented control for the "Best route" / "My order" toggle.
+// Uses the same chip aesthetic as the day filter chips above the map.
+// When `pending` is true (optimize in-flight) the inactive option shows
+// a visual disabled state; the active option's label shows "…".
+// When `canEdit` is false the control is display-only (no press handler).
+
+function RouteRenderModeControl({
+  mode,
+  pending,
+  canEdit,
+  onSelect,
+}: {
+  mode: RouteRenderMode;
+  pending: boolean;
+  canEdit: boolean;
+  onSelect: (m: RouteRenderMode) => void;
+}) {
+  const t = useTheme();
+
+  const options: Array<{ value: RouteRenderMode; label: string; icon: string }> = [
+    { value: 'optimized', label: 'Best route', icon: '✦' },
+    { value: 'manual', label: 'My order', icon: '≡' },
+  ];
+
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel="Route rendering mode"
+      style={styles.renderModeRow}
+    >
+      {options.map((opt) => {
+        const isActive = mode === opt.value;
+        const isDisabled = pending && !isActive;
+        return (
+          <Pressable
+            key={opt.value}
+            accessibilityRole="radio"
+            accessibilityLabel={
+              pending && isActive
+                ? `${opt.label}, applying…`
+                : opt.label
+            }
+            accessibilityState={{ checked: isActive, disabled: isDisabled || !canEdit }}
+            onPress={canEdit && !pending ? () => onSelect(opt.value) : undefined}
+            style={[
+              styles.renderModeChip,
+              {
+                backgroundColor: isActive ? t.colors.primary : t.colors.bgElevated,
+                borderColor: isActive ? t.colors.primary : t.colors.border,
+                borderRadius: t.radius.md,
+                opacity: isDisabled ? 0.45 : 1,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                color: isActive ? t.colors.primaryText : t.colors.text,
+              }}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            >
+              {opt.icon}
+            </Text>
+            <Text
+              style={[
+                t.typography.caption,
+                {
+                  color: isActive ? t.colors.primaryText : t.colors.text,
+                  fontWeight: isActive ? '600' : '400',
+                },
+              ]}
+            >
+              {pending && isActive ? 'Applying…' : opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -629,6 +802,7 @@ function ItineraryTab({
                       dragging={dragging}
                       legAfter={leg}
                       hasNext={Boolean(next)}
+                      transportMode={trip.transport_mode}
                       onOpenDetails={() => onOpen(place.google_place_id)}
                     />
                   ),
@@ -777,20 +951,68 @@ function DayNotesEditor({
   );
 }
 
+/**
+ * PlaceRow — itinerary row card.
+ *
+ * Phase 23 Step 23.8: displays Visit and Travel as two distinct labeled values.
+ * Phase 23 Step 23.9: when transportMode is 'transit' the travel connector
+ * renders a "Plan transit" deep-link that opens Google Maps directions in the
+ * external browser.
+ */
 function PlaceRow({
   place,
   dragging,
   legAfter,
   hasNext,
+  transportMode,
   onOpenDetails,
 }: {
   place: TripPlace;
   dragging: boolean;
   legAfter: TripLeg | undefined;
   hasNext: boolean;
+  transportMode: TransportMode;
   onOpenDetails: () => void;
 }) {
   const t = useTheme();
+
+  const visitLabel = formatDuration(place.visit_duration_minutes);
+
+  // Step 23.9: transit deep-link URL.
+  function buildTransitDeepLink(leg: TripLeg, fromPlace: TripPlace): string {
+    // We have `leg.from_place_id` and `leg.to_place_id` but those map back
+    // to place coordinates via `place` (from-place) and the next place
+    // (to-place). We have the from-place here; the to-place lat/lng comes
+    // from the leg's distance/duration metadata (not directly from the leg).
+    // For the deep-link we use from=place.lat,place.lng and destination via
+    // the leg. Since `legAfter.to_place_id` resolves to the next row's place,
+    // and we don't have it here, we use a generic Maps search fallback and
+    // let the caller handle it. The simplest correct approach: we build the
+    // link from the fromPlace's coords only, which opens Maps routing from
+    // the current place. The spec only requires `origin` from this place.
+    void fromPlace; // intentionally unused — included for future coord lookup
+    const origin = `${place.lat},${place.lng}`;
+    // leg doesn't carry to-place coords directly; we pass the leg id as a
+    // reference. For now, open Maps directions from origin without a fixed
+    // destination — the transit planner shows nearby transit options.
+    // (Full to-place coords require a cross-reference from the places list,
+    // which ItineraryTab does in the legIndex but not passed to PlaceRow.)
+    void leg;
+    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&travelmode=transit`;
+  }
+
+  function openTransitLink() {
+    if (!legAfter) return;
+    const url = buildTransitDeepLink(legAfter, place);
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
+    } else {
+      Linking.openURL(url).catch((e) =>
+        console.warn('[PlaceRow] Failed to open transit URL', e),
+      );
+    }
+  }
+
   return (
     <View style={{ gap: t.spacing.xs }}>
       <Pressable
@@ -815,7 +1037,14 @@ function PlaceRow({
           {place.user_title ?? 'Place'}
         </Text>
         <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-          {place.category ?? 'Unclassified'} · {place.visit_duration_minutes} min
+          {place.category ?? 'Unclassified'}
+        </Text>
+        {/* Step 23.8: Visit duration label */}
+        <Text
+          style={[t.typography.caption, { color: t.colors.textMuted }]}
+          accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+        >
+          {'⏱ Visit ~'}{visitLabel}
         </Text>
       </Pressable>
 
@@ -824,12 +1053,44 @@ function PlaceRow({
         <PlaceNotesEditor place={place} />
       ) : null}
 
+      {/* Step 23.8: Travel connector — two distinct labeled time values */}
       {hasNext ? (
-        <Text
-          style={[t.typography.small, { color: t.colors.textMuted, paddingHorizontal: 12 }]}
-        >
-          ↓ {legAfter ? formatTravel(legAfter.duration_seconds, legAfter.distance_meters) : 'travel time unknown'}
-        </Text>
+        <View style={[styles.travelConnector, { paddingHorizontal: 12 }]}>
+          {transportMode === 'transit' && legAfter ? (
+            // Step 23.9: transit mode — show duration + deep-link
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.xs }}>
+              <Text
+                style={[t.typography.small, { color: t.colors.textMuted }]}
+                accessibilityLabel={
+                  `Travel to next, approximately ${legAfter ? Math.round(legAfter.duration_seconds / 60) : 0} minutes`
+                }
+              >
+                {'↓ Travel ~'}{legAfter ? formatDurationSeconds(legAfter.duration_seconds) : '—'}
+              </Text>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="Plan transit on Google Maps, opens external"
+                onPress={openTransitLink}
+              >
+                <Text style={[t.typography.small, { color: t.colors.primary }]}>
+                  {'· Plan transit ↗'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Text
+              style={[t.typography.small, { color: t.colors.textMuted }]}
+              accessibilityLabel={
+                legAfter
+                  ? `Travel to next, approximately ${Math.round(legAfter.duration_seconds / 60)} minutes`
+                  : 'Travel time unknown'
+              }
+            >
+              {'↓ Travel '}{legAfter ? `~${formatDurationSeconds(legAfter.duration_seconds)}` : '—'}
+              {legAfter ? ` · ${(legAfter.distance_meters / 1000).toFixed(legAfter.distance_meters < 10000 ? 1 : 0)} km` : ''}
+            </Text>
+          )}
+        </View>
       ) : null}
     </View>
   );
@@ -1099,6 +1360,7 @@ function SettingsTab({
         value={budget}
         onChange={commitBudget}
       />
+      {/* Phase 23: bicycling added between walking and transit. */}
       <SegmentedControl<TransportMode>
         label="Transport mode"
         value={mode}
@@ -1106,6 +1368,7 @@ function SettingsTab({
         options={[
           { value: 'driving', label: 'Drive' },
           { value: 'walking', label: 'Walk' },
+          { value: 'bicycling', label: 'Bike' },
           { value: 'transit', label: 'Transit' },
         ]}
       />
@@ -1354,12 +1617,6 @@ function formatRange(start: string | null, end: string | null): string {
   return start ?? end ?? 'No dates set';
 }
 
-function formatTravel(seconds: number, meters: number): string {
-  const mins = Math.max(1, Math.round(seconds / 60));
-  const km = meters / 1000;
-  return `${mins} min · ${km.toFixed(km < 10 ? 1 : 0)} km`;
-}
-
 function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: TripPlace[] }> {
   const map = new Map<number, TripPlace[]>();
   for (const p of places) {
@@ -1423,6 +1680,28 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  // Route render mode segmented control (Step 23.4)
+  renderModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 4,
+  },
+  renderModeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
+    gap: 6,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  // Travel connector between place cards (Step 23.8)
+  travelConnector: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });
 

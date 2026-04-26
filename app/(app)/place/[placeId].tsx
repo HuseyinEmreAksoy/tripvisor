@@ -1,4 +1,5 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
@@ -6,6 +7,15 @@ import { BackButton, Button, Heading, PoweredByGoogle, Screen } from '@/componen
 import { usePlaceDetails } from '@/api';
 import { useTheme } from '@/theme';
 import type { PlacePhoto, PlaceReview } from '@/api';
+
+// Minimum character count beyond which the "Show more / Show less" toggle
+// is offered for a review card. Reviews shorter than this are shown in full.
+const REVIEW_TRUNCATE_CHARS = 280;
+// numberOfLines passed to the collapsed Text so the card has a natural height
+// before the user expands it.
+const REVIEW_COLLAPSED_LINES = 5;
+// Max number of reviews we render (Google Places API hard limit = 5).
+const GOOGLE_REVIEW_LIMIT = 5;
 
 export default function PlaceDetailsScreen() {
   const { placeId } = useLocalSearchParams<{ placeId: string }>();
@@ -32,6 +42,9 @@ export default function PlaceDetailsScreen() {
       </Screen>
     );
   }
+
+  const renderedReviews = place.reviews.slice(0, GOOGLE_REVIEW_LIMIT);
+  const totalCount = place.userRatingCount;
 
   return (
     <Screen padded={false}>
@@ -84,12 +97,19 @@ export default function PlaceDetailsScreen() {
           </View>
         ) : null}
 
-        {place.reviews.length ? (
+        {/* ── Reviews — with per-card Show more / Show less (Step 23.5 + 23.6) */}
+        {renderedReviews.length > 0 ? (
           <View style={{ gap: t.spacing.sm }}>
             <Heading level={3}>Reviews</Heading>
-            {place.reviews.slice(0, 5).map((r) => (
+            {renderedReviews.map((r) => (
               <ReviewCard key={r.name} review={r} />
             ))}
+
+            {/* Step 23.5: "N of M reviews (Google API limit)" footer */}
+            <ReviewsFooter
+              rendered={renderedReviews.length}
+              total={totalCount}
+            />
           </View>
         ) : null}
 
@@ -148,8 +168,29 @@ function PhotoCard({ photo }: { photo: PlacePhoto }) {
   );
 }
 
+/**
+ * ReviewCard — expandable review card with per-review Show more / Show less.
+ *
+ * Step 23.5: review body text truncates at REVIEW_TRUNCATE_CHARS characters.
+ * The toggle only renders when the text actually exceeds the threshold — short
+ * reviews never show the button.
+ *
+ * Step 23.6: the toggle Pressable carries a correct accessibilityLabel (e.g.
+ * "Expand review by Jane Doe") and accessibilityRole="button". Touch target is
+ * at least 44 px tall via minHeight on the pressable.
+ */
 function ReviewCard({ review }: { review: PlaceReview }) {
   const t = useTheme();
+  const [expanded, setExpanded] = useState(false);
+
+  const fullText = review.text?.text ?? '';
+  // Only offer the toggle when the text actually overflows the limit.
+  const isLong = fullText.length > REVIEW_TRUNCATE_CHARS;
+  const displayText =
+    isLong && !expanded ? fullText.slice(0, REVIEW_TRUNCATE_CHARS) + '…' : fullText;
+
+  const authorName = review.authorAttribution.displayName;
+
   return (
     <View
       style={[
@@ -166,7 +207,7 @@ function ReviewCard({ review }: { review: PlaceReview }) {
         {review.authorAttribution.photoUri ? (
           <Image
             source={{ uri: review.authorAttribution.photoUri }}
-            accessibilityLabel={`${review.authorAttribution.displayName}'s profile photo`}
+            accessibilityLabel={`${authorName}'s profile photo`}
             style={[styles.avatar, { backgroundColor: t.colors.bgMuted }]}
             contentFit="cover"
           />
@@ -175,22 +216,72 @@ function ReviewCard({ review }: { review: PlaceReview }) {
         )}
         <View style={{ flex: 1 }}>
           <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
-            {review.authorAttribution.displayName}
+            {authorName}
           </Text>
           <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
             {review.relativePublishTimeDescription} · ★ {review.rating.toFixed(1)}
           </Text>
         </View>
       </View>
-      {review.text?.text ? (
+
+      {fullText ? (
         <Text
           style={[t.typography.body, { color: t.colors.text, marginTop: 8 }]}
-          numberOfLines={6}
+          // numberOfLines only applies when collapsed; expanded shows all.
+          numberOfLines={expanded ? undefined : REVIEW_COLLAPSED_LINES}
         >
-          {review.text.text}
+          {displayText}
         </Text>
       ) : null}
+
+      {/* Step 23.5 + 23.6: Show more / Show less toggle — only for long reviews */}
+      {isLong ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            expanded ? `Collapse review by ${authorName}` : `Expand review by ${authorName}`
+          }
+          onPress={() => setExpanded((v) => !v)}
+          style={styles.reviewToggle}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+            {expanded ? 'Show less' : 'Show more'}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
+  );
+}
+
+/**
+ * ReviewsFooter — "Showing N of M reviews (Google API limit)" caption.
+ *
+ * Step 23.5: shows the cap explicitly when M > N (or M is unknown).
+ * When M === N the note simplifies to just "Showing N reviews".
+ */
+function ReviewsFooter({
+  rendered,
+  total,
+}: {
+  rendered: number;
+  total: number | null;
+}) {
+  const t = useTheme();
+
+  let label: string;
+  if (total == null || total <= rendered) {
+    label = `Showing ${rendered} review${rendered !== 1 ? 's' : ''}`;
+  } else {
+    label = `Showing ${rendered} of ${total.toLocaleString()} reviews (Google API limit)`;
+  }
+
+  return (
+    <Text
+      accessibilityRole="text"
+      style={[t.typography.caption, { color: t.colors.textMuted, marginTop: t.spacing.xs }]}
+    >
+      {label}
+    </Text>
   );
 }
 
@@ -207,4 +298,6 @@ const styles = StyleSheet.create({
   photo: { width: 200, height: 140 },
   avatar: { width: 32, height: 32, borderRadius: 16 },
   reviewCard: { borderWidth: 1 },
+  // Step 23.6: minimum 44px touch target for the toggle.
+  reviewToggle: { marginTop: 6, minHeight: 44, justifyContent: 'center' },
 });
