@@ -332,6 +332,28 @@ export interface RevokeShareResult {
 }
 
 // ============================================================
+// Trip place reactions (Phase 24 Step 24.1)
+// ============================================================
+
+/**
+ * Phase 24: per-user, per-place like/dislike reactions. Each collaborator
+ * (viewer or editor) may set a single reaction per `trip_place`. Mirrors
+ * the `reaction` CHECK constraint in `0017_trip_place_reactions.sql`. To
+ * "clear" a reaction the client DELETEs the row — there is no nullable
+ * third state at the DB layer.
+ */
+export type TripPlaceReactionType = 'liked' | 'disliked';
+
+export interface TripPlaceReaction {
+  id: Uuid;
+  trip_place_id: Uuid;
+  user_id: Uuid;
+  reaction: TripPlaceReactionType;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================================
 // Trip collaborators (Phase 21 Step 21.5)
 // ============================================================
 

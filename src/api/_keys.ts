@@ -88,6 +88,25 @@ export const tripAccommodationsKeys = {
 };
 
 // ---------------------------------------------------------------------------
+// trip-place-reactions (Phase 24 Step 24.2)
+// ---------------------------------------------------------------------------
+//
+// `forTripPlace(tripPlaceId)` keys the per-place lookup used by the place-
+// detail card to read the current user's reaction. `forTrip(tripId)` keys
+// the cross-trip-place batch read used by the trip detail catalog
+// sections (e.g. "places liked by your travel companions"). `mine()` keys
+// the cross-trip catalog used by the analytics screen — every reaction
+// the current user has placed across every trip.
+export const tripPlaceReactionsKeys = {
+  all: ['trip-place-reactions'] as const,
+  forTripPlace: (tripPlaceId: Uuid) =>
+    [...tripPlaceReactionsKeys.all, 'for-trip-place', tripPlaceId] as const,
+  forTrip: (tripId: Uuid) =>
+    [...tripPlaceReactionsKeys.all, 'for-trip', tripId] as const,
+  mine: () => [...tripPlaceReactionsKeys.all, 'mine'] as const,
+};
+
+// ---------------------------------------------------------------------------
 // trip-collaborators (Phase 21 Steps 21.5 / 21.6)
 // ---------------------------------------------------------------------------
 //

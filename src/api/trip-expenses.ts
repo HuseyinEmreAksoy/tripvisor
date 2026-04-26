@@ -200,6 +200,31 @@ export function useDeleteTripExpense() {
 }
 
 // ===========================================================================
+// Phase 24 Step 24.12: all expenses across every accessible trip (analytics)
+// ===========================================================================
+
+/**
+ * Fetch every `trip_expenses` row the current user can see (across all trips
+ * they own or have collaborator access to). RLS restricts the result to
+ * accessible trips, so this is safe to call without extra filtering.
+ *
+ * Powers the analytics screen cross-trip spending charts.
+ */
+export function useAllUserExpenses() {
+  return useQuery<TripExpense[]>({
+    queryKey: [...tripExpensesKeys.all, 'mine'] as const,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('trip_expenses')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as TripExpense[];
+    },
+  });
+}
+
+// ===========================================================================
 // Phase 21 Step 3: budget rollup (per-category + total)
 // ===========================================================================
 //
