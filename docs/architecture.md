@@ -12,6 +12,43 @@
 - Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`, `trip_expenses`, `trip_collaborators`, `trip_accommodations`. See `supabase/migrations/`.
 - **RLS on every table**; child tables scoped via `user_can_access_trip()` helper (Phase 21) — previously scoped directly via `trips.user_id`.
 
+## Data model additions (Phase 24)
+
+### `trip_place_reactions` table (migration `0017_trip_place_reactions.sql`)
+
+Stores each collaborator's thumbs-up / thumbs-down opinion on a `trip_places` row. One row per `(trip_place_id, user_id)` pair — collaborators each have their own row, enabling per-user reaction history and future cross-collaborator views.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid pk` | `gen_random_uuid()` |
+| `trip_place_id` | `uuid fk trip_places` | cascade on delete |
+| `user_id` | `uuid fk auth.users` | cascade on delete |
+| `reaction` | `text` | CHECK IN (`liked`, `disliked`) |
+| `created_at` | `timestamptz` | `now()` |
+| `updated_at` | `timestamptz` | maintained by `set_updated_at` trigger (reused from migration 0001) |
+
+**Unique constraint**: `(trip_place_id, user_id)` — a user has at most one active reaction per place.
+
+**Indexes**: `(trip_place_id)` to speed up per-place lookups.
+
+**RLS policies**:
+- **SELECT**: `user_can_access_trip(trip_places.trip_id, auth.uid(), 'viewer')` via a JOIN through `trip_places`. Any viewer-or-better collaborator sees all reactions on places within that trip (including other collaborators' reactions).
+- **INSERT / UPDATE / DELETE**: `user_id = auth.uid()` AND the user can access the parent trip at viewer level. Users can only write their own reaction rows.
+
+**Multi-user opinion model**: Unlike a `trip_places.my_reaction` column approach, the dedicated table supports collaborator-aware reactions out of the box. Each collaborator's reaction is independent. Deleting a reaction is modeled as `DELETE` (not a null update), surfaced client-side by passing `reaction: null` to `useSetTripPlaceReaction` which triggers the DELETE path.
+
+**Client API** (`src/api/trip-place-reactions.ts`):
+- `TripPlaceReaction` type + `TripPlaceReactionType = 'liked' | 'disliked'` union.
+- `useTripPlaceReaction(tripPlaceId, userId)` — single-row query for one user's reaction on one place.
+- `useTripReactions(tripId)` — all reactions for all places in a trip (used for Settings tab catalogs).
+- `useAllUserReactions()` — all reactions for the current user across all trips (used by analytics aggregation).
+- `useSetTripPlaceReaction()` — upsert mutation via `onConflict: 'trip_place_id,user_id'`; `null` reaction triggers DELETE; optimistic update + rollback on error.
+- Query keys in `src/api/_keys.ts` as `tripPlaceReactionsKeys` factory (`all`, `forTripPlace(id)`, `forTrip(id)`, `mine()`).
+
+### `src/api/trip-expenses.ts` — `useAllUserExpenses()` (Phase 24 addition)
+
+New hook added alongside the existing trip-expenses API: `useAllUserExpenses()` runs a single SELECT against `trip_expenses` (RLS-scoped to `auth.uid()` via the parent `trips.user_id`) and returns all expense rows across all trips. Used by the analytics screen for cross-trip spend aggregations.
+
 ## Data model additions (Phase 23)
 
 ### `trips.route_render_mode`
@@ -334,6 +371,8 @@ sequenceDiagram
 
 **`directions-polyline`**: when `mode === 'transit'`, returns `polyline: null` (still returns `duration_seconds` + `distance_meters` from Routes API transit response). Other modes unchanged. Bicycling is now mapped to the `BICYCLE` Routes API travel mode enum.
 
+**`directions-polyline` (Phase 24 note)**: the function was confirmed in Phase 24 to accept raw `{ origin: {lat, lng}, destination: {lat, lng}, intermediates?: [{lat, lng}], mode }` — no `placeId` required for origin or destination. No contract change was made; this is documented because the use-my-location virtual leg relies on this raw-coordinate path to compute a polyline from the user's GPS fix to the first place in a day.
+
 **`distance-matrix`**: bicycling enum (`BICYCLE`) added alongside `DRIVE`, `WALK`, `TRANSIT`.
 
 ## Transit rendering
@@ -380,6 +419,70 @@ function optimize(params: {
 ```
 
 Shared by the `optimize-trip` Edge Function. Keep it pure — no I/O.
+
+## Analytics (Phase 24)
+
+### Screen
+
+`app/(app)/analytics.tsx` — a top-level screen reachable from the trips list header ("Insights" button). Uses `useBreakpoint` for desktop-aware layout (single-column on mobile/tablet, two-column chart grid at >= 1024 px).
+
+### Charts (four sections)
+
+1. **Spending per trip** (bar chart) — X = trip title (truncated), Y = sum of `kind='actual'` expenses per trip. Uses `useAllUserExpenses()` fan-out.
+2. **Spending by category** (donut / pie chart) — all trips summed by `category` enum. Six slices: accommodation, food, transport, shopping, activities, other.
+3. **Liked vs. disliked per trip** (grouped bar) — X = trip title, two series (liked count, disliked count); only trips where the user has >= 1 reaction.
+4. **Spending over time** (line chart) — X = `trip.start_date`, Y = total actual spend; only rendered when >= 3 trips have a `start_date` set. Hidden with an explanatory placeholder otherwise.
+
+Below the charts: two textual catalogs — "Most liked places overall" (top 5) and "Places you didn't like overall" (top 5), using `useAllUserReactions()`.
+
+### Chart implementation
+
+Charts are hand-rolled SVG using `react-native-svg` (already in the dependency tree via `react-native-maps`). `victory-native@41` was evaluated and rejected at install time: it requires `@shopify/react-native-skia >= 1.2.3`, which in turn requires React 19; the project is on React 18. The three chart components live at:
+- `src/components/charts/BarChart.tsx`
+- `src/components/charts/PieChart.tsx`
+- `src/components/charts/LineChart.tsx`
+
+If the project upgrades to React 19 in a future phase, these can be replaced by `victory-native` with no data-model change.
+
+### ToS note
+
+Analytics aggregates only user-authored data (expense amounts, reaction values). No Google Place fields (rating, reviews, photos, opening hours) are fetched or persisted by the analytics screen. "Powered by Google" attribution is not required on this screen.
+
+## Location services (Phase 24)
+
+### `src/hooks/useCurrentLocation.ts`
+
+Cross-platform hook that exposes a lazy geolocation fetch. Does NOT auto-request on mount — the consumer must call `request()` explicitly.
+
+**Status machine**: `idle -> requesting -> granted | denied | unavailable`
+
+**Web branch**: `navigator.geolocation.getCurrentPosition` with a 10 s timeout.
+
+**Native branch**: `expo-location` via `require()` inside a `try/catch`. On success: `Location.requestForegroundPermissionsAsync()` then `Location.getCurrentPositionAsync({ accuracy: Balanced })`. The `require()` is lazy and wrapped in try/catch so the hook remains importable on web without the native module.
+
+Returns `{ status, position: { lat, lng } | null, request: () => Promise<void>, error: string | null }`.
+
+Coordinates are **never persisted** — not to the DB, not to AsyncStorage. The hook caches the most recent fix in module-level memory for the session so toggling the use-my-location switch off then back on within the session reuses the cached fix without re-requesting permission.
+
+### `src/hooks/useTripUseMyLocation.ts`
+
+Per-trip AsyncStorage-backed boolean toggle. AsyncStorage key: `tripvisor:useMyLocation:<tripId>`. Returns `{ enabled, setEnabled }`. Hydrates async; emits `false` until hydrated to prevent flicker. Orphan keys (from deleted trips) are harmless and ignored.
+
+### Virtual leg semantics
+
+When the "Start route from my location" toggle is ON in MapTab:
+- `useCurrentLocation().request()` is called if status is `idle`.
+- On `granted`, a synthetic `MapPolyline` is computed by calling the `directions-polyline` Edge Function with `origin = { lat, lng }` (the user's GPS fix) and `destination` = the first place of the active day.
+- The result is a geodesic straight-line leg (or routed polyline if the Edge Function returns one). It is rendered with the same day-color as live legs.
+- This leg is **never written to `trip_legs`** or any other DB table.
+- On permission `denied` or `unavailable`: inline error copy is shown; toggle reverts to OFF.
+
+**Privacy note**: the user's lat/lng leaves the device in a call to the `directions-polyline` Edge Function (proxied through Supabase Edge Function, never sent to Google directly from the client). This is documented in `docs/features/location-routing.md`.
+
+### Android / iOS permissions (`app.json`)
+
+- Android: `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` added to `expo.android.permissions`.
+- iOS: `NSLocationWhenInUseUsageDescription` widened to "Tripvisor uses your location to suggest nearby places and to start trip routes from where you are."
 
 ## Environment variables
 

@@ -16,6 +16,9 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20; UI shipped Phase 21; Phase 22 hardening: currency-agnostic formatting (`formatCurrency`), editor collaborators can now update `total_budget` (column-restricted RLS); smoke still deferred per user direction | 20, 21, 22 | [expenses.md](expenses.md) |
 | Trip collaboration (invite + roles) | 🚧 In progress — shipped Phase 21; Phase 22 hardening: in-place role change (`useUpdateCollaborator`), unified `useTrips()` UNION hook, `useCollaboratedTrips()` deprecated; smoke still deferred per user direction | 21, 22 | [collaboration.md](collaboration.md) |
 | Accommodation tracking | 🚧 In progress — shipped Phase 21; Phase 22 hardening: Google Places autocomplete wired in `AccommodationEditSheet` with sessionToken, "Linked: <name>" chip, graceful `PlacesError` fallback; smoke still deferred per user direction | 21, 22 | [accommodation.md](accommodation.md) |
+| Place reactions (thumbs-up/down) | 🚧 In progress — data layer + API hooks + UI surfaces (ReactionChip, Settings catalog, place detail) shipped Phase 24; smoke and automated tests deferred per user direction; platforms unverified | 24 | [reactions.md](reactions.md) |
+| Analytics / Insights | 🚧 In progress — Insights screen with 4 charts + 2 place catalogs shipped Phase 24 (hand-rolled SVG charts; `victory-native` rejected due to React 19 peer requirement); smoke and automated tests deferred per user direction; platforms unverified | 24 | [analytics.md](analytics.md) |
+| Location-aware routing | 🚧 In progress — "Start route from my location" MapTab toggle shipped Phase 24 (`useCurrentLocation`, `useTripUseMyLocation`, virtual leg rendering via `directions-polyline`); smoke and automated tests deferred per user direction; platforms unverified | 24 | [location-routing.md](location-routing.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
 | Shareable read-only link | ✅ Done (web verified; iOS/Android deferred to user smoke — Head is web-only no-op, no native re-verification needed for Phase 14 unfurl; Phase 19 fixed share-revoke production bug — tokens that appeared revoked were live until this fix) | 4, 14, 19 | [share.md](share.md) |
 | .ics calendar export | 🚧 Code complete · awaiting native smoke | 4 | [ics-export.md](ics-export.md) |
@@ -43,4 +46,4 @@ Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 I
 - Packing lists (auto-suggested from destination + weather + activities)
 - Document storage (tickets, reservations, passport copies)
 
-These should be re-evaluated after Phase 21/22/23 smoke (still deferred) and Phase 24 planning.
+These should be re-evaluated after Phase 21/22/23/24 smoke (still deferred) and Phase 25 planning.

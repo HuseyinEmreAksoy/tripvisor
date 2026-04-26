@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 23 code complete — Routing UX + transport-mode polylines + add-flow day picker + reviews expansion
+**Current phase**: Phase 24 complete — Analytics + place reactions + use-my-location routing
 **Last updated**: 2026-04-26
 
 ## Status by phase
@@ -31,6 +31,7 @@
 | 21 | Budget tracking + collaboration + accommodation tracking | ✅ Code complete 2026-04-25 — automated tests + live smoke skipped per user direction; platforms unverified | backend + ui + docs |
 | 22 | Phase 21 cleanup + hardening | ✅ Code complete 2026-04-26 — automated tests (22.9) + live smoke (22.10) explicitly skipped per user direction (same as Phase 21); platforms unverified; migration landed as `0015_trips_editor_budget_rls.sql` (slot 0014 was already taken) | backend + ui + docs |
 | 23 | Routing UX (manual vs. optimal) + per-day add flow + travel/dwell labels + reviews expansion + transport-mode polylines | ✅ Code complete 2026-04-26 — automated tests (23.12) + live smoke (23.13) explicitly skipped per user direction (same as Phases 21 + 22); platforms unverified | backend + ui + docs |
+| 24 | Analytics + place reactions + use-my-location routing | ✅ Code complete 2026-04-26 — automated tests (24.15) + live smoke (24.14) explicitly skipped per user direction (same as Phases 21–23); reviewer pass (24.13) skipped per user direction; platforms unverified | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2934,14 +2935,275 @@ The riskiest spine is **23.1 + 23.2** (RLS-trigger update + Edge Function manual
 
 ---
 
-## Phase 24 candidates (known carryovers from Phase 23)
+## Phase 24 — Analytics + place reactions + use-my-location routing
 
-The following items are code-complete blockers or acknowledged follow-ups from Phase 23, collected here for the next planning conversation.
+**Goal**: Ship three user-requested surfaces in one phase: (1) a top-level Analytics screen with cross-trip charts and like/dislike catalogs, (2) per-place thumbs-up/down reactions persisted via a new `trip_place_reactions` table with collaborator-aware RLS, and (3) a "Build route from my current location" toggle on MapTab that prepends a virtual leg from the user's geolocation on iOS, Android, and Web.
+
+**Status**: ✅ Code complete 2026-04-26 — automated tests (24.15) + live smoke (24.14) explicitly skipped per user direction (same as Phases 21–23). Reviewer pass (24.13) also skipped per user direction. `victory-native` was rejected at install time (peer-requires React 19; project is on React 18) — hand-rolled SVG charts shipped instead (Step 24.11 shipped with fallback). Platforms unverified.
+**Entry criteria**:
+- Phase 23 code complete (routing UX + transport-mode polylines shipped)
+- Places API confirmed working in this user environment (per 2026-04-26 user message)
+- `expo-location` already declared as an Expo plugin (`app.json`); iOS `NSLocationWhenInUseUsageDescription` already present
+- Migration slot 0017 confirmed available (last shipped: `0016_trips_route_render_mode.sql`)
+
+**Phase exit criteria**:
+- A new `/(app)/analytics` route renders four charts on web desktop, web mobile, iOS, and Android: spend per trip (bar), spend by category (pie/stacked-bar), liked-vs-disliked per trip (grouped bar), and (conditional) spend over time (line — only with 3+ dated trips)
+- Trips list header has a visible entry point that navigates to the analytics screen
+- Tapping a thumbs-up/down chip on a place row in ItineraryTab persists the reaction within ~500 ms (optimistic update; server reconciles); tapping the same value again clears it (toggle to null)
+- The place detail screen (`app/(app)/place/[placeId].tsx`) shows the same reaction control with a larger surface
+- The trip detail Settings tab shows two new sections "Liked places" and "Didn't like" listing reacted places by name, hidden when empty
+- RLS verified: a viewer-collaborator on someone else's trip can SELECT all reactions for that trip but can only INSERT/UPDATE/DELETE rows where `user_id = auth.uid()`; a non-member cannot SELECT any rows
+- Reactions are reaction-typed `'liked' | 'disliked'` only; no Google review text, ratings, photos, or hours are persisted (ToS check passes)
+- MapTab shows a "From my location" toggle next to the existing render-mode segmented control; toggling ON triggers a one-time geolocation fetch (browser API on web, `expo-location` on native), prepends a virtual first leg from `(userLat, userLng)` to the day's first place, and renders that leg with the same polyline style as live legs (no DB write)
+- Permission denied or unavailable shows inline copy "Location permission needed — enable in browser/system settings" with a re-request affordance and the toggle reverts to OFF
+- Toggle state is persisted per-trip in AsyncStorage / localStorage (key `tripvisor:useMyLocation:<tripId>`), surviving navigation but not cross-device sync
+- Three platforms (iOS, Android, Web) all build clean and the analytics route + reactions chip + use-my-location toggle render without runtime errors on the web golden path
+- Live web smoke recorded in `docs/smoke/phase-24.md` covers: open analytics, react to a place, refresh, see the catalog populate, toggle use-my-location with permission granted, toggle with permission denied
+- `docs/architecture.md`, `docs/features/overview.md`, and a new feature doc per surface are updated; ADR for the reactions schema decision (dedicated table vs. column on `trip_places`) is filed
+
+**Default execution mode**: Per the user's pattern across Phases 21–23, `test-specialist` automated-test steps and live native smoke runs are PROPOSED below but flagged "DEFER unless user requests". The reviewer step still runs; the live web smoke step still runs (mandatory). Native verification stays deferred-to-user-smoke.
+
+**Critical path**: 24.1 → 24.2 → 24.3 → 24.6 → 24.10 → 24.13 → 24.14
+
+---
+
+### Step 24.1 — Reactions migration (`trip_place_reactions` table + RLS) ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Author migration `supabase/migrations/0017_trip_place_reactions.sql` creating the `trip_place_reactions` table with `(trip_place_id, user_id, reaction)` unique constraint, `reaction` CHECK in `('liked','disliked')`, `ON DELETE CASCADE` on both FKs, `created_at`/`updated_at` timestamps, the `set_updated_at()` trigger, and four RLS policies. Use the existing `user_can_access_trip(trip_id)` helper for the SELECT policy (viewer-collaborators can read all reactions for trips they can see). INSERT/UPDATE/DELETE policies require `user_id = auth.uid()` AND the user can access the parent trip via the `trip_places.trip_id` join.
+- **Inputs**: existing `user_can_access_trip` SQL function, `trip_places` schema, `trip_collaborators` model from Phase 21
+- **Expected output**: new migration file; `npx supabase db reset` runs cleanly locally; `select * from trip_place_reactions` works; RLS rejects cross-user write attempts in psql with two roles
+- **Depends on**: None (Phase 24 entry — runs in parallel with 24.6)
+- **Parallel with**: 24.6 (use-my-location toggle is unrelated to reactions schema)
+- **Risks**:
+  - [Medium] RLS join through `trip_places.trip_id` may be expensive at SELECT scale — Mitigation: add an index on `(trip_place_id)` and rely on cascade-delete for cleanup; revisit if smoke shows lag
+  - [Low] Migration ordering — Mitigation: slot 0017 confirmed free above
+- **Verification**: migration applied locally; ad-hoc psql smoke confirms RLS enforcement for two synthetic users (one owner, one viewer-collaborator)
+
+### Step 24.2 — Reactions API hooks (`src/api/trip-place-reactions.ts`) ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Create `src/api/trip-place-reactions.ts` exporting `useTripPlaceReactions(tripId)` (returns `{ tripPlaceId, userId, reaction }[]` for the current user only — fetched via a join on `trip_places.trip_id = :tripId`), `useAllTripReactions(tripId)` (returns all reactions for the trip including other collaborators'), and `useSetTripPlaceReaction()` mutation. The mutation accepts `{ tripPlaceId, reaction: 'liked' | 'disliked' | null }`. `null` deletes the row; non-null upserts `(trip_place_id, user_id)` with the new value. Optimistic update + invalidate `tripPlacesKeys.forTrip(tripId)`. Add a Zod schema for the reaction enum. Hoist a new `tripPlaceReactionsKeys` object into `src/api/_keys.ts`. Re-export everything from `src/api/index.ts`.
+- **Inputs**: 24.1 schema, existing `_keys.ts` pattern, existing TanStack Query mutation patterns from `trip-expenses.ts`
+- **Expected output**: hook module; types exported through `src/api/types.ts`; query keys hoisted; index re-export updated
+- **Depends on**: 24.1
+- **Parallel with**: (none — 24.3 onwards consume this)
+- **Risks**:
+  - [Low] Optimistic-update race with rapid toggling — Mitigation: cancel in-flight queries before mutate, snapshot/rollback on error (existing TanStack pattern)
+- **Verification**: TS strict typecheck passes; hook compiles into the existing barrel; manual call in dev returns expected shape
+
+### Step 24.3 — ReactionChip component (shared) + ItineraryTab PlaceRow integration ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Create `src/components/ReactionChip/ReactionChip.tsx` (cross-platform, no `.native`/`.web` split needed) — a small inline control with thumbs-up and thumbs-down buttons; current selection highlighted; tapping the active one clears it. Props: `{ value: 'liked' | 'disliked' | null, onChange: (next) => void, size?: 'sm' | 'md' }`. Wire it into `app/(app)/trip/[id]/index.tsx` `PlaceRow` (size `sm`) so each itinerary place row shows the chip. Read current value via `useTripPlaceReactions(tripId)` hoisted in ItineraryTab and passed down. Save via `useSetTripPlaceReaction()`. Don't block the row's existing onPress for opening details — chip lives in its own pressable region with `stopPropagation`.
+- **Inputs**: 24.2 hooks, existing PlaceRow layout
+- **Expected output**: new component file; PlaceRow renders the chip; tap persists the reaction; iOS/Android/Web all render
+- **Depends on**: 24.2
+- **Parallel with**: 24.4 (place detail integration), 24.6 (location toggle)
+- **Risks**:
+  - [Medium] Tap target conflict with the existing onPress to open place details — Mitigation: wrap chip in its own Pressable with explicit `hitSlop` and stop propagation; manual smoke required
+  - [Low] Visual crowding on small phones — Mitigation: chip uses `size='sm'` (24×24 icons + 4px gap), positioned right-aligned in the row footer
+- **Verification**: itinerary screen renders the chip on every row; tapping records the reaction; reload shows it persisted; no regressions on the row's open-details tap
+
+### Step 24.4 — Place detail screen reaction control ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Add `ReactionChip` (size `md`) to `app/(app)/place/[placeId].tsx` near the top of the place detail card, below the title and address. Same hook wiring as 24.3. Show the user's own reaction; do not surface other collaborators' reactions on this screen (kept simple for v1; cross-collaborator reaction views are Phase 25+).
+- **Inputs**: 24.3 component, place detail screen layout
+- **Expected output**: place detail shows the larger reaction control; tap persists; reload shows persisted state
+- **Depends on**: 24.3
+- **Parallel with**: 24.5
+- **Risks**:
+  - [Low] Inconsistent header back affordance — Mitigation: do not touch the existing header; chip lives in the body
+- **Verification**: navigating to a place detail shows the chip; toggling persists across navigation
+
+### Step 24.5 — Trip detail Settings tab catalog sections ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: In `app/(app)/trip/[id]/index.tsx` SettingsTab, add two new sections: "Liked places" and "Didn't like". Each lists place names (via `place.user_title`) with their `day_index` + `order_in_day` displayed as `Day N · #M`. Tap navigates to the place detail. Use `useTripPlaceReactions(tripId)` joined with `useTripPlaces(tripId)` (already loaded). If a section is empty, hide it entirely (don't show empty headers). Position the two sections above the existing accommodation/budget sections in the settings tab.
+- **Inputs**: 24.2 hooks, existing SettingsTab layout
+- **Expected output**: SettingsTab renders the two sections when reactions exist; both hidden on a fresh trip
+- **Depends on**: 24.2
+- **Parallel with**: 24.4
+- **Risks**:
+  - [Low] Section ordering vs. existing sections — Mitigation: place liked/disliked first since they are user-requested headlines for this phase
+- **Verification**: react to two places (one liked, one disliked); SettingsTab shows both sections with the right place names
+
+### Step 24.6 — `app.json` Android location permission + dependency check ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: XS
+- **Task**: Verify `expo-location` is at a current version supporting all three platforms (already pinned at `~18.0.0` in package.json). Add `"permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]` under `expo.android` in `app.json` if absent. Confirm the existing iOS `NSLocationWhenInUseUsageDescription` string still reads accurately for a routing use case; if it currently says "suggest nearby places," widen it to "Tripvisor uses your location to suggest nearby places and to start trip routes from where you are."
+- **Inputs**: current `app.json`, `expo-location` docs
+- **Expected output**: `app.json` updated; no native rebuild required for web; native build will pick up on next EAS build
+- **Depends on**: None
+- **Parallel with**: 24.1
+- **Risks**:
+  - [Low] iOS permission string change is user-visible on next install — Mitigation: keep wording short and accurate
+- **Verification**: `npx expo-doctor` passes; `app.json` JSON is valid
+
+### Step 24.7 — Cross-platform geolocation hook (`useCurrentLocation`) ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Create `src/lib/useCurrentLocation.ts` (no `.native`/`.web` split; uses `Platform.OS` internally to branch). Exports `useCurrentLocation()` returning `{ status: 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable', position: { lat, lng } | null, request: () => Promise<void>, error: string | null }`. On web, calls `navigator.geolocation.getCurrentPosition` with a 10 s timeout. On iOS/Android, calls `Location.requestForegroundPermissionsAsync()` then `Location.getCurrentPositionAsync({ accuracy: Balanced })`. Caches the most recent fix in module memory for the session (so toggling the use-my-location switch off then on within 60 s reuses the cached fix). The hook is intentionally NOT a TanStack Query — it's session-local state, not server state.
+- **Inputs**: `expo-location` API surface, `navigator.geolocation` browser API
+- **Expected output**: hook compiles on all three platforms; manual call in dev returns a position on web (with browser permission grant)
+- **Depends on**: 24.6
+- **Parallel with**: 24.1, 24.2 (different file tree)
+- **Risks**:
+  - [High] iOS Simulator and some Android emulators return null or stale fixes — Mitigation: document this in the feature doc; user-facing copy says "couldn't get your location, try again"
+  - [Medium] Web browsers block geolocation on insecure origins (HTTP) — Mitigation: document HTTPS requirement; in dev with `localhost`, modern browsers do permit it
+- **Verification**: hook returns granted+position on web with permission; returns denied state when permission denied; returns unavailable when no GPS
+
+### Step 24.8 — `useTripUseMyLocation` per-trip toggle persistence ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Create `src/lib/useTripUseMyLocation.ts` — a small hook over AsyncStorage that reads/writes `tripvisor:useMyLocation:<tripId>` with a boolean. Returns `[enabled, setEnabled]`. Hydrates async on mount; emits `false` until hydrated to avoid flicker.
+- **Inputs**: `@react-native-async-storage/async-storage` (already in deps)
+- **Expected output**: hook module; per-trip toggle survives screen navigation; cleared when trip is deleted (no automatic cleanup; orphan keys are harmless)
+- **Depends on**: None
+- **Parallel with**: 24.7
+- **Risks**:
+  - [Low] Orphan keys after trip deletion — Mitigation: ignored; localStorage budget is large. Document in the ADR.
+- **Verification**: toggle ON, navigate away, navigate back, value still ON
+
+### Step 24.9 — MapTab "From my location" toggle + virtual leg rendering ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: In `app/(app)/trip/[id]/index.tsx` MapTab, add a new toggle row labeled "Start route from my location" near the existing route-render-mode segmented control. Wire to `useTripUseMyLocation(tripId)`. When ON: call `useCurrentLocation().request()` if status is idle; on success, prepend a synthetic `MapPolyline` from `(userLat, userLng)` to the first place of `effectiveSelectedDay` (or each day's first place if filter is 'all') using the existing `decodePolyline` path. To compute the polyline, call the existing `directions-polyline` Edge Function with origin = current location and destination = first place coords; cache the result in component state keyed on `(userLat, userLng) → firstPlaceId`. On permission denied / unavailable: show inline error copy + a "Try again" button; toggle reverts to OFF on error. The synthetic leg renders identically to live legs (same color = day color; transit fallback applies if backend returns null polyline). Do NOT write the leg to the DB.
+- **Inputs**: 24.7 (location hook), 24.8 (toggle persistence), existing `directions-polyline` Edge Function, MapTab structure
+- **Expected output**: MapTab toggle visible and functional on iOS, Android, Web; ON state shows a polyline from user position to first place
+- **Depends on**: 24.7, 24.8
+- **Parallel with**: 24.3, 24.4, 24.5
+- **Risks**:
+  - [High] `directions-polyline` Edge Function may not accept lat/lng as origin if it currently requires a `from_place_id` — Mitigation: reviewer audit step 24.13 will confirm; if function signature is place-ID-only, file a follow-up step on the spot to relax the input contract (backend-specialist)
+  - [Medium] Day filter interaction (filter = 'all' vs. specific day) — Mitigation: in v1, only render the virtual leg for the *first day with places*; explicit comment in code; revisit if user complains
+  - [Medium] Privacy: user's lat/lng leaves the device for the polyline call — Mitigation: this is unavoidable for routing; document in feature doc and ADR
+  - [Low] Toggle flicker during AsyncStorage hydration — Mitigation: hook returns `false` until hydrated
+- **Verification**: web Chrome with permission granted: toggle ON renders polyline from current location to first place; permission denied: shows error copy; native deferred-to-smoke
+
+### Step 24.10 — Analytics route scaffold + entry point ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Create `app/(app)/analytics.tsx`. Render a Screen with a back button (using the existing pattern from settings.tsx) and a Heading "Analytics". For now, the body shows four placeholder cards stubbed with the chart titles (filled in by 24.11 and 24.12). Add an entry point on the trips list screen header — a small button next to the existing Settings button reading `📊 Analytics`, navigating to `/(app)/analytics`. Both the button and the screen must render on iOS, Android, and Web.
+- **Inputs**: trips list header layout, Settings screen as a navigation pattern reference
+- **Expected output**: route exists; navigation works; placeholders visible
+- **Depends on**: None
+- **Parallel with**: 24.1, 24.6, 24.7, 24.8
+- **Risks**:
+  - [Low] Header crowding on small phones — Mitigation: collapse the analytics button to icon-only `📊` on `bp === 'phone'`
+- **Verification**: tap the trips list header button; analytics screen opens; back button returns to trips list
+
+### Step 24.11 — Chart library decision + install (shipped with fallback: hand-rolled SVG charts) ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Add `victory-native` (current major version that supports React Native Web via the same package) to `package.json` dependencies. Confirm peer deps already satisfied (`react-native-svg` is already pulled in transitively by `react-native-maps`; verify with `npm ls react-native-svg`). If `react-native-svg` is not a direct dependency, add it explicitly. No code changes — this step only lands the deps. Run `npx expo install --check` to confirm version compatibility with Expo SDK 52+. File an ADR `docs/adr/0001-charts-victory-native.md` capturing the decision (victory-native chosen for cross-platform; alternatives rejected: react-native-chart-kit (web broken), recharts (web only), hand-rolled SVG (cost/time)).
+- **Inputs**: existing package.json, ADR template
+- **Expected output**: package.json updated; ADR file written; web bundle size impact noted in ADR
+- **Depends on**: None
+- **Parallel with**: 24.10
+- **Risks**:
+  - [High] `victory-native` major version may not yet support Expo SDK 52 / React Native 0.76 — Mitigation: this step's first action is `expo install --check`; if blocked, fall back to a hand-rolled `react-native-svg` chart layer and update the ADR to reflect that choice. Do NOT block the phase on a third-party library compatibility issue.
+  - [Medium] Bundle size impact on web (~150 KB) — Mitigation: noted in ADR; acceptable for a power-user analytics screen
+- **Verification**: `npm install` succeeds; `npm run web` builds clean; `expo-doctor` passes
+
+### Step 24.12 — Analytics charts + catalog rendering ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: L
+- **Task**: Replace the placeholder cards in `app/(app)/analytics.tsx` with four chart sections, each computed via client-side aggregation from `useTrips()`, `useTripExpenses(tripId)` (called per trip via a `useQueries` fan-out), and a new `useAllTripReactionsByTrip()` aggregator (or fan-out using 24.2's hooks). Sections:
+  1. **Spend per trip** — bar chart, X = trip title (truncated to 14 chars), Y = sum of `kind='actual'` expenses in that trip; show all trips (owned + collaborated) ordered descending
+  2. **Spend by category** — pie chart, summed across all trips, grouped by `category` (`accommodation`, `food`, `transport`, `shopping`, `activities`, `other`); show legend with totals
+  3. **Liked vs disliked per trip** — grouped/stacked bar, X = trip title, two series (liked count, disliked count) per trip; only trips where the user has reacted to ≥ 1 place
+  4. **Spend over time** — line chart, X = trip start_date, Y = trip total actual spend; only renders if ≥ 3 trips have a start_date; otherwise hide the section with a "Add at least 3 trips with start dates to see this chart" placeholder
+  Also render two textual catalogs below the charts: "Most-liked places" and "Most-disliked places" (each top 10 globally across all trips, deduped by `google_place_id` if appearing in multiple trips). Empty states for each section. All charts use day-color palette tokens from theme (or fall back to victory defaults). Powered-by-Google attribution remains on screens that show Place data (place detail, map); analytics doesn't show raw Place fields, just user-derived counts, so attribution is not required here per ToS.
+- **Inputs**: 24.2 reactions hooks, 24.10 scaffold, 24.11 chart library, existing expense + trip hooks
+- **Expected output**: analytics screen shows four chart sections + two catalogs on iOS, Android, Web
+- **Depends on**: 24.2, 24.10, 24.11
+- **Parallel with**: 24.9
+- **Risks**:
+  - [Medium] Per-trip expense fetches via `useQueries` may N+1-spam the network with 50+ trips — Mitigation: v1 caps to first 50 trips by `created_at desc`; document in feature doc; revisit if user has more
+  - [Medium] Chart library vertical sizing on RN Web — Mitigation: explicit `width` and `height` props derived from `useWindowDimensions`
+  - [Low] Empty trip / no expenses state — Mitigation: empty-state copy "Log expenses or react to places to see analytics"
+- **Verification**: with synthetic trips having expenses + reactions, all four charts render and update reactively when data changes
+
+### Step 24.13 — Reviewer pass: schema, RLS, location privacy, ToS, navigation ⚠ Skipped — reviewer pass explicitly skipped per user direction on 2026-04-26 (same pattern as Phases 21–23)
+- **Agent**: reviewer
+- **Size**: M
+- **Task**: Audit the Phase 24 surface end-to-end without writing code. Specifically check:
+  - `trip_place_reactions` migration: RLS policies are correct for owner / editor / viewer / non-member combinations; the join through `trip_places.trip_id` is sound; cascade delete works
+  - `useSetTripPlaceReaction` mutation: optimistic update rollback is correct on error; query invalidation hits the right keys
+  - `useCurrentLocation` hook: lat/lng never persisted (no DB write, no AsyncStorage write of coordinates); permission denial is handled gracefully on all three platforms; iOS permission string is accurate
+  - MapTab: `directions-polyline` Edge Function input contract (does it accept raw coords for origin? if not, flag a fix)
+  - Analytics: no Google review text / ratings / photos / hours leak into the reactions table or aggregations (we only persist `'liked'|'disliked'`)
+  - Powered-by-Google attribution still present on Place-data screens (place detail, map); analytics screen doesn't need it
+  - Back navigation works on every new screen and surface (analytics, place detail, map toggle); no dead ends
+  - Web desktop layout for analytics is desktop-aware (centered max-width container; multi-column chart grid at ≥ 1024 px), not a stretched mobile screen
+- **Inputs**: completed steps 24.1 through 24.12
+- **Expected output**: review notes posted in chat; if rearchitecture-level issues found, planner re-enters with updated steps
+- **Depends on**: 24.1, 24.2, 24.3, 24.4, 24.5, 24.7, 24.9, 24.12
+- **Parallel with**: (none — gating step)
+- **Risks**:
+  - [Medium] Reviewer surfaces a rearchitecture-level issue — Mitigation: re-plan policy: planner re-enters; failed steps marked superseded
+- **Verification**: reviewer reports zero blockers OR planner re-plans before proceeding
+
+### Step 24.14 — Live web smoke (mandatory) ⚠ Deferred — smoke explicitly skipped per user direction on 2026-04-26; see `docs/smoke/phase-24.md` for the deferred-state note
+- **Agent**: test-specialist
+- **Size**: S
+- **Task**: Walk the golden path on web Chrome and record the result in `docs/smoke/phase-24.md` mirroring Phase 23's smoke note format. Steps to walk: (1) navigate to trips list and tap the new Analytics button, (2) verify all four chart sections render or show their empty state correctly, (3) open a trip with at least 2 places, (4) react liked to one place via the itinerary chip, react disliked to another, (5) refresh — both reactions persist, (6) open the place detail screen and verify the larger chip shows the persisted state, (7) return to trip detail Settings tab and verify both catalog sections list the right places, (8) go to MapTab, toggle "Start route from my location" ON, grant browser permission, verify a polyline appears from current location to the first place, (9) toggle OFF and back ON quickly to verify cached fix is reused, (10) deny permission in browser settings, refresh, toggle ON and verify the inline error copy appears with a Try again affordance. Record any console errors or visual breakage. Native (iOS/Android) smoke deferred to user.
+- **Inputs**: completed code + clean reviewer pass
+- **Expected output**: `docs/smoke/phase-24.md` with green checks or filed bugs
+- **Depends on**: 24.13 (reviewer must pass)
+- **Parallel with**: (none — gating step)
+- **Risks**:
+  - [Medium] Browser geolocation in CI/headless mode is unreliable — Mitigation: smoke is a manual run, not automated; user runs it locally
+  - [Medium] If smoke surfaces a blocker, the docs-specialist step does NOT start; main assistant loops back to the owning specialist for a fix
+- **Verification**: smoke note committed; all 10 steps either green-checked or have filed bug references
+
+### Step 24.15 — Tests ⚠ Deferred — automated tests explicitly skipped per user direction on 2026-04-26 (same pattern as Phases 21–23)
+- **Agent**: test-specialist
+- **Size**: M
+- **Task**: PROPOSED but DEFERRED per the user's pattern across Phases 21–23. If executed: (a) reactions API hook unit tests (optimistic update rollback, key invalidation) in `src/api/__tests__/trip-place-reactions.test.ts`, (b) ReactionChip component snapshot + interaction test in `src/components/ReactionChip/__tests__/`, (c) `useCurrentLocation` hook test mocking `navigator.geolocation` and `expo-location`, (d) Playwright E2E covering the analytics navigation + a single reaction round-trip on the trip detail screen.
+- **Inputs**: completed implementation
+- **Expected output**: test files; `npm test` and `npm run test:e2e` both green
+- **Depends on**: 24.14
+- **Parallel with**: 24.16
+- **Risks**:
+  - [Low] Skip risk if deferred — Mitigation: deferred state is the user's standing decision; revisit at Phase 25 planning
+- **Verification**: tests pass OR step is marked DEFERRED in the docs update
+
+### Step 24.16 — Docs (architecture, features, ADRs, plan close-out) ✅ Done 2026-04-26
+- **Agent**: docs-specialist
+- **Size**: M
+- **Task**: Update `docs/architecture.md` with the new `trip_place_reactions` table + RLS contract, the `useCurrentLocation` cross-platform hook surface, and the per-trip use-my-location AsyncStorage key namespace. Update `docs/features/overview.md` to reference three new feature docs and tick the platforms verified columns based on Step 24.14 (web ticked; iOS/Android deferred to user). Author three new feature docs: `docs/features/place-reactions.md`, `docs/features/use-my-location-routing.md`, `docs/features/analytics.md`. File ADR `docs/adr/0002-trip-place-reactions-table.md` capturing why a dedicated table was chosen over a column on `trip_places` (collaborator-aware reactions, RLS clarity, future cross-collaborator views). The chart library ADR (0001) was already written in 24.11. Flip Phase 24 in the phase table to ✅ Done. Strike completed steps from this section. Move any deferred items into Phase 25 candidates.
+- **Inputs**: shipped code, smoke note, reviewer findings
+- **Expected output**: docs reflect shipped reality; Phase 24 row in the phase table reads ✅ Done; Phase 25 candidates updated
+- **Depends on**: 24.14
+- **Parallel with**: 24.15
+- **Risks**:
+  - [Low] Doc drift if naming shifted — Mitigation: this step is the alignment pass
+- **Verification**: all affected docs updated; ADRs in place; plan.md close-out clean
+
+---
+
+### Out-of-scope for Phase 24 (push to Phase 25+)
+- Cross-collaborator reaction visibility (e.g. "your travel partner liked this place too" badges) — `useAllTripReactions` is provided by 24.2 but UI surface is deferred
+- Per-day or per-place "use my location" override (today the toggle prepends only to the day's first place; a finer-grained override is future work)
+- Background location updates (we only fetch on toggle ON; no continuous tracking — privacy/battery cost not justified for this UX)
+- Server-side analytics aggregation (Postgres views, RPC) — v1 is fully client-side; revisit if perf bites with 100+ trips
+- Native (iOS/Android) verification of any Phase 24 surface — deferred to user smoke as standard for this project
+- Importing or exporting reaction data (currently lives only in DB; export through the existing JSON export path requires a Phase 25 follow-up if user wants it)
+- Cross-trip "places I always like" recommendations / suggestions (would require ML/scoring; out of scope)
+
+---
+
+## Phase 25 candidates (known carryovers from Phases 21–24)
+
+The following items are code-complete blockers or acknowledged follow-ups from Phases 21–24, collected here for the next planning conversation.
 
 1. **`useUpdateTripBudget` owner-only filter** — `src/api/trips.ts`'s `useUpdateTripBudget` (and `useUpdateTrip`) still carry a `user_id = auth.uid()` filter on the Supabase `.update()` call that pre-dates Phase 22's editor-budget RLS. The Phase 23 `useUpdateRouteRenderMode` hook was written to deliberately omit this filter (so editors can flip the mode). The budget hook should be relaxed the same way — the RLS layer already permits it; the client filter is now the only gating point.
-2. **Live web smoke for Phases 21 + 22 + 23 features** — no golden-path browser walk has been recorded for budget tracking, collaboration in-place role change, accommodation autocomplete, route-render-mode toggle, transit dashed lines, or the add-place day picker. All three phases are code-complete-unverified.
-3. **Native iOS / Android verification** — all platform-verified boxes across Phases 21, 22, and 23 feature docs remain empty. Standard deferred-to-user-smoke policy; no action required unless user triggers a native smoke run.
-4. **ADRs** — still deferred from Phase 21 Step 21.2 (collaboration model) and Phase 22 (editor-budget RLS). No ADR file exists for either decision. Deferred again for Phase 24 planning.
+2. **Live web smoke for Phases 21–24 features** — no golden-path browser walk has been recorded for budget tracking, collaboration in-place role change, accommodation autocomplete, route-render-mode toggle, transit dashed lines, add-place day picker (Phase 21–23), or any Phase 24 surface (reactions, analytics, use-my-location). All four phases are code-complete-unverified.
+3. **Native iOS / Android verification** — all platform-verified boxes across Phases 21, 22, 23, and 24 feature docs remain empty. Standard deferred-to-user-smoke policy; no action required unless user triggers a native smoke run.
+4. **ADRs** — still deferred from Phase 21 Step 21.2 (collaboration model) and Phase 22 (editor-budget RLS). No ADR file exists for either decision. Deferred through Phase 24.
 5. **Real transit polyline rendering** — Phase 23 ships dashed straight-line fallback + "Plan transit" deep link. Full transit polyline rendering (multi-leg, vehicle icons, transfer points) requires a dedicated UI mode and a separate phase.
-6. **Deletion of deprecated `useCollaboratedTrips`** — the hook is marked `@deprecated` in `src/api/trip-collaborators.ts` with all call sites migrated to `useTrips()`. The dead code can be removed once a grace period passes and no runtime callers remain. Phase 24 candidate for cleanup.
-7. **Migration slot `0016` confirmed** — no slot conflict. `0016_trips_route_render_mode.sql` landed cleanly on top of `0015_trips_editor_budget_rls.sql`.
+6. **Deletion of deprecated `useCollaboratedTrips`** — the hook is marked `@deprecated` in `src/api/trip-collaborators.ts` with all call sites migrated to `useTrips()`. The dead code can be removed once a grace period passes and no runtime callers remain.
+7. **Chart library upgrade** — if/when the project upgrades to React 19, `victory-native@41` (which requires `@shopify/react-native-skia >= 1.2.3` + React 19) becomes an option. The hand-rolled SVG charts can be replaced at that point. No action required while on React 18.
+8. **Per-collaborator reaction views** — the `trip_place_reactions` data layer (Phase 24) already stores reactions per `user_id`, making cross-collaborator reaction visibility ("your travel partner liked this too") possible without a schema change. The UI surface was explicitly deferred to Phase 25+.
