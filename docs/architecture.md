@@ -121,12 +121,21 @@ These constraints are documented via `COMMENT ON POLICY` in `supabase/migrations
 
 | Role | Can read trip + child tables | Can write child tables | Can write `trips` row | Can manage collaborators |
 |---|---|---|---|---|
-| `owner` | yes | yes | yes | yes |
-| `editor` | yes | yes | no | no |
+| `owner` | yes | yes | yes (all columns) | yes |
+| `editor` | yes | yes | `total_budget` only | no |
 | `viewer` | yes | no | no | no |
 | none | no | no | no | no |
 
-"Write child tables" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations` INSERT/UPDATE/DELETE. `trips` UPDATE (including `total_budget`) remains owner-only in v1.
+"Write child tables" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations` INSERT/UPDATE/DELETE. `trips` UPDATE is owner-only except for `total_budget` — see "Editor-budget RLS" below.
+
+### Editor-budget RLS (Phase 22)
+
+Migration `0015_trips_editor_budget_rls.sql` (note: originally planned as `0014` but that slot was already taken) adds:
+
+- **Policy `trips_editor_budget_update`**: permissive UPDATE policy on `trips` scoped to non-owner editors via `user_can_access_trip(id, auth.uid(), 'editor')`.
+- **Trigger `enforce_trips_column_restrictions`** (BEFORE UPDATE on `trips`, `security definer`): if `auth.uid() = OLD.user_id` (owner), returns NEW unmodified. Otherwise raises `42501 insufficient_privilege` if any column other than `total_budget` or `updated_at` differs between OLD and NEW.
+
+**Maintenance contract**: any new column added to `trips` in a future migration MUST be evaluated and either added to the trigger's allowed-diff list or left out (the default is denied for non-owners). The trigger header comment records this contract.
 
 ### Invite-accept flow
 
@@ -149,25 +158,36 @@ These constraints are documented via `COMMENT ON POLICY` in `supabase/migrations
 | `decline` | invitee | `{ token }` | `{ ok: true }` |
 | `revoke` | owner | `{ collaboratorId }` | `{ ok: true }` |
 | `list` | owner | `{ tripId }` | `{ collaborators: TripCollaborator[] }` |
+| `update` | owner | `{ collaboratorId, role }` | `{ ok: true }` |
 
-Error codes: `email_mismatch` (403), `invite_expired` (410 — 7-day TTL), `invite_not_found` (404), `already_accepted` (409), `invite_revoked` (410), `forbidden` (403 — non-owner attempted owner action). Email send is best-effort: failure returns `{ ok: true, emailSent: false, error_code: 'email_failed' }`.
+`update` (added Phase 22): owner-only; `role` must be `'viewer'` or `'editor'` (Zod enum — `'owner'` is rejected). Idempotent.
+Error codes: `email_mismatch` (403), `invite_expired` (410 — 7-day TTL), `invite_not_found` (404), `already_accepted` (409), `invite_revoked` (410), `forbidden` (403 — non-owner attempted owner action), `invalid_input` (400), `not_authenticated` (401), `not_owner` (403 — specifically for `update` action), `collaborator_not_found` (404 — for `update` action). Email send is best-effort: failure returns `{ ok: true, emailSent: false, error_code: 'email_failed' }`.
 
 ### Client API — `src/api/trip-collaborators.ts`
 
 Zod schema + `TripCollaborator`, `Role`, `Status` types. `CollaboratorError extends EdgeFunctionError`. Hooks:
 
 - `useTripCollaborators(tripId)` — lists collaborators (owner only)
-- `useCollaboratedTrips()` — trips where current user is an accepted collaborator (separate from `useTrips`)
+- `useCollaboratedTrips()` — **DEPRECATED** (Phase 22). Use `useTrips()` and filter by `isOwner === false`. Implementation retained until all call sites are migrated (Phase 23+ cleanup).
 - `useInviteCollaborator()` — mutation: invite by email
-- `useAcceptCollaboratorInvite(token?)` — mutation: accept via token
-- `useDeclineCollaboratorInvite(token?)` — mutation: decline via token
-- `useRevokeCollaborator()` — mutation: revoke by collaborator id
+- `useAcceptCollaboratorInvite(token?)` — mutation: accept via token; invalidates `tripsKeys.all` on success
+- `useDeclineCollaboratorInvite(token?)` — mutation: decline via token; invalidates `tripsKeys.all` on success
+- `useRevokeCollaborator()` — mutation: revoke by collaborator id; invalidates `tripsKeys.all` on success
+- `useUpdateCollaborator()` — (added Phase 22) mutation: `{ collaboratorId, tripId, role }`; owner-only; optimistic update + rollback; invalidates `tripCollaboratorsKeys.forTrip(tripId)` on success
 
-`useUpdateCollaborator` is NOT in v1. To change a role the owner must revoke and re-invite.
+### Client API — `src/api/trips.ts` — `useTrips()` (Phase 22 rewrite)
+
+`useTrips()` now returns a UNION of owned trips and accepted-collaborator trips by relying on the `trips_collab_select` RLS policy (which already covers both sets). A secondary lightweight query against `trip_collaborators` (filtered by `user_id = auth.uid()` + `status = 'accepted'`) is joined client-side to tag each row with `{ isOwner: boolean, collaboratorRole: 'viewer' | 'editor' | null }`. These are derived fields — not stored in the `trips` table. The `Trip` type in `src/api/types.ts` has been extended with optional `isOwner?: boolean` and `collaboratorRole?: TripCollaboratorRole | null`. Sort order: owners first by `created_at desc`, then collaborators by `created_at desc`, with `id.localeCompare` as a stable tiebreaker for React Native list keys.
 
 ### `useTripRole` hook — `src/hooks/useTripRole.ts`
 
 Returns `{ role: 'owner' | 'editor' | 'viewer' | null, canEditTrip: boolean, isOwner: boolean }`. Owner check is local (no network — compares `trips.user_id` to `auth.uid()`). Collaborator role is read via `useTripCollaborators` filtered to the current user's accepted row.
+
+## Currency formatting
+
+`src/lib/formatCurrency.ts` exports `formatCurrency(amount: number, currency?: string | null): string`. Uses `Intl.NumberFormat` with `style: 'currency'` — fully locale-agnostic; supports any IETF currency code. Falls back to `${CUR} ${amount.toFixed(2)}` for invalid or unrecognized codes; defaults to `'USD'` when `currency` is null or undefined.
+
+All five budget components (`BudgetCard`, `BudgetEditSheet`, `CategoryBreakdown`, `ExpenseList`, `ExpenseEditSheet`) accept a `currency?: string | null` prop and call `formatCurrency()`. Amount input fields display the currency code/symbol as a read-only prefix label; the input value remains a plain number. `trip.currency` is threaded down from the SettingsTab in `app/(app)/trip/[id]/index.tsx`.
 
 ## Edge Function error envelopes
 

@@ -13,9 +13,9 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (Phase 20: Map import shadowing JS Map fixed; desktop split-view; web verified; native deferred to user smoke) | 2, 15, 20 | [map.md](map.md) |
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
 | Visit duration override | 🚧 In progress | 3 | [visit-duration.md](visit-duration.md) |
-| Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20; UI shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 20, 21 | [expenses.md](expenses.md) |
-| Trip collaboration (invite + roles) | 🚧 In progress — shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 21 | [collaboration.md](collaboration.md) |
-| Accommodation tracking | 🚧 In progress — shipped Phase 21; web smoke pending (skipped per user direction 2026-04-25) | 21 | [accommodation.md](accommodation.md) |
+| Expense tracking (budget + categories) | 🚧 In progress — data layer shipped Phase 20; UI shipped Phase 21; Phase 22 hardening: currency-agnostic formatting (`formatCurrency`), editor collaborators can now update `total_budget` (column-restricted RLS); smoke still deferred per user direction | 20, 21, 22 | [expenses.md](expenses.md) |
+| Trip collaboration (invite + roles) | 🚧 In progress — shipped Phase 21; Phase 22 hardening: in-place role change (`useUpdateCollaborator`), unified `useTrips()` UNION hook, `useCollaboratedTrips()` deprecated; smoke still deferred per user direction | 21, 22 | [collaboration.md](collaboration.md) |
+| Accommodation tracking | 🚧 In progress — shipped Phase 21; Phase 22 hardening: Google Places autocomplete wired in `AccommodationEditSheet` with sessionToken, "Linked: <name>" chip, graceful `PlacesError` fallback; smoke still deferred per user direction | 21, 22 | [accommodation.md](accommodation.md) |
 | Offline itinerary view | 🚧 Code complete · awaiting native smoke | 4 | [offline.md](offline.md) |
 | Shareable read-only link | ✅ Done (web verified; iOS/Android deferred to user smoke — Head is web-only no-op, no native re-verification needed for Phase 14 unfurl; Phase 19 fixed share-revoke production bug — tokens that appeared revoked were live until this fix) | 4, 14, 19 | [share.md](share.md) |
 | .ics calendar export | 🚧 Code complete · awaiting native smoke | 4 | [ics-export.md](ics-export.md) |
@@ -43,4 +43,4 @@ Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 I
 - Packing lists (auto-suggested from destination + weather + activities)
 - Document storage (tickets, reservations, passport copies)
 
-These should be re-evaluated after Phase 21 smoke and Phase 22 close out.
+These should be re-evaluated after Phase 21/22 smoke (still deferred) and Phase 23 planning.

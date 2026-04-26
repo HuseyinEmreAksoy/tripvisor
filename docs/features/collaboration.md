@@ -1,6 +1,6 @@
 # collaboration
 
-**Status**: 🚧 In progress — shipped Phase 21 (2026-04-25); web smoke pending (skipped per user direction).
+**Status**: 🚧 In progress — shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (in-place role change, unified `useTrips()`, editor budget editing); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer + Edge Function), ui-specialist (screens)
 **Depends on**: trip-crud, auth
 
@@ -17,9 +17,9 @@ As a trip owner, I want to invite other users by email to view or edit my trip, 
 
 ### Screens
 
-- **`app/(app)/trip/[id]/collaborators.tsx`** — Collaborator management screen. Accessible from the trip detail Settings tab ("Manage collaborators" link). Owner sees: invite form (email + role selector), list of current collaborators with role chips and revoke button. Non-owner sees read-only list. Role chips are read-only in v1 (revoke + re-invite to change role).
+- **`app/(app)/trip/[id]/collaborators.tsx`** — Collaborator management screen. Accessible from the trip detail Settings tab ("Manage collaborators" link). Owner sees: invite form (email + role selector), list of current collaborators with role chips and revoke button. Non-owner sees read-only list. Role chips on accepted rows are now tappable in-place controls wired to `useUpdateCollaborator()` (Phase 22 — replaces the old "revoke + re-invite" workaround). Pending rows remain read-only.
 - **`app/invite/[token].tsx`** — Invite-accept screen. Reachable via the emailed link. Auth-gated: unauthenticated users are redirected to `/login?redirect=/invite/[token]`. Displays trip name and granted role. Explicit **Accept** and **Decline** buttons — no auto-bind on page load.
-- **`app/(app)/trips.tsx`** — "Shared with me" section added below the owned trips section. Each shared trip card carries a `SharedBadge` chip. Section header is hidden when `useCollaboratedTrips` returns an empty list.
+- **`app/(app)/trips.tsx`** — Consumes the unified `useTrips()` (Phase 22) and partitions client-side via `isOwner` flag. Two-section UX preserved: owned trips above, "Shared with me" trips below. Each shared trip card carries a `SharedBadge` chip. The "Shared with me" section header is hidden when no collaborated trips exist.
 
 ### Key interactions
 
@@ -27,7 +27,7 @@ As a trip owner, I want to invite other users by email to view or edit my trip, 
 - Invitee receives email with tokenized link; link opens the invite-accept screen.
 - Accept binds the invitee's `auth.uid()` to the collaborator row; trip appears in their list immediately.
 - Owner can revoke at any time; the trip disappears from the former collaborator's list on next query refetch.
-- Role change requires revoke + re-invite (no in-place role edit in v1).
+- Owner can change a collaborator's role in-place by tapping the role chip on an accepted row (Phase 22). The chip updates optimistically; on error, rolls back and shows an inline error. No revoke + re-invite required.
 
 ### Platform differences
 
@@ -58,11 +58,11 @@ No native-specific surface — all screens use shared Expo Router components. Th
 
 | Role | Read trip + children | Write children | Write `trips` row | Manage collaborators |
 |---|---|---|---|---|
-| `owner` | yes | yes | yes | yes |
-| `editor` | yes | yes | no | no |
+| `owner` | yes | yes | yes (all columns) | yes |
+| `editor` | yes | yes | `total_budget` only | no |
 | `viewer` | yes | no | no | no |
 
-"Write children" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations`. `trips.total_budget` and trip-level metadata remain owner-write-only in v1.
+"Write children" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations`. Editors can now update `trips.total_budget` via the Phase 22 column-restricted RLS (`0015_trips_editor_budget_rls.sql`); all other `trips` columns remain owner-only, enforced by the `enforce_trips_column_restrictions` trigger.
 
 ### `user_can_access_trip` helper
 
@@ -81,17 +81,21 @@ No native-specific surface — all screens use shared Expo Router components. Th
 | `decline` | invitee | `token` | Flips status to `declined` |
 | `revoke` | owner | `collaboratorId` | Flips status to `revoked` |
 | `list` | owner | `tripId` | Returns collaborator list; never leaks `user_id` to non-owners |
+| `update` | owner | `collaboratorId`, `role` | Changes collaborator role in-place. `role` must be `'viewer'` or `'editor'`. Idempotent. Error codes: `invalid_input` (400), `not_authenticated` (401), `not_owner` (403), `collaborator_not_found` (404) |
 
 ### Client API (`src/api/trip-collaborators.ts`)
 
 - `useTripCollaborators(tripId)` — lists collaborators (owner perspective)
-- `useCollaboratedTrips()` — trips where current user is an accepted collaborator
+- `useCollaboratedTrips()` — **DEPRECATED** (Phase 22). Use `useTrips()` and filter by `isOwner === false`. Implementation retained until all call sites migrated.
 - `useInviteCollaborator()` — mutation: invite by email + role
-- `useAcceptCollaboratorInvite(token?)` — mutation: accept via token
-- `useDeclineCollaboratorInvite(token?)` — mutation: decline via token
-- `useRevokeCollaborator()` — mutation: revoke by collaborator id
+- `useAcceptCollaboratorInvite(token?)` — mutation: accept via token; invalidates `tripsKeys.all` on success
+- `useDeclineCollaboratorInvite(token?)` — mutation: decline via token; invalidates `tripsKeys.all` on success
+- `useRevokeCollaborator()` — mutation: revoke by collaborator id; invalidates `tripsKeys.all` on success
+- `useUpdateCollaborator()` — (Phase 22) mutation: `{ collaboratorId, tripId, role }`; owner-only; optimistic update + rollback on error; invalidates `tripCollaboratorsKeys.forTrip(tripId)` on success. Does NOT invalidate `tripsKeys.all` (role flips don't add or remove trips).
 
-`useUpdateCollaborator` does NOT exist in v1. Changing a role requires revoke + re-invite.
+### `useTrips()` — unified UNION hook (`src/api/trips.ts`)
+
+The canonical hook for listing trips. Returns both owned and accepted-collaborator trips as a single list. Each row carries `{ isOwner: boolean, collaboratorRole: 'viewer' | 'editor' | null }` derived fields (not stored in `trips`). `app/(app)/trips.tsx` partitions client-side via `isOwner` to maintain the two-section visual layout.
 
 ### `useTripRole` hook (`src/hooks/useTripRole.ts`)
 
@@ -113,7 +117,7 @@ Invitee opens email link /invite/<token>
   -> client calls manage-collaborators { action: 'accept', token }
   -> Edge Function verifies: token exists, not expired (7d), inviteeEmail matches current user email
   -> binds user_id = auth.uid(), sets status = accepted, accepted_at = now()
-  -> trip appears in invitee's useCollaboratedTrips list
+  -> trip appears in invitee's useTrips() result (isOwner = false)
 
 Invitee presses Decline
   -> client calls manage-collaborators { action: 'decline', token }
@@ -132,8 +136,8 @@ Owner presses Revoke on collaborator row
 - **Double-accept**: invitee hits Accept twice (e.g. two devices). Second call returns `already_accepted` 409. Idempotent — no harm done.
 - **Revoked before accept**: `invite_revoked` 410. UI informs invitee the invite is no longer valid.
 - **Non-existent token**: `invite_not_found` 404.
-- **`useTrips` UNION not implemented**: owned trips and shared trips are separate list sections in v1. A collaborator who is also an owner sees two separate sections. Unifying them is a Phase 22 item.
-- **Trips list empty state on shared section**: when `useCollaboratedTrips` returns no results, the "Shared with me" section header is hidden entirely to avoid a confusing empty section.
+- **`useTrips` UNION**: resolved Phase 22. `useTrips()` now returns the UNION via RLS; trips list partitions client-side by `isOwner`. `useCollaboratedTrips` is deprecated.
+- **Trips list empty state on shared section**: when no collaborated trips exist the "Shared with me" section header is hidden entirely to avoid a confusing empty section.
 
 ## Test plan (deferred — Phase 21 tests skipped per user direction)
 
@@ -144,7 +148,7 @@ Owner presses Revoke on collaborator row
 - Manual native smoke (iOS + Android): deferred.
 
 ## Known limitations
-1. `useUpdateCollaborator` not implemented — role chips are read-only; revoke + re-invite required to change role.
-2. `useTrips` does not UNION owned + accepted-collaborator trips — two separate list sections in v1 (Phase 22 candidate).
-3. Editor collaborators cannot edit `trips.total_budget` — owner-only RLS on the `trips` row.
+1. ~~`useUpdateCollaborator` not implemented~~ — resolved Phase 22; in-place role change wired.
+2. ~~`useTrips` does not UNION owned + accepted-collaborator trips~~ — resolved Phase 22; unified hook ships `isOwner` + `collaboratorRole` per row.
+3. ~~Editor collaborators cannot edit `trips.total_budget`~~ — resolved Phase 22 via `0015_trips_editor_budget_rls.sql`.
 4. Push notifications on invite receipt are out of scope for MVP.

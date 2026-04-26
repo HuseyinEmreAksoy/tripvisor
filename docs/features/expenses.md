@@ -1,6 +1,6 @@
 # expenses
 
-**Status**: 🚧 In progress — data layer shipped Phase 20 (2026-04-25); UI shipped Phase 21 (2026-04-25); web smoke pending (skipped per user direction).
+**Status**: 🚧 In progress — data layer shipped Phase 20 (2026-04-25); UI shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (currency formatting, editor budget edit, see below); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer), ui-specialist (UI)
 **Depends on**: trip-crud
 
@@ -23,9 +23,7 @@ Components live in `src/components/budget/`:
 - **`ExpenseList.tsx`** — scrollable list of all expenses with edit/delete row actions. Gated: edit and delete affordances hidden for viewers.
 - **`ExpenseEditSheet.tsx`** — create/edit sheet with category picker, kind toggle (estimated / actual), amount field, optional day picker, optional label.
 
-All five components are integrated into the Settings tab of `app/(app)/trip/[id]/index.tsx`.
-
-Budget currency symbol is currently rendered as a static `$`. `trip.currency` is not yet threaded through — see Known limitations.
+All five components are integrated into the Settings tab of `app/(app)/trip/[id]/index.tsx`. `trip.currency` is threaded down from `SettingsTab` to all budget components and used via `formatCurrency()` — no hardcoded `$` symbol remains (Phase 22).
 
 ### Color thresholds
 
@@ -37,7 +35,11 @@ Budget currency symbol is currently rendered as a static `$`. `trip.currency` is
 
 ### Role gating
 
-`useTripRole(tripId)` returns `canEditTrip`. When `canEditTrip` is false (viewer or not a member) all add/edit/delete affordances are hidden. The budget edit sheet is additionally restricted to `isOwner` because `trips.total_budget` is owner-write-only at the RLS level.
+`useTripRole(tripId)` returns `canEditTrip`. When `canEditTrip` is false (viewer or not a member) all add/edit/delete affordances are hidden. Editor collaborators can now update `trips.total_budget` (Phase 22 — `0015_trips_editor_budget_rls.sql`); the budget edit sheet gates on `canEditTrip` (owner or editor). Owner-only columns on `trips` (title, currency, dates, etc.) remain protected by the `enforce_trips_column_restrictions` trigger.
+
+### Currency formatting (Phase 22)
+
+`src/lib/formatCurrency.ts` exports `formatCurrency(amount: number, currency?: string | null): string`. Uses `Intl.NumberFormat` with `style: 'currency'`; falls back to `${CUR} ${amount.toFixed(2)}` for invalid codes; defaults to `'USD'` when `currency` is null/undefined. All five budget components accept a `currency` prop and call this helper. Amount inputs show the resolved currency code/symbol as a read-only prefix label.
 
 ## Data
 
@@ -75,7 +77,7 @@ Nullable column `total_budget numeric null` on `trips` (migration `0010_trip_bud
 - `day_index` is optional; a trip-level expense (e.g. "flight booking") omits it.
 - Deleting a trip cascades to `trip_expenses` via FK.
 - Viewer collaborators can see the budget and expenses but cannot add, edit, or delete.
-- Editor collaborators can add/edit/delete expenses but cannot change `total_budget` (owner-only RLS on `trips`).
+- Editor collaborators can add/edit/delete expenses and can now update `trips.total_budget` (Phase 22 RLS relaxation via `0015_trips_editor_budget_rls.sql`). Other `trips` columns remain owner-only — enforced by the `enforce_trips_column_restrictions` trigger.
 
 ## Test plan
 - Unit: `useTripExpenseRollup` math (zero expenses, null budget, single category, mixed kinds). Deferred — Phase 21 tests skipped per user direction.
@@ -84,7 +86,7 @@ Nullable column `total_budget numeric null` on `trips` (migration `0010_trip_bud
 - Manual native smoke (iOS + Android): deferred.
 
 ## Known limitations
-1. Budget UI uses static `$` symbol — `trip.currency` is not threaded through budget components.
-2. Editor collaborators cannot edit `trips.total_budget` (owner-only RLS on `trips`). May require a per-column policy relaxation in Phase 22.
+1. ~~Budget UI uses static `$` symbol~~ — resolved Phase 22 via `formatCurrency()` helper and `trip.currency` prop threading.
+2. ~~Editor collaborators cannot edit `trips.total_budget`~~ — resolved Phase 22 via `0015_trips_editor_budget_rls.sql` (column-restricted RLS + trigger).
 3. Per-leg or per-place expense granularity is out of scope for MVP; `day_index` provides day-level granularity.
 4. `cost_per_km` on `trips` is deprecated but not dropped; any UI referencing it is legacy.

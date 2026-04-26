@@ -1,7 +1,7 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 21 — Budget tracking + collaboration + accommodation tracking
-**Last updated**: 2026-04-25
+**Current phase**: Phase 22 complete — Phase 21 cleanup + hardening
+**Last updated**: 2026-04-26
 
 ## Status by phase
 
@@ -29,6 +29,7 @@
 | 19 | Test restoration + share-revoke production bug fix | ✅ Done | test + ui + backend |
 | 20 | UX / navigation / maps recovery + expense model cleanup | ✅ Done (web smoke green 2026-04-25; native deferred to user smoke) | ui + backend + docs |
 | 21 | Budget tracking + collaboration + accommodation tracking | ✅ Code complete 2026-04-25 — automated tests + live smoke skipped per user direction; platforms unverified | backend + ui + docs |
+| 22 | Phase 21 cleanup + hardening | ✅ Code complete 2026-04-26 — automated tests (22.9) + live smoke (22.10) explicitly skipped per user direction (same as Phase 21); platforms unverified; migration landed as `0015_trips_editor_budget_rls.sql` (slot 0014 was already taken) | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2487,15 +2488,15 @@ The riskiest spine is **collaboration**: 21.5 (multi-user RLS migration) gates 2
 
 ---
 
-### Phase 22 candidates (known limitations from Phase 21)
+### Phase 22 candidates (known limitations from Phase 21) — ALL RESOLVED 2026-04-26
 
-The following items were identified during Phase 21 implementation and intentionally left for Phase 22:
+The following items were identified during Phase 21 implementation and intentionally left for Phase 22. All five are now code-complete (unverified by smoke — skipped per user direction).
 
-1. **`useUpdateCollaborator` not implemented** — collaborators screen role chips are read-only; to change a collaborator's role the owner must revoke + re-invite.
-2. **`useTrips` does not UNION owned + accepted-collaborator trips** — trips list consumes `useTrips()` and `useCollaboratedTrips()` as two separate sections (Step 21.7 deferred).
-3. **Accommodation edit sheet missing Google Places autocomplete** — only manual address entry in v1; the "remove existing link" button works but autocomplete wiring is absent.
-4. **Budget UI uses static `$` symbol** — `trip.currency` is not threaded through the budget components.
-5. **Editor collaborators cannot edit `trips.total_budget`** — `trips` UPDATE is owner-only per current RLS; a per-column relaxation may be needed if product wants editors to manage budgets.
+1. ~~**`useUpdateCollaborator` not implemented**~~ ✅ **RESOLVED** — `update` action added to `manage-collaborators` Edge Function; `useUpdateCollaborator()` hook added to `src/api/trip-collaborators.ts`; collaborators screen role chips are now tappable in-place controls (Steps 22.2 + 22.5).
+2. ~~**`useTrips` does not UNION owned + accepted-collaborator trips**~~ ✅ **RESOLVED** — `useTrips()` rewritten to rely on `trips_collab_select` RLS + a lightweight secondary `trip_collaborators` query; rows tagged with `isOwner` + `collaboratorRole`; `useCollaboratedTrips()` deprecated (Steps 22.3 + 22.4).
+3. ~~**Accommodation edit sheet missing Google Places autocomplete**~~ ✅ **RESOLVED** — `usePlacesAutocomplete` + `usePlaceDetails` wired into `AccommodationEditSheet`; one `sessionToken` per sheet mount; "Linked: <name>" chip with unlink affordance; `PlacesError` / `server_misconfigured` caught and rendered inline; manual address fallback preserved (Step 22.7).
+4. ~~**Budget UI uses static `$` symbol**~~ ✅ **RESOLVED** — `src/lib/formatCurrency.ts` added (`formatCurrency(amount, currency)` via `Intl.NumberFormat`; fallback for invalid codes); `trip.currency` threaded through all five budget components; amount input prefix shows currency code/symbol (Step 22.6).
+5. ~~**Editor collaborators cannot edit `trips.total_budget`**~~ ✅ **RESOLVED** — migration `0015_trips_editor_budget_rls.sql` (note: planned as `0014` but slot was already taken) adds `trips_editor_budget_update` policy + `BEFORE UPDATE` trigger `enforce_trips_column_restrictions`; owner short-circuits; editors may only update `total_budget` and `updated_at` — any other column raises `42501 insufficient_privilege` (Step 22.1).
 
 ### Out-of-scope (deferred to Phase 22+, do not plan now)
 - Per-category budget caps with overspend warnings
@@ -2506,3 +2507,190 @@ The following items were identified during Phase 21 implementation and intention
 - Budget export (CSV / PDF)
 - Currency conversion for multi-currency expenses
 - Push notifications on collaborator invites
+
+---
+
+## Phase 22 — Phase 21 cleanup + hardening
+
+**Goal**: Close the five known limitations recorded in the Phase 21 candidates list and the deferred 21.7 UNION step, without scope-creeping new features. Ship code + docs only; tests + smoke proposed but DEFERRED-by-default per user direction.
+**Status**: ✅ Code complete 2026-04-26 — all five Phase 21 candidates resolved; automated tests (22.9) + live smoke (22.10) explicitly skipped per user direction; platforms unverified
+**Entry criteria**:
+- Phase 21 merged to master (commits up through `40086a8`)
+- `npx tsc --noEmit` is clean on master
+- `npx supabase db reset` applies all migrations through `0013_trip_accommodations_rls_collab.sql` cleanly
+
+**Phase exit criteria**:
+- Owner can change a collaborator's role in the collaborators screen without revoke + re-invite (Limitation #1 closed)
+- Trips list consumes a single `useTrips()` that returns both owned and accepted-collaborator trips with a per-row `role` tag; `useCollaboratedTrips` is either removed or marked `@deprecated` (Limitation #5 + Step 21.7 closed)
+- Accommodation edit sheet wires Google Places autocomplete with the same UX as `app/(app)/trip/[id]/add.tsx`; manual address remains as fallback (Limitation #3 closed)
+- Budget components (`BudgetCard`, `BudgetEditSheet`, `CategoryBreakdown`, `ExpenseEditSheet`, `ExpenseList`) render currency symbol + locale-aware formatting derived from `trip.currency`; no hardcoded `$` remains (Limitation #4 closed)
+- Editor collaborators can update `trips.total_budget` (and only that column on `trips`); attempts to UPDATE other columns on `trips` as editor are rejected by RLS (Limitation #4/decision below — relax) — verified by a manual SQL test recorded in the migration header
+- `npx tsc --noEmit` clean; `npx supabase db reset` clean
+- `docs/architecture.md` collaboration table + `trips` UPDATE RLS section updated to reflect editor-budget exception
+- `docs/features/collaboration.md` updated to show "change role in place" (no longer revoke + re-invite)
+- `docs/features/accommodation.md` updated: autocomplete shipped
+- `plan.md` Phase 22 status flipped to ✅ Done
+
+**Decisions (planner-resolved, not deferred to user)**:
+1. **UNION `useTrips` strategy** — **single client query relying on RLS**, then a lightweight secondary query against `trip_collaborators` (filtered by `user_id = auth.uid()` + `status = 'accepted'`) to attach a `role` tag client-side. Owner rows (where `trips.user_id = auth.uid()`) get `role = 'owner'`; the rest get `role` from the collaborator row. Rationale: `trips_collab_select` (migration `0011`) already returns owner + accepted-collaborator trips via the `user_can_access_trip` helper. A second tiny query keyed off `(user_id, status)` (existing partial index) is cheaper than a DB view and avoids a new migration. Rejected DB view because it adds schema surface and complicates RLS reasoning for one client-side use.
+2. **Editor budget editing** — **relax `trips_owner_update` to `trips_owner_or_editor_update_budget`**. Two policies: keep owner-only `trips_owner_update` for full-row UPDATE; add an editor-permitted policy that gates UPDATE via `user_can_access_trip(id, auth.uid(), 'editor')` AND a CHECK that **only `total_budget` (and `updated_at`)** is changed (enforced via a `BEFORE UPDATE` trigger raising on disallowed column changes from non-owner editors). Rationale: editors collaborate on the trip — making them request a budget change from the owner breaks the editing workflow. The trigger keeps the blast radius tight: a misconfigured editor cannot rename, archive, or change currency.
+3. **Currency handling** — `trips.currency` ALREADY exists as `TripCurrency = 'USD' | 'EUR' | 'GBP' | 'TRY' | 'JPY'` (see `src/api/types.ts:10`, `0005_trip_cost_meta.sql`). No migration needed. Thread `trip.currency` through the budget components via a small `formatCurrency(amount, currency)` helper using `Intl.NumberFormat` with the appropriate symbol map; default to `'USD'` only as a fallback when `trip` is mid-load.
+4. **`useUpdateCollaborator`** — add a new `update` action to the existing `manage-collaborators` Edge Function. Owner-only; mutates only `role` (whitelist `['viewer', 'editor']`). Client hook `useUpdateCollaborator()` mirrors `useRevokeCollaborator` shape. No new migration.
+5. **Accommodation autocomplete** — reuse the `usePlacesAutocomplete` + `usePlaceDetails` hooks already exported from `src/api/places.ts`. UI work only; mirror the suggestion-list UX from `app/(app)/trip/[id]/add.tsx`. No backend changes.
+
+**Critical path**: 22.1 → 22.2 → 22.3 → 22.4 → 22.5 → 22.10
+
+The riskiest spine is **editor budget RLS relaxation** (22.1 + 22.2): it touches a policy already exercised by every existing UPDATE on `trips`, so a regression there is the highest-impact failure mode in the phase. All other steps are additive.
+
+---
+
+### Step 22.1 — Editor-budget RLS migration ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Note**: Migration landed as `0015_trips_editor_budget_rls.sql` — slot 0014 was already taken by a prior fix migration. Trigger named `enforce_trips_column_restrictions` (not `trips_restrict_editor_columns` as originally planned). Maintenance contract: any new column added to `trips` MUST be added to the trigger's allowed-diff list.
+- **Task**: New migration `supabase/migrations/0015_trips_editor_budget_rls.sql` (originally planned as `0014`). (a) Add policy `trips_editor_budget_update` granting UPDATE to non-owners who satisfy `user_can_access_trip(id, auth.uid(), 'editor')`. (b) Add `BEFORE UPDATE` trigger `trips_restrict_editor_columns()` that raises `'editors_may_only_update_total_budget'` if the caller is not the owner AND any column other than `total_budget` or `updated_at` differs between OLD and NEW. (c) Inline manual-SQL verification block in the migration header showing the expected deny case (editor updating `title` → error) and allow case (editor updating `total_budget` → success). Document the policy split with `COMMENT ON POLICY`.
+- **Inputs**: existing `0011_trip_collaborators.sql` (helper function), existing `trips_owner_update` policy
+- **Outputs**: `supabase/migrations/0014_trip_editor_budget_update.sql`
+- **Depends on**: None (Phase 22 entry)
+- **Parallel with**: 22.6 (different files), 22.7 (different files)
+- **Risks**:
+  - [High] RLS regression — owner UPDATE on other columns must still work; the trigger's "is owner?" branch must short-circuit before the column check. Mitigation: trigger explicitly checks `auth.uid() = OLD.user_id` first and returns NEW unmodified for owners.
+  - [Medium] Trigger fires on every `trips` UPDATE — slight overhead. Mitigation: function is `language plpgsql security definer stable`; comparison short-circuits cheaply for owners.
+  - [Medium] `updated_at` column may not exist on `trips` — verify before referencing in the trigger allow-list. Mitigation: read `0001_init.sql` + subsequent migrations; if absent, narrow allow-list to `total_budget` only.
+- **Verification**: `npx supabase db reset` applies cleanly. Manual `psql` probe (recorded in migration header): editor updating `total_budget` succeeds; editor updating `title` errors with `editors_may_only_update_total_budget`; owner updating any column succeeds.
+
+### Step 22.2 — `manage-collaborators` `update` action + client hook ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Extend `supabase/functions/manage-collaborators/index.ts` with action `update` (owner-only): payload `{ collaboratorId, role }`, validates role ∈ `['viewer', 'editor']`, asserts caller owns the parent trip, updates `trip_collaborators.role`. Reuses the existing Zod input wrapper, error envelope, and owner-gate helper. Add `useUpdateCollaborator()` to `src/api/trip-collaborators.ts` mirroring `useRevokeCollaborator`'s shape (input: `{ collaboratorId, tripId, role }`; invalidates `tripCollaboratorsKeys.forTrip(tripId)` on success). Document the new code in the Edge Function action contract block in `docs/architecture.md` — wait, that's for docs-specialist (22.10).
+- **Inputs**: existing Edge Function structure, `useRevokeCollaborator` reference shape
+- **Outputs**: updated `supabase/functions/manage-collaborators/index.ts`, updated `src/api/trip-collaborators.ts` (new hook + new error code if needed)
+- **Depends on**: None
+- **Parallel with**: 22.1, 22.6, 22.7
+- **Risks**:
+  - [Medium] Role validation must reject `'owner'` (not a valid collaborator role). Mitigation: Zod enum `['viewer', 'editor']` — same enum used by INSERT.
+  - [Low] Edge Function deploy out-of-band from migration. Mitigation: action is additive; old clients continue to work.
+- **Verification**: `?ping` still returns 200; `update` round-trips locally — owner promotes a viewer to editor; editor cannot call `update` (returns `not_owner`).
+
+### Step 22.3 — UNION `useTrips()` + role tag ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Rewrite `useTrips(opts)` in `src/api/trips.ts` to (a) issue a single `SELECT * FROM trips` (RLS auto-includes accepted-collaborator rows), (b) issue a parallel `SELECT trip_id, role FROM trip_collaborators WHERE user_id = auth.uid() AND status = 'accepted'`, (c) attach `role: 'owner' | 'editor' | 'viewer'` to each trip client-side (`'owner'` if `trip.user_id === auth.user.id`, else look up in the collaborator map). Return type extends `Trip` with `role` (declare as `TripWithRole = Trip & { role: TripRole }` in `src/api/types.ts`). Mark `useCollaboratedTrips` as `@deprecated — use useTrips() which now UNIONs owned + collaborated`; keep the export so `app/(app)/trips.tsx` continues to compile until 22.4 lands.
+- **Inputs**: existing `useTrips`, existing `useCollaboratedTrips` (`src/api/trip-collaborators.ts:236`), `trips_collab_select` policy
+- **Outputs**: rewritten `useTrips`, new `TripWithRole` + `TripRole` types in `src/api/types.ts`, deprecation comment on `useCollaboratedTrips`
+- **Depends on**: None (independent of 22.1)
+- **Parallel with**: 22.1, 22.2, 22.6, 22.7
+- **Risks**:
+  - [Medium] `archived_at` filter currently lives in `useTrips`. Collaborator-shared trips may also be archived; semantics for "archived shared trip" need a call. Decision: filter `archived_at` exactly the same way for both owned and shared trips — a shared trip the owner archived disappears from the collaborator's active list too.
+  - [Medium] Two parallel queries instead of one round-trip → slight latency increase. Mitigation: `Promise.all`; both queries are indexed; expected p50 < 50ms total locally.
+  - [Low] Existing call sites of `useTrips` consume `Trip[]` not `TripWithRole[]`. Mitigation: `TripWithRole extends Trip`, so all existing field reads work; new `role` field is purely additive.
+- **Verification**: `tsc --noEmit` clean. Manual: a user with one owned trip + one accepted-collaborator trip sees both in `useTrips()` results, with `role` set correctly on each.
+
+### Step 22.4 — Trips list UI: consume new `useTrips()`, drop `useCollaboratedTrips` ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Update `app/(app)/trips.tsx` to consume the unified `useTrips()` and render trips in a single list (or two sections — owner's choice for visual hierarchy, but driven by the `role` field on each row, not by separate hooks). Remove the import of `useCollaboratedTrips`. Preserve the "Shared with me" badge by inspecting `trip.role !== 'owner'`. After this step lands, delete `useCollaboratedTrips` from `src/api/trip-collaborators.ts` and the corresponding `tripCollaboratorsKeys.mine()` query key (and any tests, although tests are deferred).
+- **Inputs**: 22.3 unified hook
+- **Outputs**: updated `app/(app)/trips.tsx`, `useCollaboratedTrips` removed, `tripCollaboratorsKeys.mine` removed
+- **Depends on**: 22.3
+- **Parallel with**: 22.5, 22.6, 22.7, 22.8
+- **Risks**:
+  - [Medium] Invite-acceptance flow (`app/invite/[token].tsx`) invalidates `tripCollaboratorsKeys.mine()` on success — removing that key means the invalidation needs to point at `tripsKeys.all` instead. Mitigation: audit `useAcceptCollaboratorInvite` invalidation list as part of this step.
+  - [Low] `tripCollaboratorsKeys.mine` may be referenced elsewhere. Mitigation: rg pre-flight before delete.
+- **Verification**: `tsc --noEmit` clean. Trips list renders both owned + collaborated trips after a fresh login; "Shared with me" badge appears on collaborated rows.
+
+### Step 22.5 — Collaborators screen: in-place role change ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: In `app/(app)/trip/[id]/collaborators.tsx`, replace the read-only role chip with a tappable role selector (segmented control on web, action sheet on native — reuse existing primitives). On change, call `useUpdateCollaborator().mutate({ collaboratorId, tripId, role })`. Show optimistic UI: chip flips immediately; on error, roll back and show a toast / inline error using the existing error surface in this screen. Remove the "to change role, revoke + re-invite" copy.
+- **Inputs**: 22.2 hook
+- **Outputs**: updated `app/(app)/trip/[id]/collaborators.tsx` (and the existing collaborator-row component if extracted)
+- **Depends on**: 22.2
+- **Parallel with**: 22.4, 22.6, 22.7, 22.8
+- **Risks**:
+  - [Low] Optimistic rollback UX — Mitigation: existing `useRevokeCollaborator` rollback pattern is the reference.
+  - [Low] Owner accidentally taps a different role. Mitigation: the segmented control is two-state (viewer/editor); a confirm dialog is overkill for a reversible change.
+- **Verification**: Manual: owner promotes a viewer to editor; chip updates instantly; refresh shows persisted role.
+
+### Step 22.6 — Budget UI: thread `trip.currency` through every budget component ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Add `src/lib/format/currency.ts` exporting `formatCurrency(amount: number, currency: TripCurrency): string` using `Intl.NumberFormat('en-US', { style: 'currency', currency })`. Update `BudgetCard`, `BudgetEditSheet`, `CategoryBreakdown`, `ExpenseEditSheet`, `ExpenseList` to accept a `currency` prop (or read it via the trip already in scope — most of these are already passed `trip` or `tripId`). Replace every hardcoded `$` and the local `formatCurrency` / `formatAmt` helpers with calls to the new shared helper. The two `$` literals in `BudgetEditSheet:109` and `ExpenseEditSheet:205` (input field prefix) should render the localized currency symbol via `(0).toLocaleString('en-US', { style: 'currency', currency }).replace(/\d/g, '').trim()` or equivalent — a tiny `currencySymbol(currency)` helper exported from the same module.
+- **Inputs**: `src/api/types.ts` `TripCurrency` union; existing budget components
+- **Outputs**: new `src/lib/format/currency.ts`, updated 5 budget components
+- **Depends on**: None
+- **Parallel with**: 22.1, 22.2, 22.3, 22.7
+- **Risks**:
+  - [Medium] React Native may not ship full ICU on Android; `Intl.NumberFormat` with `style: 'currency'` may fall back. Mitigation: Hermes ships ICU on RN 0.73+ (Expo SDK 52 = RN 0.76), so this is safe; if a smoke surfaces breakage, fall back to a static symbol map.
+  - [Low] Tests for currency rendering — deferred per user direction; not in this step.
+- **Verification**: `tsc --noEmit` clean. Visual: a trip with `currency: 'EUR'` shows `€` prefix and European thousands separators in `BudgetCard`; same for `BudgetEditSheet` input prefix.
+
+### Step 22.7 — Accommodation edit sheet: wire Google Places autocomplete ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: In `src/components/accommodation/AccommodationEditSheet.tsx`, add a Google Places search input above the manual address field. On query, call `usePlacesAutocomplete({ input, sessionToken })` from `src/api/places.ts` (mirror the implementation in `app/(app)/trip/[id]/add.tsx`). On suggestion tap, call `usePlaceDetails({ placeId, sessionToken, fields })` to resolve `name` (prefill if name field empty), `formattedAddress` (write to `address`), `lat`, `lng`, `placeId` → write all four into form state. Show a "linked to <name>" chip with a clear (×) button that nulls `googlePlaceId`/`lat`/`lng` and re-shows the manual address field. Keep manual address as the fallback when no place is linked. Reuse `PlacesError` rendering / `server_misconfigured` banner pattern from `add.tsx`. Cap suggestions list at 5 rows.
+- **Inputs**: existing `usePlacesAutocomplete`, `usePlaceDetails` from `src/api/places.ts`; `app/(app)/trip/[id]/add.tsx` as the reference UX
+- **Outputs**: updated `AccommodationEditSheet.tsx`; possibly a small extracted `<PlaceSearchInput />` if duplication with `add.tsx` becomes painful (decision deferred to ui-specialist — extract only if the diff exceeds ~80 lines of duplication)
+- **Depends on**: None
+- **Parallel with**: 22.1, 22.2, 22.3, 22.6
+- **Risks**:
+  - [Medium] Sheet z-index may obscure the autocomplete dropdown on web. Mitigation: render suggestions inside the sheet's scroll view; cap to 5 rows; verify visually.
+  - [Medium] Session token lifecycle — autocomplete + details should share a session token to keep the Places billing tier favorable. Mitigation: generate one `crypto.randomUUID()` per sheet open; reset on close. Match `add.tsx` pattern.
+  - [Low] User selects a place then edits the address text manually. Mitigation: editing address text after a place is linked breaks the link (clear `googlePlaceId`/`lat`/`lng`) — match the existing UX in `add.tsx`.
+- **Verification**: Manual: open edit sheet → type "Park Hyatt" → tap suggestion → name + address + coords prefill; clear (×) button restores manual mode; saving persists `google_place_id` + `lat` + `lng`.
+
+### Step 22.8 — TypeScript + migration smoke (backend hygiene, not "live smoke") ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Run `npx tsc --noEmit` to confirm no type regressions across the phase's changes. Run `npx supabase db reset` to confirm `0014` applies cleanly on top of `0013`. If either fails, ping the owning specialist for a fix before close-out. This is hygiene, NOT the deferred "live smoke" — no browser walk-through.
+- **Inputs**: All Group A/B output (22.1–22.7)
+- **Outputs**: a one-line confirmation in `docs/smoke/phase-22.md` ("tsc clean; db reset clean — DD 2026-04-26"). No golden-path smoke.
+- **Depends on**: 22.1, 22.2, 22.3, 22.4, 22.5, 22.6, 22.7
+- **Parallel with**: (none — gates docs)
+- **Risks**: [Low] none material — failure here just loops back to the owning specialist
+- **Verification**: Both commands exit 0
+
+### Step 22.9 — [DEFERRED] Automated tests — explicitly skipped per user direction (same as Phase 21)
+- **Agent**: test-specialist
+- **Size**: M
+- **Task**: Author (a) RLS test: editor can UPDATE `trips.total_budget` but not `title`/`start_date`/`currency`/etc. (verifies the trigger from 22.1 is correct under user JWT). (b) Hook test for `useUpdateCollaborator` happy + non-owner-denied path. (c) Hook test for unified `useTrips()` returning role-tagged rows for owner + collaborator. (d) Component test for `formatCurrency` symbol + locale matrix (USD/EUR/GBP/TRY/JPY).
+- **Inputs**: 22.1, 22.2, 22.3, 22.6
+- **Outputs**: `tests/rls.editor-budget.test.ts`, `tests/hooks.update-collaborator.test.tsx`, `tests/hooks.use-trips-union.test.tsx`, `tests/lib.currency.test.ts`
+- **Depends on**: 22.8
+- **Parallel with**: 22.10 (default execution: SKIP unless user explicitly requests)
+- **Default execution mode**: **DEFER** — per user direction, ship without tests.
+- **Risks**: [N/A while deferred]
+- **Verification**: `npm test` green if executed
+
+### Step 22.10 — [DEFERRED] Live smoke (web) — explicitly skipped per user direction (same as Phase 21)
+- **Agent**: test-specialist
+- **Size**: S
+- **Task**: Walk the four touched golden paths in Chromium against local Supabase: (a) editor collaborator updating `total_budget` succeeds, updating `title` is rejected with the expected error; (b) owner promoting viewer → editor in-place; (c) trips list renders both owned + collaborated trips with badges; (d) accommodation edit sheet autocomplete picks a place. Record at `docs/smoke/phase-22.md`.
+- **Inputs**: All preceding steps
+- **Outputs**: `docs/smoke/phase-22.md`
+- **Depends on**: 22.8
+- **Parallel with**: 22.9 (default execution: SKIP unless user explicitly requests)
+- **Default execution mode**: **DEFER** — per user direction, ship without smoke. The hygiene check in 22.8 is the only guaranteed verification.
+- **Risks**: [N/A while deferred]
+- **Verification**: Smoke log shows PASS for all four paths if executed
+
+### Step 22.11 — Docs sync ✅ Done 2026-04-26
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: Update (a) `docs/architecture.md`: add a sub-section under "Collaboration model" documenting the editor-budget UPDATE policy + trigger, and update the role taxonomy table — `editor` row, "Can write `trips` row" column flips from `no` to `total_budget only`. Add `update` row to the `manage-collaborators` action contract table. (b) `docs/features/collaboration.md`: replace "to change a role, revoke + re-invite" with the in-place role change flow; add note about editor budget editing. (c) `docs/features/accommodation.md`: tick the autocomplete checkbox; remove the "manual-only" caveat. (d) `plan.md`: flip Phase 22 status to ✅ Done; remove items 1–5 from the Phase 21 "Phase 22 candidates" list (now closed). (e) Mark `useUpdateCollaborator is NOT in v1` line in `docs/architecture.md` (Collaboration model § Client API) as superseded.
+- **Inputs**: All shipped surfaces from 22.1–22.7
+- **Outputs**: updates to `docs/architecture.md`, `docs/features/collaboration.md`, `docs/features/accommodation.md`, `plan.md`
+- **Depends on**: 22.8 (or 22.10 if smoke was executed)
+- **Parallel with**: (none — final step)
+- **Risks**: [Low] doc drift if naming shifted — Mitigation: this step is the alignment pass
+- **Verification**: All four docs reflect shipped reality; Phase 22 row in the phase table at top of `plan.md` reads ✅ Done; Phase 22 candidates list pruned
+
+---
+
+### Out-of-scope for Phase 22 (push to Phase 23+)
+- New budget features (per-category caps, per-day caps, currency conversion, CSV/PDF export)
+- Collaboration ownership transfer
+- Real-time presence
+- Accommodation overlap enforcement at DB level
+- Push notifications
+- Native (iOS/Android) verification of any Phase 22 surface — deferred to user smoke as standard for this project

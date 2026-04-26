@@ -1,6 +1,6 @@
 # accommodation
 
-**Status**: 🚧 In progress — shipped Phase 21 (2026-04-25); web smoke pending (skipped per user direction).
+**Status**: 🚧 In progress — shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (Google Places autocomplete wired in edit sheet); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer), ui-specialist (UI)
 **Depends on**: trip-crud, collaboration
 
@@ -21,7 +21,7 @@ All components live in `src/components/accommodation/`:
 
 - **`AccommodationList.tsx`** — list of accommodation cards on the trip detail Settings tab. Each card shows property name, date range (check-in to check-out), and address line. Tapping a card opens the edit sheet.
 - **`AccommodationCard.tsx`** — individual card within `AccommodationList`.
-- **`AccommodationEditSheet.tsx`** — create/edit bottom sheet with: name field, optional address field (manual text — Google Places autocomplete is NOT wired in v1; see Known limitations), check-in and check-out date pickers, notes field. Check-out must be after check-in (validated client-side; enforced by DB CHECK constraint). "Remove Google Places link" button present when a `google_place_id` is already attached.
+- **`AccommodationEditSheet.tsx`** — create/edit bottom sheet. Includes a Google Places search input (Phase 22): `usePlacesAutocomplete` + `usePlaceDetails` wired with one `sessionToken` per sheet mount (via `useState(crypto.randomUUID)`). Suggestions list shows up to 5 results with day-color accents; tapping a suggestion fetches place details and populates `name` / `address` / `google_place_id` / `lat` / `lng`. A "Linked: <name>" chip with an X unlinks the place and restores manual address entry. `PlacesError` (including `server_misconfigured`) is caught and rendered as an inline warning pointing to `docs/google-maps-setup.md`; the sheet does not crash. Manual name and address fields are preserved as fallback when no place is linked. Check-in and check-out date pickers, notes field. Check-out must be after check-in (validated client-side; enforced by DB CHECK constraint).
 - **`StayingAtPill.tsx`** — small chip rendered near each day header in the itinerary when an accommodation covers that night. Text: "Staying at: <name>".
 
 `AccommodationList` and `StayingAtPill` are integrated into `app/(app)/trip/[id]/index.tsx`.
@@ -73,6 +73,7 @@ Only `google_place_id`, `lat`, and `lng` are persisted server-side — same patt
 
 ## APIs
 
+- `src/api/places.ts` — `usePlacesAutocomplete` + `usePlaceDetails` consumed by `AccommodationEditSheet` (Phase 22). Session token generated once per sheet mount via `useState(crypto.randomUUID)` and shared across both calls. `PlacesError` with code `server_misconfigured` is handled inline.
 - `src/api/trip-accommodations.ts` — Zod schema + `TripAccommodation` type; TanStack Query hooks:
   - `useTripAccommodations(tripId)` — reads all accommodations for a trip, ordered by `check_in_date`
   - `useCreateTripAccommodation()` — inserts a new accommodation row (optimistic + rollback)
@@ -85,7 +86,7 @@ Only `google_place_id`, `lat`, and `lng` are persisted server-side — same patt
 - **Overlapping date ranges**: two accommodations covering the same night are allowed by the DB (no overlap enforcement). The UI does not warn about overlaps in v1 — this is a Phase 22 candidate. Both `StayingAtPill` entries would appear on the shared night's day header.
 - **`check_out_date > check_in_date`**: enforced by both the DB CHECK constraint and client-side Zod validation. Same-day check-in/out is rejected.
 - **Optional Google place link**: when `google_place_id` is null, only `name` and `address` are required. When `google_place_id` is supplied, `lat` and `lng` must also be provided (CHECK constraint ensures this).
-- **Accommodation edit sheet autocomplete**: Google Places autocomplete is not wired in v1 — name and address are entered as free text. The "remove existing link" button functions correctly for rows that already have a `google_place_id` (e.g. set via a future migration or API call). See Known limitations.
+- **Accommodation edit sheet autocomplete**: wired in Phase 22 — see `AccommodationEditSheet.tsx` description above. Autocomplete and place-details calls share one session token per sheet mount; manually editing the address after a place is linked clears the `google_place_id`/`lat`/`lng` (same UX as `add.tsx`). `server_misconfigured` error surfaces inline without crashing the sheet.
 - **Viewer role**: viewer collaborators can see accommodation cards and `StayingAtPill` chips but cannot add, edit, or delete.
 - **Deleting a trip**: cascades to `trip_accommodations` via the FK.
 
@@ -98,6 +99,6 @@ Only `google_place_id`, `lat`, and `lng` are persisted server-side — same patt
 - Manual native smoke (iOS + Android): deferred.
 
 ## Known limitations
-1. `AccommodationEditSheet` does not wire Google Places autocomplete in v1 — only manual address entry and "remove existing link". Autocomplete wiring is a Phase 22 candidate.
+1. ~~`AccommodationEditSheet` does not wire Google Places autocomplete~~ — resolved Phase 22; autocomplete + place-details wired with sessionToken, "Linked: <name>" chip, graceful `PlacesError` fallback, and manual address fallback.
 2. Overlapping date ranges are allowed at the DB level — no overlap warning in v1.
 3. `StayingAtPill` uses a simple date-range inclusion check based on `check_in_date` / `check_out_date`; it surfaces on every night between check-in and check-out (exclusive of check-out night, matching hotel convention).
