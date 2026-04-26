@@ -4,7 +4,10 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import { BackButton, Button, Heading, PoweredByGoogle, Screen } from '@/components';
+import { ReactionChip } from '@/components/ReactionChip';
 import { usePlaceDetails } from '@/api';
+import { useTripPlaceReaction, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
+import { useSession } from '@/api/auth';
 import { useTheme } from '@/theme';
 import type { PlacePhoto, PlaceReview } from '@/api';
 
@@ -18,10 +21,25 @@ const REVIEW_COLLAPSED_LINES = 5;
 const GOOGLE_REVIEW_LIMIT = 5;
 
 export default function PlaceDetailsScreen() {
-  const { placeId } = useLocalSearchParams<{ placeId: string }>();
+  // `tripPlaceId` is optionally passed when navigating from a trip context,
+  // enabling the reaction control.
+  // `tripId` is also optional — required to invalidate the per-trip cache.
+  const { placeId, tripPlaceId, tripId } = useLocalSearchParams<{
+    placeId: string;
+    tripPlaceId?: string;
+    tripId?: string;
+  }>();
   const router = useRouter();
   const t = useTheme();
   const { data: place, isLoading, error } = usePlaceDetails({ placeId });
+
+  // Phase 24 Step 24.4: reaction control — only shown when reached from a trip context.
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+  const { data: currentReaction } = useTripPlaceReaction(tripPlaceId, currentUserId);
+  const setReaction = useSetTripPlaceReaction();
+
+  const hasTripContext = Boolean(tripPlaceId && tripId);
 
   if (isLoading) {
     return (
@@ -55,6 +73,34 @@ export default function PlaceDetailsScreen() {
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
           {place.formattedAddress}
         </Text>
+
+        {/* Phase 24 Step 24.4: reaction control — only shown in a trip context */}
+        {hasTripContext ? (
+          <View
+            style={[
+              styles.reactionContainer,
+              {
+                backgroundColor: t.colors.bgElevated,
+                borderRadius: t.radius.md,
+                borderColor: t.colors.border,
+                padding: t.spacing.md,
+                gap: t.spacing.sm,
+              },
+            ]}
+          >
+            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+              {'Did you like it?'}
+            </Text>
+            <ReactionChip
+              reaction={currentReaction?.reaction ?? null}
+              size="lg"
+              onChange={(next) => {
+                if (!tripPlaceId || !tripId) return;
+                setReaction.mutate({ tripPlaceId, reaction: next, tripId });
+              }}
+            />
+          </View>
+        ) : null}
 
         {place.rating != null ? (
           <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
@@ -300,4 +346,6 @@ const styles = StyleSheet.create({
   reviewCard: { borderWidth: 1 },
   // Step 23.6: minimum 44px touch target for the toggle.
   reviewToggle: { marginTop: 6, minHeight: 44, justifyContent: 'center' },
+  // Phase 24 Step 24.4: reaction control container.
+  reactionContainer: { borderWidth: 1 },
 });

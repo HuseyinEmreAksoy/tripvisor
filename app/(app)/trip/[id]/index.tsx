@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   BackButton,
@@ -67,6 +67,13 @@ import { StayingAtPill } from '@/components/accommodation/StayingAtPill';
 import { useDeleteTripExpense } from '@/api';
 import type { TripExpense } from '@/api/types';
 import type { TripAccommodation } from '@/api/types';
+// Phase 24: reactions
+import { ReactionChip } from '@/components/ReactionChip';
+import { useTripReactions, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
+import { useSession } from '@/api/auth';
+// Phase 24: location
+import { useCurrentLocation } from '@/hooks/useCurrentLocation';
+import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
 
 type TabKey = 'map' | 'itinerary' | 'settings';
 
@@ -370,6 +377,10 @@ function MapTab({
   const updateRenderMode = useUpdateRouteRenderMode(tripId);
   const currentMode: RouteRenderMode = trip.route_render_mode;
 
+  // ── Phase 24: "From my location" toggle (Step 24.9) ───────────────────────
+  const { location: userLocation, status: locationStatus, request: requestLocation } = useCurrentLocation();
+  const { enabled: useMyLocation, setEnabled: setUseMyLocation } = useTripUseMyLocation(tripId);
+
   // ── Day filter state ───────────────────────────────────────────────────────
   // 'all' shows everything; a number filters to that day_index (0-indexed).
   // Resets on tab unmount — per-session, not persisted.
@@ -470,6 +481,82 @@ function MapTab({
     if (effectiveSelectedDay === 'all') return allPolylinesFull;
     return allPolylinesFull.filter((p) => p.dayIndex === effectiveSelectedDay);
   }, [allPolylinesFull, effectiveSelectedDay]);
+
+  // ── Phase 24 Step 24.9: virtual "from my location" leg ───────────────────
+  // When enabled + location granted, prepend a straight-line polyline from
+  // the user's position to the first place in the active day. This is
+  // render-only and is never written to trip_legs.
+  const firstPlaceForActiveDay = useMemo(() => {
+    const dayIndex = effectiveSelectedDay === 'all' ? (availableDays[0] ?? null) : effectiveSelectedDay;
+    if (dayIndex === null) return null;
+    const inDay = places
+      .filter((p) => p.day_index === dayIndex)
+      .sort((a, b) => (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
+    return inDay[0] ?? null;
+  }, [places, effectiveSelectedDay, availableDays]);
+
+  const virtualLegPolyline: MapPolyline | null = useMemo(() => {
+    if (!useMyLocation || !userLocation || !firstPlaceForActiveDay) return null;
+    return {
+      id: '__my_location_virtual__',
+      dayIndex:
+        effectiveSelectedDay === 'all'
+          ? (availableDays[0] ?? 0)
+          : (effectiveSelectedDay as number),
+      isDashed: false,
+      points: [],
+      from: { lat: userLocation.lat, lng: userLocation.lng },
+      to: { lat: firstPlaceForActiveDay.lat, lng: firstPlaceForActiveDay.lng },
+    };
+  }, [useMyLocation, userLocation, firstPlaceForActiveDay, effectiveSelectedDay, availableDays]);
+
+  const userMarker: MapMarker | null = useMemo(() => {
+    if (!useMyLocation || !userLocation) return null;
+    return {
+      id: '__my_location__',
+      lat: userLocation.lat,
+      lng: userLocation.lng,
+      title: 'My location',
+      dayIndex: null,
+      orderInDay: null,
+    };
+  }, [useMyLocation, userLocation]);
+
+  const finalMarkers = useMemo(() => {
+    if (!userMarker) return filteredMarkers;
+    return [userMarker, ...filteredMarkers];
+  }, [filteredMarkers, userMarker]);
+
+  const finalPolylines = useMemo(() => {
+    if (!virtualLegPolyline) return filteredPolylinesFull;
+    return [virtualLegPolyline, ...filteredPolylinesFull];
+  }, [filteredPolylinesFull, virtualLegPolyline]);
+
+  // Handle the toggle button press.
+  async function handleMyLocationToggle() {
+    if (useMyLocation) {
+      setUseMyLocation(false);
+      return;
+    }
+    if (locationStatus === 'granted' && userLocation) {
+      // Already have permission + location — just enable.
+      setUseMyLocation(true);
+      return;
+    }
+    // Need to request permission.
+    await requestLocation();
+    // After request(), `locationStatus` will update asynchronously.
+    // We enable the toggle only if granted — checked in the effect below.
+  }
+
+  // Enable the toggle automatically once location is granted after a tap.
+  useEffect(() => {
+    if (locationStatus === 'granted' && !useMyLocation && userLocation) {
+      setUseMyLocation(true);
+    }
+    // Only fire when status flips to 'granted'; ignore other transitions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationStatus]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -588,12 +675,85 @@ function MapTab({
         </View>
       ) : null}
 
+      {/* ── Phase 24 Step 24.9: "From my location" toggle ─────────────────
+       * Hidden when locationStatus === 'unavailable' (locked-down web env).
+       * Shows a spinner while requesting, inline error on denied.
+       */}
+      {locationStatus !== 'unavailable' ? (
+        <View style={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.sm, gap: t.spacing.xs }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={useMyLocation ? 'Disable route from my location' : 'Route from my location'}
+            accessibilityState={{ selected: useMyLocation }}
+            onPress={handleMyLocationToggle}
+            style={({ pressed }) => [
+              styles.myLocationBtn,
+              {
+                backgroundColor: useMyLocation ? t.colors.primary : t.colors.bgElevated,
+                borderColor: useMyLocation ? t.colors.primary : t.colors.border,
+                opacity: pressed ? 0.75 : 1,
+                borderRadius: t.radius.md,
+              },
+            ]}
+          >
+            {locationStatus === 'requesting' ? (
+              <ActivityIndicator
+                size="small"
+                color={useMyLocation ? t.colors.primaryText : t.colors.primary}
+              />
+            ) : (
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: useMyLocation ? t.colors.primaryText : t.colors.textMuted,
+                }}
+                accessible={false}
+              >
+                {'📍'}
+              </Text>
+            )}
+            <Text
+              style={[
+                t.typography.caption,
+                {
+                  color: useMyLocation ? t.colors.primaryText : t.colors.text,
+                  fontWeight: useMyLocation ? '600' : '400',
+                },
+              ]}
+            >
+              {useMyLocation ? 'From my location' : 'From my location'}
+            </Text>
+          </Pressable>
+
+          {locationStatus === 'denied' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm }}>
+              <Text
+                style={[t.typography.caption, { color: t.colors.danger, flex: 1 }]}
+                accessibilityLiveRegion="polite"
+              >
+                {'Location permission denied — enable in browser/system settings.'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Try requesting location again"
+                onPress={handleMyLocationToggle}
+              >
+                <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+                  {'Try again'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       {/* Map fills the remaining space */}
       <View style={{ flex: 1 }}>
         <TripMap
-          markers={filteredMarkers}
-          polylines={filteredPolylinesFull}
+          markers={finalMarkers}
+          polylines={finalPolylines}
           onMarkerPress={(markerId: string) => {
+            if (markerId === '__my_location__') return; // user marker — no action
             const p = byId.get(markerId);
             if (p) onMarker(p.google_place_id);
           }}
@@ -707,6 +867,12 @@ function ItineraryTab({
   const reorderDay = useReorderDay();
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
 
+  // Phase 24: reaction data for the whole trip + current user id.
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+  const { data: tripReactions = [] } = useTripReactions(tripId);
+  const setReaction = useSetTripPlaceReaction();
+
   // ── Per-day notes (Step 9.5) ─────────────────────────────────────────────
   const { data: tripDays = [] } = useTripDays(tripId);
   // Index by day_index for O(1) lookup in the render loop.
@@ -796,16 +962,31 @@ function ItineraryTab({
                   : undefined;
                 return {
                   id: place.id,
-                  render: (dragging) => (
-                    <PlaceRow
-                      place={place}
-                      dragging={dragging}
-                      legAfter={leg}
-                      hasNext={Boolean(next)}
-                      transportMode={trip.transport_mode}
-                      onOpenDetails={() => onOpen(place.google_place_id)}
-                    />
-                  ),
+                  render: (dragging) => {
+                    const myReaction = currentUserId
+                      ? (tripReactions.find(
+                          (r) => r.trip_place_id === place.id && r.user_id === currentUserId,
+                        )?.reaction ?? null)
+                      : null;
+                    return (
+                      <PlaceRow
+                        place={place}
+                        dragging={dragging}
+                        legAfter={leg}
+                        hasNext={Boolean(next)}
+                        transportMode={trip.transport_mode}
+                        onOpenDetails={() => onOpen(place.google_place_id)}
+                        reaction={myReaction}
+                        onReactionChange={(next) =>
+                          setReaction.mutate({
+                            tripPlaceId: place.id,
+                            reaction: next,
+                            tripId,
+                          })
+                        }
+                      />
+                    );
+                  },
                 };
               })}
               onReorder={(newIds: string[]) => {
@@ -966,6 +1147,8 @@ function PlaceRow({
   hasNext,
   transportMode,
   onOpenDetails,
+  reaction,
+  onReactionChange,
 }: {
   place: TripPlace;
   dragging: boolean;
@@ -973,6 +1156,8 @@ function PlaceRow({
   hasNext: boolean;
   transportMode: TransportMode;
   onOpenDetails: () => void;
+  reaction?: import('@/api/trip-place-reactions').TripPlaceReactionType | null;
+  onReactionChange?: (next: import('@/api/trip-place-reactions').TripPlaceReactionType | null) => void;
 }) {
   const t = useTheme();
 
@@ -1033,19 +1218,33 @@ function PlaceRow({
           },
         ]}
       >
-        <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-          {place.user_title ?? 'Place'}
-        </Text>
-        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-          {place.category ?? 'Unclassified'}
-        </Text>
-        {/* Step 23.8: Visit duration label */}
-        <Text
-          style={[t.typography.caption, { color: t.colors.textMuted }]}
-          accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
-        >
-          {'⏱ Visit ~'}{visitLabel}
-        </Text>
+        {/* Title row with reaction chip on the right */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+              {place.user_title ?? 'Place'}
+            </Text>
+            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+              {place.category ?? 'Unclassified'}
+            </Text>
+            {/* Step 23.8: Visit duration label */}
+            <Text
+              style={[t.typography.caption, { color: t.colors.textMuted }]}
+              accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+            >
+              {'⏱ Visit ~'}{visitLabel}
+            </Text>
+          </View>
+          {/* Phase 24 Step 24.3: Reaction chip — right side of row */}
+          {onReactionChange ? (
+            <ReactionChip
+              reaction={reaction ?? null}
+              onChange={onReactionChange}
+              accentColor={dayColor(place.day_index ?? -1)}
+              size="sm"
+            />
+          ) : null}
+        </View>
       </Pressable>
 
       {/* ── Per-place notes editor (Step 9.4) — Option A inline ── */}
@@ -1240,6 +1439,36 @@ function SettingsTab({
   const router = useRouter();
   const [budget, setBudget] = useState(dailyHoursBudget);
   const [mode, setMode] = useState<TransportMode>(transportMode);
+
+  // Phase 24 Step 24.5: liked/disliked catalog in SettingsTab.
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+  const { data: tripReactions = [] } = useTripReactions(tripId);
+  const { data: tripPlaces = [] } = useTripPlaces(tripId);
+
+  const likedPlaces = useMemo(() => {
+    if (!currentUserId) return [];
+    const myLikes = new Set(
+      tripReactions
+        .filter((r) => r.user_id === currentUserId && r.reaction === 'liked')
+        .map((r) => r.trip_place_id),
+    );
+    return tripPlaces
+      .filter((p) => myLikes.has(p.id))
+      .sort((a, b) => (a.day_index ?? 999) - (b.day_index ?? 999) || (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
+  }, [tripReactions, tripPlaces, currentUserId]);
+
+  const dislikedPlaces = useMemo(() => {
+    if (!currentUserId) return [];
+    const myDislikes = new Set(
+      tripReactions
+        .filter((r) => r.user_id === currentUserId && r.reaction === 'disliked')
+        .map((r) => r.trip_place_id),
+    );
+    return tripPlaces
+      .filter((p) => myDislikes.has(p.id))
+      .sort((a, b) => (a.day_index ?? 999) - (b.day_index ?? 999) || (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
+  }, [tripReactions, tripPlaces, currentUserId]);
 
   // ── Budget state (Phase 21 Step 21.10) ──────────────────────────────────────
   const rollup = useTripExpenseRollup(tripId);
@@ -1467,6 +1696,99 @@ function SettingsTab({
         }}
       />
 
+      {/* ── Phase 24 Step 24.5: Liked / disliked catalog ────────────────── */}
+      {likedPlaces.length > 0 ? (
+        <>
+          <SectionHeading label="You liked" t={t} />
+          {likedPlaces.map((place) => (
+            <Pressable
+              key={place.id}
+              accessibilityRole="button"
+              accessibilityLabel={`View details for ${place.user_title ?? 'place'}`}
+              onPress={() => router.push(`/place/${place.google_place_id}` as never)}
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+                  borderColor: t.colors.border,
+                  borderRadius: t.radius.md,
+                  borderWidth: 1,
+                  padding: t.spacing.md,
+                  gap: t.spacing.sm,
+                },
+              ]}
+            >
+              <Text style={[t.typography.body, { color: t.colors.text, flex: 1 }]} numberOfLines={1}>
+                {place.user_title ?? 'Unknown place'}
+              </Text>
+              {place.day_index !== null ? (
+                <View
+                  style={{
+                    backgroundColor: dayColor(place.day_index),
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.sm,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={[t.typography.small, { color: '#fff' }]}>
+                    {`Day ${place.day_index + 1}`}
+                  </Text>
+                </View>
+              ) : null}
+              <Text style={{ fontSize: 14, color: t.colors.textMuted }}>›</Text>
+            </Pressable>
+          ))}
+        </>
+      ) : null}
+
+      {dislikedPlaces.length > 0 ? (
+        <>
+          <SectionHeading label="You didn't like" t={t} />
+          {dislikedPlaces.map((place) => (
+            <Pressable
+              key={place.id}
+              accessibilityRole="button"
+              accessibilityLabel={`View details for ${place.user_title ?? 'place'}`}
+              onPress={() => router.push(`/place/${place.google_place_id}` as never)}
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+                  borderColor: t.colors.border,
+                  borderRadius: t.radius.md,
+                  borderWidth: 1,
+                  padding: t.spacing.md,
+                  gap: t.spacing.sm,
+                },
+              ]}
+            >
+              <Text style={[t.typography.body, { color: t.colors.text, flex: 1 }]} numberOfLines={1}>
+                {place.user_title ?? 'Unknown place'}
+              </Text>
+              {place.day_index !== null ? (
+                <View
+                  style={{
+                    backgroundColor: dayColor(place.day_index),
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.sm,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={[t.typography.small, { color: '#fff' }]}>
+                    {`Day ${place.day_index + 1}`}
+                  </Text>
+                </View>
+              ) : null}
+              <Text style={{ fontSize: 14, color: t.colors.textMuted }}>›</Text>
+            </Pressable>
+          ))}
+        </>
+      ) : null}
+
       {/* ── Collaborators link ───────────────────────────────────────────── */}
       <SectionHeading label="Collaboration" t={t} />
       <Pressable
@@ -1680,6 +2002,17 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  // "From my location" toggle button (Step 24.9)
+  myLocationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
+    gap: 6,
+    alignSelf: 'flex-start',
   },
   // Route render mode segmented control (Step 23.4)
   renderModeRow: {

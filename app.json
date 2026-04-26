@@ -14,7 +14,7 @@
         "googleMapsApiKey": "REPLACE_WITH_IOS_MAPS_KEY"
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to suggest nearby places for your trip."
+        "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to show where you are on the map and to build a route from your current location to the first place on your itinerary."
       }
     },
     "android": {
@@ -23,7 +23,8 @@
         "googleMaps": {
           "apiKey": "REPLACE_WITH_ANDROID_MAPS_KEY"
         }
-      }
+      },
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
     },
     "web": {
       "bundler": "metro",

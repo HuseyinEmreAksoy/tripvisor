@@ -311,19 +311,31 @@ export default function TripsList() {
   // ── Shared header (search + sort + filter + tabs) ─────────────────────────
   const headerContent = (
     <View style={[s.header, isDesktop && desktopStyles.centeredContainer]}>
-      {/* ─── Header row: title + settings link ──────────────────────── */}
+      {/* ─── Header row: title + analytics + settings links ─────────── */}
       <View style={s.titleRow}>
         <Heading level={1}>Your trips</Heading>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open settings"
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          onPress={() => router.push('/(app)/settings' as any)}
-          hitSlop={8}
-          style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
-        >
-          <Text style={[s.settingsBtnText]}>⚙️ Settings</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="View analytics and insights"
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onPress={() => router.push('/(app)/analytics' as any)}
+            hitSlop={8}
+            style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Text style={[s.settingsBtnText]}>📊 Insights</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onPress={() => router.push('/(app)/settings' as any)}
+            hitSlop={8}
+            style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Text style={[s.settingsBtnText]}>⚙️ Settings</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* ─── Search + Sort + Filter row ──────────────────────────────── */}
