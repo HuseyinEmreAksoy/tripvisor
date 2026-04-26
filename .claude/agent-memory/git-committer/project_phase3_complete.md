@@ -94,6 +94,25 @@ into one commit. Always use multi-scope Conventional Commits: `feat(ui,backend,t
   a hardcoded secret — always safe to commit.
 - `tests/rls.share.test.ts` uses same SERVICE pattern as `tests/rls.test.ts` — safe.
 
+Phase 23 committed 2026-04-26 as 3 commits (user requested 3-group split):
+- `d69f3aa` — feat(db,backend): Phase 23 — route render mode + transport-mode-aware routing
+  (10 files, 1005 ins/34 del: migration 0016, smoke-route-render-mode-rls.sql,
+   optimize-trip/distance-matrix/directions-polyline Edge Functions, src/api types/trips/routes,
+   TripCard.test.tsx + tripsFilters.test.ts fixture one-liners for non-optional route_render_mode)
+- `773c947` — feat(ui): Phase 23 — route mode toggle + reviews expansion + day-aware add + visit/travel labels + transit fallback
+  (9 files, 840 ins/130 del: formatDuration.ts new, Map types/native/web transit dashed,
+   DaySummaryCard 3-chip, place/[placeId].tsx review expansion + N-of-M footer,
+   trip/new.tsx bicycling, trip/[id]/index.tsx mode toggle + labels, trip/[id]/add.tsx full rewrite)
+- `135afe6` — docs: Phase 23 — sync plan + architecture + per-feature + smoke note
+  (7 files, 420 ins/23 del: plan.md, architecture.md, overview.md, optimization.md,
+   place-details.md, trip-crud.md, smoke/phase-23.md new)
+Pushed to origin master (fast-forward) as 135afe6.
+
+Phase 23 introduced: supabase/migrations/0016_trips_route_render_mode.sql,
+scripts/smoke-route-render-mode-rls.sql, src/lib/formatDuration.ts, docs/smoke/phase-23.md.
+Steps 23.X (automated tests) and live smoke explicitly skipped per user direction —
+same standing pattern as Phases 21 + 22. No Co-Authored-By trailer (user policy).
+
 Phase 22 committed 2026-04-26 as 4 commits (user requested 4-group split):
 - `078461b` — feat(db): Phase 22 — editor-budget RLS + INSERT RETURNING fix
   (3 files, 487 ins: migration 0014 INSERT RETURNING fix, migration 0015
