@@ -18,6 +18,7 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     currency: 'USD',
     cost_per_km: 0.2,
     total_budget: null,
+    route_render_mode: 'optimized',
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,

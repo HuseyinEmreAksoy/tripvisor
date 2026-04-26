@@ -1,7 +1,7 @@
-// optimize-trip — orchestrates route optimization for a trip.
+// optimize-trip — orchestrates route rendering for a trip.
 //
 // Contract:
-//   POST { tripId: string }
+//   POST { tripId: string, mode?: 'optimized' | 'manual' }
 //   -> {
 //        stateHash: string,
 //        days: Array<{ dayIndex, orderedPlaceIds, totalMinutes }>,
@@ -9,21 +9,36 @@
 //        legsWritten: number,
 //        cacheHit: boolean,
 //        polylineDays: number,
+//        mode: 'optimized' | 'manual',
 //      }
 //
-// Steps:
-//  1. Auth: run under the caller's JWT so RLS enforces ownership.
-//  2. Acquire a per-trip row-mutex via the `claim_trip_optimize(uuid, int)`
-//     RPC (migration 0008) — bail with 409 `already_optimizing` if another
-//     optimize is in flight for the same trip. Released in `finally` via
-//     `release_trip_optimize(uuid)`. The row-mutex replaces the Phase 12
-//     session-scoped advisory lock (closes review C1: PgBouncer transaction
-//     pooling could route lock and unlock to different backends).
-//  3. Load trip + places. Cap at 25 places.
-//  4. Fetch N×N distance matrix, reusing legs < 30 days old from trip_legs.
-//  5. Run the pure optimizer (k-means + 2-opt).
-//  6. Write day_index / order_in_day via admin client (atomic).
-//  7. For each day, call directions-polyline and upsert into trip_legs.
+// Modes (Phase 23 Step 23.2):
+//   'optimized' (default, back-compat) — k-means + 2-opt.
+//     1. Auth (JWT, RLS-scoped).
+//     2. Row-mutex via claim_trip_optimize.
+//     3. Load trip + places. Cap at 25 places.
+//     4. Fetch N×N distance matrix, reusing legs < 30 days old.
+//     5. Run the pure optimizer (k-means + 2-opt).
+//     6. Write day_index / order_in_day via apply_optimization (atomic).
+//     7. For each day, call directions-polyline and upsert into trip_legs.
+//
+//   'manual' — keep current (day_index, order_in_day) untouched; only
+//              recompute trip_legs against the existing per-day chain.
+//     1. Auth (JWT, RLS-scoped). Same row-mutex.
+//     2. Load places already grouped by day_index. Skip places with
+//        day_index = null (unscheduled).
+//     3. NO clustering, NO 2-opt, NO trip_places writes.
+//     4. For each day with >=2 places, call directions-polyline along the
+//        existing chain and upsert the resulting trip_legs row.
+//     5. stateHash is computed from the pre-existing assignments (so
+//        consumers that branch on it continue to work).
+//
+// Both modes share:
+//   - the row-mutex (Phase 13 fix preserved),
+//   - trip_legs replacement semantics (legs for the trip are wiped or
+//     overwritten before writing fresh ones — see writeTripLegs),
+//   - the same response envelope shape (existing OptimizeError consumers
+//     keep working unchanged).
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { handlePreflight } from '../_shared/cors.ts';
@@ -39,15 +54,27 @@ import {
 const MAX_PLACES = 25;
 const LEG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// Phase 23 Step 23.2: explicit mode parameter. Defaults to 'optimized' for
+// back-compat with every pre-Phase-23 caller (optimize-trip used to take
+// only { tripId }). The client always passes mode explicitly post-Phase-23
+// (see useOptimizeTrip in src/api/routes.ts) so the default is purely a
+// safety net, not the hot path.
 const BodySchema = z.object({
   tripId: z.string().uuid(),
+  mode: z.enum(['optimized', 'manual']).optional().default('optimized'),
 });
+
+// Phase 23 Step 23.1 widens transport_mode to include 'bicycling'. The
+// downstream Edge Functions (distance-matrix, directions-polyline) and the
+// types in src/api/types.ts must stay in lockstep; see migration 0016 for
+// the data-layer guard.
+type TransportMode = 'driving' | 'walking' | 'transit' | 'bicycling';
 
 interface TripRow {
   id: string;
   user_id: string;
   daily_hours_budget: number;
-  transport_mode: 'driving' | 'walking' | 'transit';
+  transport_mode: TransportMode;
   anchor_place_id: string | null;
 }
 
@@ -56,6 +83,10 @@ interface TripPlaceRow {
   lat: number;
   lng: number;
   visit_duration_minutes: number;
+  // Optional in 'optimized' mode (we overwrite them); load-bearing in
+  // 'manual' mode (we trace the existing chain).
+  day_index: number | null;
+  order_in_day: number | null;
 }
 
 interface TripLegRow {
@@ -158,9 +189,11 @@ export async function handler(req: Request): Promise<Response> {
   }
 
   try {
+    // Load places. Both modes need them; the 'manual' mode additionally
+    // relies on day_index/order_in_day already being set by the user.
     const { data: places, error: placesErr } = await user
       .from('trip_places')
-      .select('id, lat, lng, visit_duration_minutes')
+      .select('id, lat, lng, visit_duration_minutes, day_index, order_in_day')
       .eq('trip_id', body.tripId)
       .returns<TripPlaceRow[]>();
     if (placesErr) {
@@ -168,7 +201,15 @@ export async function handler(req: Request): Promise<Response> {
     }
     if (!places || places.length === 0) {
       return jsonResponse(
-        { days: [], stateHash: '', placesUpdated: 0, legsWritten: 0, cacheHit: false, polylineDays: 0 },
+        {
+          days: [],
+          stateHash: '',
+          placesUpdated: 0,
+          legsWritten: 0,
+          cacheHit: false,
+          polylineDays: 0,
+          mode: body.mode,
+        },
         { origin },
       );
     }
@@ -179,6 +220,20 @@ export async function handler(req: Request): Promise<Response> {
         400,
         origin,
       );
+    }
+
+    // Branch on mode. 'manual' bypasses clustering + 2-opt entirely and
+    // returns early after recomputing legs against the existing per-day
+    // chain. 'optimized' falls through to the legacy path.
+    if (body.mode === 'manual') {
+      return await runManualMode({
+        admin,
+        trip,
+        places,
+        tripId: body.tripId,
+        requestId,
+        origin,
+      });
     }
 
     // Fetch cached legs < 30 days old.
@@ -363,6 +418,7 @@ export async function handler(req: Request): Promise<Response> {
         legsWritten: legsToUpsert.length,
         cacheHit,
         polylineDays,
+        mode: 'optimized' as const,
       },
       { origin },
     );
@@ -393,6 +449,214 @@ export async function handler(req: Request): Promise<Response> {
       }
     }
   }
+}
+
+// ============================================================
+// Phase 23 Step 23.2: manual-mode renderer.
+// ============================================================
+// Skips k-means + 2-opt entirely. The user has hand-arranged places into
+// (day_index, order_in_day) groups; this function only refreshes
+// trip_legs against that existing chain so the polyline traces what the
+// user laid out.
+//
+// Invariants
+// ----------
+// * NEVER mutates trip_places. The caller's ordering is authoritative.
+// * Skips places with day_index = null (unscheduled). This is not an
+//   error — it is the documented edge case from the planner brief.
+// * Replaces trip_legs for the trip atomically: delete-then-insert under
+//   the admin client (RLS already authorized the caller via the parent
+//   handler; admin is used only to bypass the per-row eq filter that
+//   PostgREST would otherwise require for a bulk delete).
+// * Honors trips.transport_mode for travel time / polyline calls — the
+//   user's transport choice flows all the way through to the Routes API
+//   request body via callEdge('directions-polyline', { mode }).
+//
+// Response shape mirrors the optimized branch so OptimizeError / OptimizeResult
+// consumers don't need a discriminated union — every field is populated:
+//   - days                : grouped {dayIndex, orderedPlaceIds, totalMinutes}
+//                          where totalMinutes is the sum of visit_duration_minutes
+//                          (no travel-time reflow happens in manual mode)
+//   - placesUpdated       : 0 (we never wrote)
+//   - legsWritten         : count of new trip_legs rows
+//   - cacheHit            : false (we always re-call directions-polyline; the
+//                          user is asking for a fresh render)
+//   - polylineDays        : number of days that produced a polyline
+//   - mode                : 'manual'
+//   - stateHash           : sha256 of the (orderedDayIds) list, so React Query
+//                          can dedupe a "manual re-run on identical layout"
+async function runManualMode(args: {
+  admin: ReturnType<typeof makeAdminClient>;
+  trip: TripRow;
+  places: TripPlaceRow[];
+  tripId: string;
+  requestId: string;
+  origin: string | null;
+}): Promise<Response> {
+  const { admin, trip, places, tripId, requestId, origin } = args;
+
+  // 1. Group scheduled places by day_index. Skip unscheduled.
+  const byDay = new Map<number, TripPlaceRow[]>();
+  for (const p of places) {
+    if (p.day_index === null) continue;
+    const bucket = byDay.get(p.day_index);
+    if (bucket) bucket.push(p);
+    else byDay.set(p.day_index, [p]);
+  }
+
+  // 2. Sort each day's places by order_in_day. NULLs sort last (defensive
+  //    — should not happen for scheduled rows, but tolerate).
+  for (const list of byDay.values()) {
+    list.sort((a, b) => {
+      const ao = a.order_in_day ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.order_in_day ?? Number.MAX_SAFE_INTEGER;
+      return ao - bo;
+    });
+  }
+
+  const sortedDays = Array.from(byDay.keys()).sort((a, b) => a - b);
+
+  // 3. Build the response 'days' array up front — independent of leg fetch
+  //    success so a partial polyline failure doesn't lose the layout
+  //    summary the client needs.
+  const responseDays = sortedDays.map((dayIndex) => {
+    const list = byDay.get(dayIndex)!;
+    const totalMinutes = list.reduce((sum, p) => sum + p.visit_duration_minutes, 0);
+    return {
+      dayIndex,
+      orderedPlaceIds: list.map((p) => p.id),
+      totalMinutes,
+    };
+  });
+
+  // 4. stateHash from the layout. Lets the client dedupe
+  //    "manual re-run on identical layout" if the mutation fires twice.
+  const layoutSig = responseDays
+    .map((d) => `${d.dayIndex}:${d.orderedPlaceIds.join(',')}`)
+    .join('|');
+  const stateHash = await sha256Hex(layoutSig);
+
+  // 5. Wipe existing trip_legs for this trip. We overwrite per-day, but
+  //    the prior layout might have had MORE days than the manual layout
+  //    (e.g. user merged days 2 and 3 into day 2); a delete-first ensures
+  //    no stale day's leg leaks into the rendered route.
+  const { error: delErr } = await admin
+    .from('trip_legs')
+    .delete()
+    .eq('trip_id', tripId);
+  if (delErr) {
+    log({
+      requestId,
+      fn: 'optimize-trip',
+      level: 'error',
+      mode: 'manual',
+      stage: 'delete_legs',
+      err: delErr.message,
+    });
+    return errorResponse('db_error', delErr.message, 500, origin);
+  }
+
+  // 6. For each day with >=2 places, fetch a polyline along the existing
+  //    chain. Best-effort: if Routes API returns null (transit) or
+  //    upstream errors, skip that day's leg row but keep going. The UI
+  //    falls back to dashed straight-lines when polyline is missing.
+  const legsToInsert: Array<{
+    trip_id: string;
+    from_place_id: string;
+    to_place_id: string;
+    day_index: number;
+    transport_mode: TransportMode;
+    duration_seconds: number;
+    distance_meters: number;
+    polyline: string | null;
+  }> = [];
+  let polylineDays = 0;
+
+  for (const dayIndex of sortedDays) {
+    const chain = byDay.get(dayIndex)!;
+    if (chain.length < 2) continue;
+
+    const [first, ...rest] = chain;
+    const last = rest.pop()!;
+    const polyRes = await callEdge('directions-polyline', {
+      origin: { lat: first!.lat, lng: first!.lng },
+      destination: { lat: last.lat, lng: last.lng },
+      intermediates: rest.map((p) => ({ lat: p.lat, lng: p.lng })),
+      mode: trip.transport_mode,
+    });
+    if (!polyRes.ok) continue;
+    const poly = polyRes.body as {
+      polyline: string | null;
+      durationSeconds: number;
+      distanceMeters: number;
+    };
+    if (poly.polyline) polylineDays++;
+
+    legsToInsert.push({
+      trip_id: tripId,
+      from_place_id: first!.id,
+      to_place_id: last.id,
+      day_index: dayIndex,
+      transport_mode: trip.transport_mode,
+      duration_seconds: poly.durationSeconds,
+      distance_meters: poly.distanceMeters,
+      polyline: poly.polyline,
+    });
+  }
+
+  if (legsToInsert.length > 0) {
+    const { error: insErr } = await admin.from('trip_legs').insert(legsToInsert);
+    if (insErr) {
+      log({
+        requestId,
+        fn: 'optimize-trip',
+        level: 'error',
+        mode: 'manual',
+        stage: 'insert_legs',
+        err: insErr.message,
+      });
+      return errorResponse('db_error', insErr.message, 500, origin);
+    }
+  }
+
+  log({
+    requestId,
+    fn: 'optimize-trip',
+    level: 'info',
+    mode: 'manual',
+    tripId,
+    places: places.length,
+    days: responseDays.length,
+    legsWritten: legsToInsert.length,
+    polylineDays,
+  });
+
+  return jsonResponse(
+    {
+      stateHash,
+      days: responseDays,
+      placesUpdated: 0,
+      legsWritten: legsToInsert.length,
+      cacheHit: false,
+      polylineDays,
+      mode: 'manual' as const,
+    },
+    { origin },
+  );
+}
+
+// SHA-256 -> hex. Used only for the manual-mode stateHash so React Query
+// can dedupe identical re-renders. Web Crypto is available in Deno
+// natively — no shim needed.
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i]!.toString(16).padStart(2, '0');
+  }
+  return out;
 }
 
 async function callEdge(fnName: string, body: unknown): Promise<{ ok: boolean; body: unknown }> {

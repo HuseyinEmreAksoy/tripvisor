@@ -1,16 +1,25 @@
 // directions-polyline — proxies Google Routes API computeRoutes
 // Returns an encoded polyline + total duration/distance for an ordered
 // sequence of waypoints. optimizeWaypointOrder is FALSE — the caller has
-// already solved the order via the optimizer.
+// already solved the order via the optimizer (or in manual mode, via the
+// user's drag-and-drop layout).
 //
 // Contract:
 //   POST {
 //     origin: { lat, lng },
 //     destination: { lat, lng },
 //     intermediates?: [{ lat, lng }],
-//     mode: 'driving' | 'walking' | 'transit'
+//     mode: 'driving' | 'walking' | 'transit' | 'bicycling'
 //   }
-//   -> { polyline: string, durationSeconds: number, distanceMeters: number }
+//   -> { polyline: string | null, durationSeconds: number, distanceMeters: number }
+//
+// Phase 23: 'bicycling' joins the enum (Routes API exposes BICYCLE as a
+// first-class travelMode). 'transit' returns polyline = null because the
+// Routes API computeRoutes response shape for transit is multi-leg and
+// vehicle-typed, and the MVP UI does not render transit polylines — it
+// falls back to dashed straight-line segments + a "Open in Google Maps"
+// deep link (UI step 23.9). Duration / distance for transit are still
+// returned normally so the per-leg time label is realistic.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { handlePreflight } from '../_shared/cors.ts';
@@ -30,13 +39,19 @@ const BodySchema = z.object({
   origin: LatLng,
   destination: LatLng,
   intermediates: z.array(LatLng).max(MAX_INTERMEDIATES).optional(),
-  mode: z.enum(['driving', 'walking', 'transit']),
+  // Phase 23 Step 23.1: 'bicycling' added in lockstep with the trips
+  // CHECK in migration 0016 and the TransportMode union in src/api/types.ts.
+  mode: z.enum(['driving', 'walking', 'transit', 'bicycling']),
 });
 
+// Routes API uses upper-case enum names. BICYCLE is the first-class
+// travelMode for cycling routes. TWO_WHEELER is a separate (motorcycle)
+// mode and intentionally not used.
 const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
   driving: 'DRIVE',
   walking: 'WALK',
   transit: 'TRANSIT',
+  bicycling: 'BICYCLE',
 };
 
 interface GoogleRoutesResponse {
@@ -125,20 +140,61 @@ export async function handler(req: Request): Promise<Response> {
 
     const payload = (await googleRes.json()) as GoogleRoutesResponse;
     const route = payload.routes?.[0];
-    if (!route?.polyline?.encodedPolyline) {
+
+    // Phase 23: transit + bicycling tolerance.
+    //   - 'transit' MAY return without an encodedPolyline (multi-leg
+    //     transit is not represented as a single line). We return
+    //     polyline = null and let the UI fall back to dashed straight-
+    //     line segments + a Google Maps deep link.
+    //   - For other modes, a missing route is still an error — the
+    //     caller asked for a polyline they could draw, and we have
+    //     nothing to give them.
+    if (!route) {
+      if (body.mode === 'transit') {
+        const fallback = {
+          polyline: null,
+          durationSeconds: 0,
+          distanceMeters: 0,
+        };
+        log({
+          requestId,
+          fn: 'directions-polyline',
+          level: 'info',
+          mode: body.mode,
+          fallback: 'transit_no_route',
+          durationMs: Date.now() - start,
+        });
+        return jsonResponse(fallback, { origin });
+      }
       return errorResponse('no_route', 'No route found', 404, origin);
     }
 
-    const result = {
-      polyline: route.polyline.encodedPolyline,
+    const result: {
+      polyline: string | null;
+      durationSeconds: number;
+      distanceMeters: number;
+    } = {
+      polyline:
+        body.mode === 'transit'
+          ? null
+          : route.polyline?.encodedPolyline ?? null,
       durationSeconds: parseDuration(route.duration ?? '0s'),
       distanceMeters: route.distanceMeters ?? 0,
     };
+
+    // Drivable / walkable / bikeable mode without a polyline string is a
+    // genuine "no route" — surface it. Transit with polyline = null is
+    // expected and already fell through above.
+    if (body.mode !== 'transit' && result.polyline === null) {
+      return errorResponse('no_route', 'No route found', 404, origin);
+    }
 
     log({
       requestId,
       fn: 'directions-polyline',
       level: 'info',
+      mode: body.mode,
+      polyline: result.polyline === null ? 'null' : 'present',
       intermediates: body.intermediates?.length ?? 0,
       durationSeconds: result.durationSeconds,
       distanceMeters: result.distanceMeters,

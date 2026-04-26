@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabase';
-import type { TripLeg, Uuid } from './types';
+import type { RouteRenderMode, TripLeg, Uuid } from './types';
 // Phase 20 Step 6: hoisted to `./_keys` to break the
 // `trip-places <-> routes` circular import. Re-exported below so existing
 // `import { tripLegsKeys } from './routes'` call sites keep working.
@@ -17,6 +17,12 @@ export interface OptimizeResult {
   legsWritten: number;
   cacheHit: boolean;
   polylineDays: number;
+  /**
+   * Phase 23 Step 23.2: which branch the Edge Function executed.
+   * Mirrors the input `mode` for confirmation; defaults to 'optimized'
+   * when the caller did not pass `mode` (the Edge Function's own default).
+   */
+  mode: RouteRenderMode;
 }
 
 /**
@@ -167,13 +173,32 @@ export function useAllTripLegs(tripIds: readonly Uuid[]) {
  * to the original generic `Error` from `supabase.functions.invoke` —
  * the mutation's error type is `OptimizeError | Error`.
  */
+/**
+ * Input variables for `useOptimizeTrip().mutate(...)`.
+ *
+ * Phase 23 Step 23.3: `mode` is optional for back-compat with every
+ * Phase 1–22 call site that passed only `{ tripId }`. The Edge Function
+ * itself also defaults to `'optimized'` (see `BodySchema` in
+ * `supabase/functions/optimize-trip/index.ts`). Post-Phase-23 call sites
+ * SHOULD pass `mode: trip.route_render_mode` explicitly so the function
+ * runs the branch the user expects.
+ */
+export interface OptimizeTripInput {
+  tripId: Uuid;
+  mode?: RouteRenderMode;
+}
+
 export function useOptimizeTrip() {
   const qc = useQueryClient();
-  return useMutation<OptimizeResult, OptimizeError | Error, { tripId: Uuid }>({
-    mutationFn: async ({ tripId }) => {
+  return useMutation<OptimizeResult, OptimizeError | Error, OptimizeTripInput>({
+    mutationFn: async ({ tripId, mode }) => {
+      // Always send `mode` to the Edge Function — even when the caller
+      // omitted it client-side, we materialize the default here so the
+      // wire format is consistent and easier to grep across logs.
+      const resolvedMode: RouteRenderMode = mode ?? 'optimized';
       const { data, error } = await supabase.functions.invoke<OptimizeResult>(
         'optimize-trip',
-        { body: { tripId } },
+        { body: { tripId, mode: resolvedMode } },
       );
       if (error) {
         // `supabase.functions.invoke` wraps non-2xx responses in

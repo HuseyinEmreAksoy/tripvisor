@@ -5,9 +5,14 @@
 //   POST {
 //     origins: [{ lat, lng }],
 //     destinations: [{ lat, lng }],
-//     mode: 'driving' | 'walking' | 'transit'
+//     mode: 'driving' | 'walking' | 'transit' | 'bicycling'
 //   }
 //   -> { legs: [{ fromIndex, toIndex, durationSeconds, distanceMeters }] }
+//
+// Phase 23 Step 23.1: 'bicycling' joins the enum in lockstep with the
+// trips CHECK in migration 0016, the directions-polyline Edge Function,
+// and the TransportMode union in src/api/types.ts. The Routes API
+// computeRouteMatrix endpoint accepts BICYCLE as a first-class travelMode.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { handlePreflight } from '../_shared/cors.ts';
@@ -28,13 +33,14 @@ const LatLng = z.object({
 const BodySchema = z.object({
   origins: z.array(LatLng).min(1).max(MAX_ORIGINS),
   destinations: z.array(LatLng).min(1).max(MAX_DESTINATIONS),
-  mode: z.enum(['driving', 'walking', 'transit']),
+  mode: z.enum(['driving', 'walking', 'transit', 'bicycling']),
 });
 
 const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
   driving: 'DRIVE',
   walking: 'WALK',
   transit: 'TRANSIT',
+  bicycling: 'BICYCLE',
 };
 
 interface GoogleMatrixElement {

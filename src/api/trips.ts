@@ -1,8 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
-import type { CreateTripInput, Trip, TripCollaboratorRole, Uuid } from './types';
+import type {
+  CreateTripInput,
+  RouteRenderMode,
+  Trip,
+  TripCollaboratorRole,
+  Uuid,
+} from './types';
 import { tripsKeys, tripExpensesKeys } from './_keys';
+import { useOptimizeTrip } from './routes';
 
 // ----- Query keys ---------------------------------------------------------
 //
@@ -18,12 +25,16 @@ import { tripsKeys, tripExpensesKeys } from './_keys';
 // `import { tripsKeys } from './trips'` call sites keep working.
 export { tripsKeys };
 
+// Phase 23: transport_mode enum widened to include 'bicycling'. Values
+// must stay in lockstep with the TransportMode union in `./types`,
+// the trips_transport_mode_check CHECK constraint (migration 0016), and
+// the Zod enums in supabase/functions/{distance-matrix,directions-polyline}.
 const createTripSchema = z.object({
   title: z.string().min(1, 'Title is required').max(120),
   start_date: z.string().nullish(),
   end_date: z.string().nullish(),
   daily_hours_budget: z.number().positive().max(24).default(8),
-  transport_mode: z.enum(['driving', 'walking', 'transit']).default('driving'),
+  transport_mode: z.enum(['driving', 'walking', 'transit', 'bicycling']).default('driving'),
   timezone: z.string().nullish(),
 });
 
@@ -312,6 +323,11 @@ export type UpdateTripPatch = Partial<
     | 'daily_hours_budget'
     | 'transport_mode'
     | 'total_budget'
+    // Phase 23 Step 23.3: route render-mode toggle. Editor-collaborators
+    // can flip this column too — see migration 0016 for the trigger
+    // allow-list expansion. Adding it here lets the existing
+    // `useUpdateTrip` mutation patch it without a dedicated hook.
+    | 'route_render_mode'
   >
 >;
 
@@ -449,6 +465,110 @@ export function useUpdateTripBudget(tripId: Uuid) {
       // re-derive with the new ceiling.
       qc.invalidateQueries({ queryKey: detailKey });
       qc.invalidateQueries({ queryKey: tripExpensesKeys.forTrip(tripId) });
+    },
+  });
+}
+
+// ============================================================
+// Phase 23 Step 23.3: route render-mode toggle
+// ============================================================
+//
+// `useUpdateRouteRenderMode` flips `trips.route_render_mode` AND immediately
+// re-runs the optimize-trip Edge Function with the new mode so the polyline
+// updates without a manual re-optimize. This is the convenience hook the
+// trip detail toggle binds to — wrapping two operations behind one
+// mutate() call so the UI doesn't have to chain promises.
+//
+// Why a dedicated hook (instead of just composing useUpdateTrip + useOptimizeTrip)
+// ----------------------------------------------------------------------
+//   1. Atomicity from the user's perspective. Flipping the toggle should
+//      look like one operation: the new mode is persisted AND the route
+//      visibly updates. If we exposed two separate mutations, every call
+//      site would have to remember to chain them and handle partial-
+//      failure (toggle landed but optimize crashed).
+//   2. Optimistic update. The detail cache pre-writes the new mode value
+//      so the toggle UI flips instantly; if the persist fails, we roll
+//      back. Optimize runs after a successful persist — there is no
+//      reason to optimize-with-the-new-mode if the new mode never made
+//      it to the DB.
+//   3. RLS path. Editors can flip route_render_mode (migration 0016
+//      extends the editor-budget allow-list). We do NOT add an
+//      `.eq('user_id', userId)` filter here (unlike `useUpdateTrip`)
+//      because that would block editors. The trips_owner_update +
+//      trips_editor_budget_update RLS policies + the
+//      enforce_trips_column_restrictions trigger together gate writes
+//      correctly.
+//
+// Sequence
+// --------
+//   1. Optimistic write to `tripsKeys.detail(tripId)` so the toggle flips
+//      immediately.
+//   2. UPDATE trips set route_render_mode = mode.
+//   3. On success, invoke optimize-trip with { tripId, mode } — this
+//      re-renders trip_legs against the new mode (manual: trace existing
+//      chain; optimized: re-cluster + 2-opt).
+//   4. On error at step 2, roll back the cache. Step 3 is best-effort:
+//      if optimize fails, we still keep the persisted mode (the user
+//      can re-trigger optimize manually). Logged via the mutation's
+//      onError so a parent ErrorBoundary / Sentry catch sees it.
+
+type UpdateRouteRenderModeContext = {
+  prevDetail: Trip | null | undefined;
+};
+
+export function useUpdateRouteRenderMode(tripId: Uuid) {
+  const qc = useQueryClient();
+  const optimize = useOptimizeTrip();
+  const detailKey = tripsKeys.detail(tripId);
+
+  return useMutation<RouteRenderMode, Error, RouteRenderMode, UpdateRouteRenderModeContext>({
+    mutationFn: async (mode) => {
+      // Persist the new mode. RLS handles authorization (owner OR
+      // editor-via-trips_editor_budget_update policy + the trigger
+      // allow-list which now includes route_render_mode).
+      const { error } = await supabase
+        .from('trips')
+        .update({ route_render_mode: mode })
+        .eq('id', tripId);
+      if (error) throw error;
+
+      // Immediately re-render legs with the new mode. Best-effort: a
+      // failure here does NOT roll back the persisted mode (the user
+      // can hit "Re-optimize" manually). We swallow the optimize error
+      // for the mutation's success path so the toggle UX feels snappy
+      // — but log it so observability + Sentry still see it.
+      try {
+        await optimize.mutateAsync({ tripId, mode });
+      } catch (err) {
+        console.warn(
+          '[useUpdateRouteRenderMode] mode persisted but optimize failed; user may need to re-run optimize manually',
+          err,
+        );
+      }
+      return mode;
+    },
+    onMutate: async (mode) => {
+      await qc.cancelQueries({ queryKey: detailKey });
+      const prevDetail = qc.getQueryData<Trip | null>(detailKey);
+      if (prevDetail) {
+        qc.setQueryData<Trip | null>(detailKey, {
+          ...prevDetail,
+          route_render_mode: mode,
+        });
+      }
+      return { prevDetail };
+    },
+    onError: (_err, _mode, ctx) => {
+      if (ctx?.prevDetail !== undefined) {
+        qc.setQueryData(detailKey, ctx.prevDetail);
+      }
+    },
+    onSettled: () => {
+      // Refresh the trip row so the persisted mode is the source of
+      // truth on the next render. The optimize call already
+      // invalidated trip_legs + trip_places via its own onSuccess —
+      // we don't need to duplicate that here.
+      qc.invalidateQueries({ queryKey: detailKey });
     },
   });
 }

@@ -1,6 +1,39 @@
 export type Uuid = string;
 
-export type TransportMode = 'driving' | 'walking' | 'transit';
+/**
+ * Transport modes the route optimizer + Routes API support. Values must
+ * stay in lockstep with:
+ *   - the `trips_transport_mode_check` CHECK constraint
+ *     (`supabase/migrations/0016_trips_route_render_mode.sql`),
+ *   - the Zod enum + MODE_MAP in
+ *     `supabase/functions/distance-matrix/index.ts`, and
+ *   - the Zod enum + MODE_MAP in
+ *     `supabase/functions/directions-polyline/index.ts`.
+ *
+ * Phase 23 widens the set from `driving | walking | transit` to also
+ * include `bicycling` (Routes API exposes BICYCLE as a first-class
+ * travelMode). 'transit' returns polyline = null because the Routes API
+ * computeRoutes response is multi-leg / vehicle-typed for transit; the
+ * UI falls back to dashed straight-line segments + a Google Maps deep
+ * link in that case.
+ */
+export type TransportMode = 'driving' | 'walking' | 'transit' | 'bicycling';
+
+/**
+ * Phase 23 Step 23.1: per-trip render-mode toggle.
+ *
+ *   - 'optimized' — k-means + 2-opt clusters places into days and orders
+ *                   them within each day. Default for every trip.
+ *   - 'manual'    — keep the user's hand-arranged (day_index,
+ *                   order_in_day) and only re-render polylines along
+ *                   that chain.
+ *
+ * Stored on `trips.route_render_mode` (NOT NULL default 'optimized') —
+ * see migration 0016. The `optimize-trip` Edge Function branches on this
+ * value; flipping the toggle re-runs the function with the new mode so
+ * the polyline updates without a manual re-optimize.
+ */
+export type RouteRenderMode = 'optimized' | 'manual';
 
 /**
  * Currencies supported by the Phase 8 cost rollup. Matches the
@@ -37,6 +70,14 @@ export interface Trip {
    * trip_expenses is still meaningful on its own.
    */
   total_budget: number | null;
+  /**
+   * Phase 23 Step 23.1: optimized vs manual route rendering. NOT NULL with
+   * default 'optimized' on the data layer — every existing trip predates
+   * Phase 23 and continues to receive optimizer-driven layouts. The Phase
+   * 23 UI flips this via `useUpdateRouteRenderMode` and immediately re-
+   * triggers the optimize Edge Function with the new mode.
+   */
+  route_render_mode: RouteRenderMode;
   created_at: string;
   updated_at: string;
   /**
