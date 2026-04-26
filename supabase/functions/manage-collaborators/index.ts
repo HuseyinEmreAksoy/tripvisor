@@ -1,4 +1,4 @@
-// manage-collaborators — invite / accept / decline / revoke / list trip collaborators.
+// manage-collaborators — invite / accept / decline / revoke / update / list trip collaborators.
 //
 // Contract:
 //   POST { action: 'invite',  tripId, inviteeEmail, role? }   (auth required, owner-gated)
@@ -12,6 +12,9 @@
 //
 //   POST { action: 'revoke',  collaboratorId }                 (auth required, owner-gated)
 //     -> { ok: true, collaboratorId, status: 'revoked' }
+//
+//   POST { action: 'update',  collaboratorId, role }           (auth required, owner-gated)
+//     -> { ok: true, collaboratorId, role }
 //
 //   POST { action: 'list',    tripId }                         (auth required, owner-gated)
 //     -> { ok: true, collaborators: TripCollaborator[] }
@@ -51,19 +54,20 @@
 //     in the response so the owner can copy/paste it as a fallback.
 //
 // Error codes:
-//   - invalid_input         400 — body failed Zod validation
-//   - method_not_allowed    405 — non-POST to non-ping path
-//   - not_authenticated     401 — missing / invalid JWT
-//   - not_owner             403 — caller does not own the trip
-//   - invite_not_found      404 — token does not match any invite
-//   - invite_revoked        410 — invite was revoked / declined
-//   - invite_expired        410 — invite is older than 7 days (TTL)
-//   - email_mismatch        403 — caller's auth email != invitee_email
-//   - email_failed          200 — invite row created but email send failed
+//   - invalid_input          400 — body failed Zod validation
+//   - method_not_allowed     405 — non-POST to non-ping path
+//   - not_authenticated      401 — missing / invalid JWT
+//   - not_owner              403 — caller does not own the trip
+//   - invite_not_found       404 — token does not match any invite
+//   - collaborator_not_found 404 — update target collaborator id does not exist
+//   - invite_revoked         410 — invite was revoked / declined
+//   - invite_expired         410 — invite is older than 7 days (TTL)
+//   - email_mismatch         403 — caller's auth email != invitee_email
+//   - email_failed           200 — invite row created but email send failed
 //                                  (returned with ok:true, emailSent:false)
-//   - already_accepted      409 — invite already in 'accepted' state
-//   - db_error              500 — Postgres failure
-//   - internal_error        500 — unexpected exception
+//   - already_accepted       409 — invite already in 'accepted' state
+//   - db_error               500 — Postgres failure
+//   - internal_error         500 — unexpected exception
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
@@ -100,6 +104,12 @@ const RevokeSchema = z.object({
   collaboratorId: z.string().uuid(),
 });
 
+const UpdateSchema = z.object({
+  action: z.literal('update'),
+  collaboratorId: z.string().uuid(),
+  role: z.enum(['viewer', 'editor']),
+});
+
 const ListSchema = z.object({
   action: z.literal('list'),
   tripId: z.string().uuid(),
@@ -110,6 +120,7 @@ const BodySchema = z.union([
   AcceptSchema,
   DeclineSchema,
   RevokeSchema,
+  UpdateSchema,
   ListSchema,
 ]);
 
@@ -211,6 +222,8 @@ export async function handler(req: Request): Promise<Response> {
         return await handleDecline(req, body, user, requestId, origin);
       case 'revoke':
         return await handleRevoke(req, body, user, requestId, origin);
+      case 'update':
+        return await handleUpdate(req, body, user, requestId, origin);
       case 'list':
         return await handleList(req, body, user, requestId, origin);
       default: {
@@ -603,6 +616,85 @@ async function handleRevoke(
 
   return jsonResponse(
     { ok: true, collaboratorId: row.id, status: 'revoked' as const },
+    { origin },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// update — owner-only role change (viewer <-> editor)
+// ---------------------------------------------------------------------------
+//
+// Mirror of `handleRevoke`'s shape: look up the row to find its trip_id,
+// prove ownership via a user-JWT SELECT on `trips`, then UPDATE the
+// `role` column via the admin client. The role is whitelisted at the
+// Zod layer (z.enum(['viewer','editor'])) so anything else is a 400.
+//
+// Idempotency: setting the role to its current value is a no-op success
+// — the UPDATE still issues, but the row is unchanged. We do NOT
+// short-circuit before the UPDATE because we want the DB row's
+// updated_at trigger to fire only when the value actually differs (and
+// trip_collaborators doesn't have an updated_at column anyway).
+//
+// Why owner-only: changing a collaborator's role is a permission-grant
+// act. Editors do NOT manage other collaborators in v1 (same as `revoke`,
+// `invite`, `list`). Revisit if product asks for editor-managed teams.
+async function handleUpdate(
+  req: Request,
+  body: z.infer<typeof UpdateSchema>,
+  user: AuthedUser,
+  requestId: string,
+  origin: string | null,
+): Promise<Response> {
+  const userClient = makeUserClient(req);
+  const admin = makeAdminClient();
+
+  // Look up the row + its trip_id, then prove ownership.
+  const { data: row, error } = await admin
+    .from('trip_collaborators')
+    .select('id, trip_id, role')
+    .eq('id', body.collaboratorId)
+    .maybeSingle<{ id: string; trip_id: string; role: 'viewer' | 'editor' }>();
+  if (error) {
+    return errorResponse('db_error', error.message, 500, origin);
+  }
+  if (!row) {
+    return errorResponse('collaborator_not_found', 'Collaborator not found', 404, origin);
+  }
+
+  // Owner gate via user-JWT SELECT on trips.
+  const { data: trip, error: tripErr } = await userClient
+    .from('trips')
+    .select('id, user_id')
+    .eq('id', row.trip_id)
+    .maybeSingle<{ id: string; user_id: string }>();
+  if (tripErr) {
+    return errorResponse('db_error', tripErr.message, 500, origin);
+  }
+  if (!trip || trip.user_id !== user.id) {
+    return errorResponse('not_owner', 'Only the trip owner can update collaborators', 403, origin);
+  }
+
+  const { error: updErr } = await admin
+    .from('trip_collaborators')
+    .update({ role: body.role })
+    .eq('id', row.id);
+  if (updErr) {
+    return errorResponse('db_error', updErr.message, 500, origin);
+  }
+
+  log({
+    requestId,
+    fn: 'manage-collaborators',
+    action: 'update',
+    level: 'info',
+    tripId: row.trip_id,
+    collaboratorId: row.id,
+    fromRole: row.role,
+    toRole: body.role,
+  });
+
+  return jsonResponse(
+    { ok: true, collaboratorId: row.id, role: body.role },
     { origin },
   );
 }

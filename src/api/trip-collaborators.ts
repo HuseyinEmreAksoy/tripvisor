@@ -147,6 +147,12 @@ interface RevokeResponse {
   alreadyRevoked?: boolean;
 }
 
+interface UpdateResponse {
+  ok: true;
+  collaboratorId: Uuid;
+  role: TripCollaboratorRole;
+}
+
 async function invokeManageCollaborators<T>(
   body: Record<string, unknown>,
 ): Promise<T> {
@@ -211,14 +217,11 @@ export function useTripCollaborators(tripId: Uuid | undefined) {
  * `trip_collaborators` (filtered to status='accepted', user_id=auth.uid())
  * to `trips` to return full trip rows.
  *
- * Why a separate hook (not a UNION into useTrips)
- * -----------------------------------------------
- * Per the Step 21.5/21.6 dispatch: a parallel slice (Slice A, budget) is
- * touching `src/api/trips.ts` concurrently. Modifying `useTrips` here
- * would clobber that work. The UNION into `useTrips` is deferred to
- * Step 21.7. For now, the trips-list surface can call BOTH `useTrips()`
- * and `useCollaboratedTrips()` and merge them in the UI (with a "Shared
- * with me" badge tagged onto the collaborator-side rows).
+ * @deprecated Phase 22 Step 22.3 — use `useTrips()` and filter by
+ * `isOwner === false`. `useTrips()` now returns the UNION of owned +
+ * accepted-collaborator trips with each row tagged `{ isOwner,
+ * collaboratorRole }`. This hook is kept so existing UI call sites keep
+ * compiling; remove when callers migrate (Phase 23+).
  *
  * Implementation
  * --------------
@@ -338,6 +341,12 @@ export function useDeclineCollaboratorInvite(token?: string) {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.mine() });
       qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.forTrip(res.tripId) });
+      // Phase 22 Step 22.3: useTrips() now returns the UNION of owned +
+      // accepted-collaborator trips. A decline does not change the
+      // caller's set of accessible trips (they never accepted), but
+      // invalidating is cheap and keeps cache consistency on edge cases
+      // where a user re-declines after a previous half-accept.
+      qc.invalidateQueries({ queryKey: tripsKeys.all });
     },
   });
 }
@@ -364,7 +373,68 @@ export function useRevokeCollaborator() {
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.forTrip(vars.tripId) });
       // The revoked user's mine-list will refresh on their next session;
-      // we can't invalidate it from the owner's client.
+      // we can't invalidate it from the owner's client. The owner's own
+      // useTrips() list is unaffected (owner-trips appear regardless of
+      // collaborator status), but Phase 22 Step 22.3 widened useTrips
+      // to UNION owned + accepted-collaborator trips — invalidate
+      // tripsKeys.all so the owner's UI re-derives `collaboratorRole`
+      // tags after any membership change.
+      qc.invalidateQueries({ queryKey: tripsKeys.all });
+    },
+  });
+}
+
+/**
+ * Owner-side mutation: change a collaborator's role in place
+ * (`viewer` <-> `editor`) without going through revoke + re-invite.
+ *
+ * Optimistic update: the affected row in
+ * `useTripCollaborators(tripId)` flips to the new role immediately;
+ * on error we roll back to the prior cache snapshot. Idempotent —
+ * setting the role to its current value is a no-op success on the
+ * server, and the optimistic write is a no-op too.
+ *
+ * Cache invalidation: the per-trip collaborators list is invalidated
+ * on success so the canonical row is refetched. We do NOT invalidate
+ * `tripsKeys.all` because changing a collaborator's role does not add
+ * or remove the user from any list — only the role tag they would see
+ * on their own copy of the trip changes, and that surface refreshes
+ * via `tripCollaboratorsKeys.mine` on the affected user's next session.
+ */
+export function useUpdateCollaborator() {
+  const qc = useQueryClient();
+  return useMutation<
+    UpdateResponse,
+    CollaboratorError | Error,
+    { collaboratorId: Uuid; tripId: Uuid; role: TripCollaboratorRole },
+    { prev: TripCollaborator[] | undefined; key: ReturnType<typeof tripCollaboratorsKeys.forTrip> }
+  >({
+    mutationFn: async ({ collaboratorId, role }) => {
+      return invokeManageCollaborators<UpdateResponse>({
+        action: 'update',
+        collaboratorId,
+        role,
+      });
+    },
+    onMutate: async ({ collaboratorId, tripId, role }) => {
+      const key = tripCollaboratorsKeys.forTrip(tripId);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<TripCollaborator[]>(key);
+      if (Array.isArray(prev)) {
+        qc.setQueryData<TripCollaborator[]>(
+          key,
+          prev.map((row) => (row.id === collaboratorId ? { ...row, role } : row)),
+        );
+      }
+      return { prev, key };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx && ctx.prev !== undefined) {
+        qc.setQueryData(ctx.key, ctx.prev);
+      }
+    },
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.forTrip(vars.tripId) });
     },
   });
 }

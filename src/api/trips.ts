@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
-import type { CreateTripInput, Trip, Uuid } from './types';
+import type { CreateTripInput, Trip, TripCollaboratorRole, Uuid } from './types';
 import { tripsKeys, tripExpensesKeys } from './_keys';
 
 // ----- Query keys ---------------------------------------------------------
@@ -30,26 +30,102 @@ const createTripSchema = z.object({
 export type UseTripsOptions = { archived?: boolean };
 
 /**
- * List trips for the signed-in user.
+ * List trips visible to the signed-in user.
+ *
+ * Phase 22 Step 22.3: returns the UNION of trips the caller owns AND trips
+ * where the caller is an accepted collaborator. Each row is tagged
+ * client-side with `{ isOwner, collaboratorRole }` so the UI can render
+ * a "Shared with me" badge / role chip without a second hook.
+ *
+ * How the UNION is assembled
+ * --------------------------
+ * The `trips_collab_select` policy (see `0014_fix_trips_insert_returning_rls.sql`)
+ * grants SELECT on the UNION already: it permits rows where
+ * `user_id = auth.uid()` OR `user_can_access_trip(id, auth.uid(), 'viewer')`.
+ * So a plain unfiltered SELECT under the user JWT returns both sets.
+ *
+ * To derive `collaboratorRole`, we issue a SECOND lightweight query
+ * against `trip_collaborators` (filtered to status='accepted',
+ * user_id=auth.uid()) and join client-side. This matches the
+ * two-step pattern used by `useCollaboratedTrips` and avoids a more
+ * expensive PostgREST embedded query.
+ *
+ * Sort order
+ * ----------
+ * Owner-trips first (by created_at desc), then collaborator-trips
+ * (by created_at desc). Rationale: a user's own work should surface
+ * above shared work in the trips list. Applied client-side AFTER the
+ * join because Postgres returns the UNION in arbitrary order.
  *
  * Filters by `archived_at` so the active and archived tabs share no data.
- * Default: `archived: false` (the existing call sites get the same active
- * list they did before Phase 7).
+ * The filter applies uniformly to owned + collaborator trips (RLS is
+ * row-level, not partition-level).
  */
 export function useTrips(opts: UseTripsOptions = {}) {
   const archived = opts.archived ?? false;
   return useQuery<Trip[]>({
     queryKey: tripsKeys.list({ archived }),
     queryFn: async () => {
+      // 1. Fetch the UNION via RLS. NOTE: no .eq('user_id', ...) filter —
+      //    the trips_collab_select policy already gates this to
+      //    owner OR accepted-collaborator rows.
       let query = supabase.from('trips').select('*');
       if (archived) {
         query = query.not('archived_at', 'is', null);
       } else {
         query = query.is('archived_at', null);
       }
-      const { data, error } = await query.order('created_at', { ascending: false });
+      const { data: rawTrips, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
-      return data as Trip[];
+
+      // 2. Resolve the caller's user id once so we can label `isOwner`
+      //    on each row. If the user is signed out, no rows are visible
+      //    under RLS anyway, so this is a defense-in-depth.
+      const { data: userData } = await supabase.auth.getUser();
+      const callerId = userData.user?.id ?? null;
+
+      // 3. Fetch the caller's accepted-collaborator memberships to
+      //    derive `collaboratorRole`. Skip if signed out (rawTrips is
+      //    already empty in that case).
+      let roleByTripId = new Map<Uuid, TripCollaboratorRole>();
+      if (callerId) {
+        const { data: collabRows, error: collabErr } = await supabase
+          .from('trip_collaborators')
+          .select('trip_id, role')
+          .eq('user_id', callerId)
+          .eq('status', 'accepted');
+        if (collabErr) throw collabErr;
+        roleByTripId = new Map(
+          (collabRows ?? []).map((r) => [
+            r.trip_id as Uuid,
+            r.role as TripCollaboratorRole,
+          ]),
+        );
+      }
+
+      // 4. Tag each row with derived flags. A row whose user_id matches
+      //    the caller is the owner (collaboratorRole = null even if
+      //    they also somehow have a collaborator row). Otherwise the
+      //    row is a collaborator-trip and we look up the role.
+      const tagged: Trip[] = (rawTrips ?? []).map((t) => {
+        const row = t as Trip;
+        const isOwner = callerId !== null && row.user_id === callerId;
+        return {
+          ...row,
+          isOwner,
+          collaboratorRole: isOwner ? null : roleByTripId.get(row.id) ?? null,
+        };
+      });
+
+      // 5. Sort: owner-trips first (created_at desc), then
+      //    collaborator-trips (created_at desc). Stable on identical
+      //    timestamps via the secondary id sort to keep RN list keys
+      //    deterministic.
+      return tagged.sort((a, b) => {
+        if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
+        const cmp = b.created_at.localeCompare(a.created_at);
+        return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+      });
     },
   });
 }

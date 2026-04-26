@@ -39,6 +39,21 @@ export interface Trip {
   total_budget: number | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Phase 22 Step 22.3: derived, NOT stored in the trips table.
+   * `useTrips()` returns the UNION of owner-trips and accepted-
+   * collaborator trips and tags each row so the UI can render
+   * "Shared with me" / role badges without an extra round-trip.
+   *
+   * - `isOwner = true` AND `collaboratorRole = null` → caller is the trip owner.
+   * - `isOwner = false` AND `collaboratorRole !== null` → caller is an accepted collaborator.
+   *
+   * Both populated client-side by `useTrips`. Other read paths
+   * (`useTrip(id)` for the detail screen, RPCs, the share Edge Function)
+   * may leave these undefined; consumers should be defensive.
+   */
+  isOwner?: boolean;
+  collaboratorRole?: TripCollaboratorRole | null;
 }
 
 export interface TripPlace {
