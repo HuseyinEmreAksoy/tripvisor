@@ -1,1 +1,1 @@
-- [Phase 3 and Phase 4 commit conventions](project_phase3_complete.md) — Phases 3+4 committed; sandbox blocks git push to master; two-commit split strategy; .gitignore gaps; Playwright artifacts
+- [Phase 3 through Phase 20 commit conventions](project_phase3_complete.md) — Phases 3–20 on master; 6-commit split for Phase 20; bash quoting for (app)/(auth) paths; .gitignore gaps; Playwright artifacts

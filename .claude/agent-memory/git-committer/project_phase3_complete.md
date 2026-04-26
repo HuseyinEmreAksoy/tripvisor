@@ -1,6 +1,6 @@
 ---
-name: Phase 3 and Phase 4 completion and commit conventions
-description: Phase 3 committed d9d6669; Phase 4 committed c1ef38f + a2a24e3 on 2026-04-24; repo conventions
+name: Phase 3 through Phase 20 completion and commit conventions
+description: Phases 3–20 committed on master; six-commit split strategy for Phase 20; key conventions observed
 type: project
 ---
 
@@ -93,3 +93,77 @@ into one commit. Always use multi-scope Conventional Commits: `feat(ui,backend,t
 - `process.env.SUPABASE_SERVICE_ROLE_KEY` in test files is an env var read, not
   a hardcoded secret — always safe to commit.
 - `tests/rls.share.test.ts` uses same SERVICE pattern as `tests/rls.test.ts` — safe.
+
+Phase 22 committed 2026-04-26 as 4 commits (user requested 4-group split):
+- `078461b` — feat(db): Phase 22 — editor-budget RLS + INSERT RETURNING fix
+  (3 files, 487 ins: migration 0014 INSERT RETURNING fix, migration 0015
+   editor-budget RLS policy + BEFORE UPDATE trigger, smoke-editor-budget-rls.sql)
+  Note: migration 0014 was not in the user's original grouping but is a
+  prerequisite fix — included in commit 1. Migration 0015 was planned as
+  0014 in docs but 0014 slot was taken; actual filename is 0015.
+- `f3d8b0a` — feat(backend): Phase 22 — collaborator role update + UNION useTrips
+  (5 files, 309 ins/47 del: manage-collaborators update action + README,
+   useUpdateCollaborator hook, UNION useTrips, Trip type extension)
+- `e0e5c98` — feat(ui): Phase 22 — role toggle + currency formatting + accommodation autocomplete
+  (10 files, 700 ins/181 del: formatCurrency.ts new helper, 5 budget components
+   currency-aware, AccommodationEditSheet Places autocomplete, trips.tsx unified,
+   collaborators.tsx in-place role toggle)
+- `08f94b2` — docs: Phase 22 — sync plan + architecture + per-feature + smoke note
+  (7 files, 307 ins/52 del: plan.md, architecture.md, overview.md, expenses.md,
+   collaboration.md, accommodation.md, smoke/phase-22.md new)
+Pushed to origin master (fast-forward) as 08f94b2.
+
+Phase 22 introduced: supabase/migrations/0014 and 0015, scripts/ (smoke SQL),
+src/lib/formatCurrency.ts, docs/smoke/phase-22.md.
+Steps 22.9 (automated tests) and 22.10 (live smoke) explicitly skipped per user direction.
+No Co-Authored-By trailer — user policy blocks it; do NOT add Co-Authored-By to any commit.
+
+Phase 21 committed 2026-04-25 as 6 commits (user requested 5-group split; a 6th
+was added for missed component __tests__ directories discovered post-staging):
+- `0a67577` — feat(db,backend): Phase 21 — multi-user trip collaboration (RLS spine)
+  (11 files, 2619 ins: migration 0011, manage-collaborators Edge Fn + test + README,
+   trip-collaborators.ts, _keys.ts/types.ts/index.ts shared, smoke SQL scripts)
+- `f67db23` — feat(db,backend): Phase 21 — accommodation tracking data layer
+  (5 files, 1009 ins: migrations 0012+0013, trip-accommodations.ts, smoke SQLs)
+- `8992945` — feat(api): Phase 21 — budget rollup + total_budget mutation
+  (2 files, 221 ins: trip-expenses.ts useTripExpenseRollup, trips.ts useUpdateTripBudget)
+- `fcc439a` — feat(ui): Phase 21 — budget + accommodation + collaborators surfaces
+  (35 files, 5243 ins/608 del: 9 new components, 2 new screens, shared component polish,
+   auth screen routing, e2e phase-21 specs, tokens, useTripRole hook + test)
+- `f5141e9` — docs: Phase 21 — plan + architecture + per-feature + smoke note
+  (7 files, 731 ins/81 del: plan.md, architecture.md, overview.md, expenses.md,
+   NEW: collaboration.md, accommodation.md, smoke/phase-21.md)
+- `40086a8` — test(ui): Phase 21 — component unit tests for budget + accommodation
+  (3 files, 462 ins: AccommodationCard.test.tsx, BudgetCard.test.tsx, CategoryBreakdown.test.tsx)
+  These were missed in staging scan — discovered as untracked after commit 5.
+  Always check src/components/*/__ tests__/ and src/hooks/__tests__/ after staging
+  new component directories.
+Pushed to origin master (fast-forward) as 40086a8.
+
+Phase 21 introduced: supabase/functions/manage-collaborators/ (Edge Fn with index.test.ts),
+scripts/ directory (smoke SQL scripts), src/components/budget/, src/components/accommodation/,
+src/hooks/__tests__/, app/(app)/trip/[id]/collaborators.tsx, app/invite/[token].tsx,
+docs/features/collaboration.md, docs/features/accommodation.md, docs/smoke/phase-21.md.
+
+Phase 16 through Phase 20 committed 2026-04-25:
+- Phases 16–19 used 1-commit-per-phase strategy (feat scoped to changed surfaces).
+- Phase 20 used a 6-commit split strategy (user explicitly requested logical grouping):
+  1. `558e2be` — feat(ui): visual overhaul + navigation + desktop layout (20 files, 1285 ins/321 del)
+  2. `429bcae` — feat(backend): Google Maps web recovery + setup docs (9 files, 396 ins/17 del)
+  3. `8dff93e` — feat(backend,db): expense model + EdgeFunctionError refactor (12 files, 634 ins/81 del)
+  4. `462678b` — test(e2e): selector drift fixes + smoke log (12 files, 428 ins/84 del)
+  5. `050b6e0` — docs: sync plan + architecture + per-feature docs (8 files, 205 ins/34 del)
+  6. `d917771` — chore(docs): agent memory update (1 file, 39 ins)
+  Pushed to origin master (fast-forward) as d917771. No pre-commit hooks triggered.
+
+- Phase 20 introduced: src/hooks/ directory (useBreakpoint.ts), src/api/_errors.ts,
+  src/api/_keys.ts, src/api/trip-expenses.ts, src/components/BackButton.tsx,
+  src/components/DateField.ts, supabase/functions/.env.example,
+  supabase/migrations/0010_trip_budget_categories.sql.
+- supabase/functions/.env.example is safe to commit — placeholder values only,
+  GOOGLE_MAPS_SERVER_KEY= is intentionally empty.
+- git add with paths containing parentheses (Expo Router convention: app/(app)/, app/(auth)/)
+  requires double-quoting in bash: git add "app/(app)/foo.tsx" not git add app/(app)/foo.tsx.
+- .claude/settings.local.json is a local-only tool config file — never commit.
+- Sandbox may block git push to master in some sessions; in Phase 20 the push succeeded
+  directly (d917771). Always attempt push; only fall back to user-manual if rejected.
