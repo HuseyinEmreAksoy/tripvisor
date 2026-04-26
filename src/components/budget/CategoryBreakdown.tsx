@@ -9,6 +9,7 @@
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { formatCurrency } from '@/lib/formatCurrency';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
 import type { TripExpenseCategory } from '@/api/types';
 
@@ -23,9 +24,11 @@ const CATEGORIES: Array<{ key: TripExpenseCategory; label: string; icon: string 
 
 export interface CategoryBreakdownProps {
   rollup: TripExpenseRollup;
+  /** Trip's currency code; null/undefined falls back to USD. */
+  currency?: string | null;
 }
 
-export function CategoryBreakdown({ rollup }: CategoryBreakdownProps) {
+export function CategoryBreakdown({ rollup, currency }: CategoryBreakdownProps) {
   const t = useTheme();
 
   return (
@@ -56,6 +59,7 @@ export function CategoryBreakdown({ rollup }: CategoryBreakdownProps) {
           icon={icon}
           label={label}
           slot={rollup.byCategory[key]}
+          currency={currency}
         />
       ))}
     </View>
@@ -66,10 +70,12 @@ function CategoryRow({
   icon,
   label,
   slot,
+  currency,
 }: {
   icon: string;
   label: string;
   slot: TripExpenseRollup['byCategory'][TripExpenseCategory];
+  currency?: string | null;
 }) {
   const t = useTheme();
 
@@ -88,6 +94,8 @@ function CategoryRow({
         ? t.colors.budgetWarn
         : t.colors.budgetOk;
 
+  const fmt = (n: number) => formatCurrency(n, currency);
+
   return (
     <View
       style={[
@@ -98,7 +106,7 @@ function CategoryRow({
       accessibilityLabel={
         isEmpty
           ? `${label}: no expenses recorded`
-          : `${label}: estimated ${formatAmt(slot.estimated)}, actual ${formatAmt(slot.actual)}`
+          : `${label}: estimated ${fmt(slot.estimated)}, actual ${fmt(slot.actual)}`
       }
     >
       {/* Icon + label */}
@@ -118,7 +126,7 @@ function CategoryRow({
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
             {isEmpty
               ? '—'
-              : `${formatAmt(slot.actual)} / ${formatAmt(slot.estimated)}`}
+              : `${fmt(slot.actual)} / ${fmt(slot.estimated)}`}
           </Text>
         </View>
         {!isEmpty && slot.estimated > 0 ? (
@@ -143,11 +151,6 @@ function CategoryRow({
       </View>
     </View>
   );
-}
-
-function formatAmt(n: number): string {
-  if (n === 0) return '0';
-  return n.toFixed(2).replace(/\.?0+$/, '');
 }
 
 const styles = StyleSheet.create({

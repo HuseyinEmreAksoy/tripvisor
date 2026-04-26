@@ -1162,13 +1162,15 @@ function SettingsTab({
       <SectionHeading label="Budget" t={t} />
       <BudgetCard
         rollup={rollup}
+        currency={currency}
         onSetBudget={() => setBudgetSheetOpen(true)}
         canEdit={canEdit}
       />
-      <CategoryBreakdown rollup={rollup} />
+      <CategoryBreakdown rollup={rollup} currency={currency} />
       <ExpenseList
         expenses={expenses}
         tripId={tripId}
+        currency={currency}
         canEdit={canEdit}
         onAdd={() => {
           setEditingExpense(null);
@@ -1240,12 +1242,14 @@ function SettingsTab({
       <BudgetEditSheet
         tripId={tripId}
         currentBudget={rollup.budget}
+        currency={currency}
         visible={budgetSheetOpen}
         onClose={() => setBudgetSheetOpen(false)}
       />
       <ExpenseEditSheet
         tripId={tripId}
         expense={editingExpense}
+        currency={currency}
         visible={expenseSheetOpen}
         onClose={() => setExpenseSheetOpen(false)}
         tripDayCount={tripDayCount}

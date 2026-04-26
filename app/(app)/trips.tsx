@@ -51,7 +51,6 @@ import {
   useDeleteTrip,
   useAllTripLegs,
 } from '@/api';
-import { useCollaboratedTrips } from '@/api/trip-collaborators';
 import { useTheme } from '@/theme';
 import { BREAKPOINTS, useBreakpoint } from '@/hooks/useBreakpoint';
 import { confirmDestructive } from '@/lib/confirm';
@@ -145,14 +144,16 @@ export default function TripsList() {
     archived: tab === 'archived',
   });
 
-  // "Shared with me" — trips the current user collaborates on (accepted only).
-  // Only shown on the 'active' tab (archived collaborator trips aren't surfaced).
-  const { data: collaboratedTrips = [] } = useCollaboratedTrips();
+  // The unified useTrips() already includes owned + accepted-collaborator rows,
+  // each tagged with { isOwner, collaboratorRole }. Partition client-side to
+  // preserve the two-section visual UX. Owners-first sort is done server-side.
+  const ownedTrips = useMemo(() => (trips ?? []).filter((t) => t.isOwner !== false), [trips]);
+  const collaboratedTrips = useMemo(() => (trips ?? []).filter((t) => t.isOwner === false), [trips]);
 
   const activeTripsIds = useMemo(
-    () => (sortKey === 'cost' ? (trips ?? []).map((trip) => trip.id) : []),
+    () => (sortKey === 'cost' ? ownedTrips.map((trip) => trip.id) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [trips, sortKey],
+    [ownedTrips, sortKey],
   );
 
   const { byTripId: legsByTripId } = useAllTripLegs(activeTripsIds);
@@ -161,12 +162,11 @@ export default function TripsList() {
   const today = new Date().toISOString().slice(0, 10);
 
   const displayedTrips = useMemo(() => {
-    const base = trips ?? [];
-    const searched = applySearch(base, debouncedSearch);
+    const searched = applySearch(ownedTrips, debouncedSearch);
     const dateFilt = applyDateFilter(searched, dateFilter, today);
     return applySort(dateFilt, sortKey, legsByTripId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trips, debouncedSearch, dateFilter, sortKey, legsByTripId]);
+  }, [ownedTrips, debouncedSearch, dateFilter, sortKey, legsByTripId]);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
   const archiveMutation = useArchiveTrip();
@@ -206,7 +206,7 @@ export default function TripsList() {
     );
   }
 
-  const serverIsEmpty = !trips || trips.length === 0;
+  const serverIsEmpty = ownedTrips.length === 0;
   const noResults = !serverIsEmpty && displayedTrips.length === 0;
   const filterActive = dateFilter !== 'all';
 
@@ -524,7 +524,7 @@ export default function TripsList() {
                           trip={item}
                           onPress={() => router.push(`/trip/${item.id}`)}
                         />
-                        <SharedBadge />
+                        <SharedBadge role={item.collaboratorRole} />
                       </View>
                     </View>
                   ))}
@@ -616,7 +616,7 @@ export default function TripsList() {
                           trip={item}
                           onPress={() => router.push(`/trip/${item.id}`)}
                         />
-                        <SharedBadge />
+                        <SharedBadge role={item.collaboratorRole} />
                       </View>
                     ))}
                   </View>
@@ -642,8 +642,10 @@ export default function TripsList() {
 // ── SharedBadge ──────────────────────────────────────────────────────────────
 // Overlaid on the top-right of a collaborator trip card.
 // Uses position absolute on web (which works in RN Web) to avoid changing TripCard.
-function SharedBadge() {
+// `role` comes from trip.collaboratorRole (now available from the unified useTrips()).
+function SharedBadge({ role }: { role?: 'viewer' | 'editor' | null }) {
   const t = useTheme();
+  const label = role ? `Shared · ${role}` : 'Shared with me';
   return (
     <View
       style={[
@@ -655,10 +657,10 @@ function SharedBadge() {
         },
       ]}
       accessible
-      accessibilityLabel="Shared with me"
+      accessibilityLabel={label}
     >
       <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
-        Shared with me
+        {label}
       </Text>
     </View>
   );

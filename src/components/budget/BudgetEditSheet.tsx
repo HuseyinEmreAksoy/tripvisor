@@ -1,7 +1,7 @@
 /**
  * BudgetEditSheet — bottom sheet for setting / editing the trip's total budget.
  *
- * - Numeric input (currency-agnostic v1; label shows "$" as a generic symbol).
+ * - Numeric input with the trip's currency code as a read-only prefix label.
  * - "Clear budget" button if a budget is already set.
  * - Calls useUpdateTripBudget on save.
  * - Works identically on iOS, Android, and web via BottomSheet platform split.
@@ -16,6 +16,8 @@ import { useUpdateTripBudget } from '@/api/trips';
 export interface BudgetEditSheetProps {
   tripId: string;
   currentBudget: number | null;
+  /** Trip's currency code; null/undefined falls back to USD display. */
+  currency?: string | null;
   visible: boolean;
   onClose: () => void;
 }
@@ -23,11 +25,17 @@ export interface BudgetEditSheetProps {
 export function BudgetEditSheet({
   tripId,
   currentBudget,
+  currency,
   visible,
   onClose,
 }: BudgetEditSheetProps) {
   const t = useTheme();
   const updateBudget = useUpdateTripBudget(tripId);
+
+  // Display a short currency prefix. For long codes (e.g. TRY, JPY) we use the
+  // code directly; Intl.NumberFormat symbol extraction is not universally
+  // available in all RN/Hermes builds, so we keep this simple.
+  const currencyPrefix = (currency ?? 'USD').toUpperCase();
 
   const [inputText, setInputText] = useState(currentBudget != null ? String(currentBudget) : '');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -93,7 +101,7 @@ export function BudgetEditSheet({
       {/* Amount input */}
       <View style={{ gap: t.spacing.xs }}>
         <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-          Amount
+          Amount ({currencyPrefix})
         </Text>
         <View
           style={[
@@ -105,8 +113,16 @@ export function BudgetEditSheet({
             },
           ]}
         >
-          <Text style={[t.typography.bodyStrong, { color: t.colors.textMuted, paddingLeft: t.spacing.md }]}>
-            $
+          {/* Read-only currency prefix label */}
+          <Text
+            style={[
+              t.typography.bodyStrong,
+              { color: t.colors.textMuted, paddingLeft: t.spacing.md },
+            ]}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            {currencyPrefix}
           </Text>
           <TextInput
             value={inputText}
@@ -119,7 +135,7 @@ export function BudgetEditSheet({
             inputMode={"decimal" as any}
             placeholder="0.00"
             placeholderTextColor={t.colors.textMuted}
-            accessibilityLabel="Budget amount"
+            accessibilityLabel={`Budget amount in ${currencyPrefix}`}
             accessibilityHint="Enter your total trip budget as a number"
             style={[
               styles.input,

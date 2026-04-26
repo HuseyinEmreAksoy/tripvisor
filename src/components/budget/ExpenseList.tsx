@@ -4,13 +4,14 @@
  * Each row shows:
  *   - Category icon + label
  *   - Kind chip (estimated | actual)
- *   - Amount
+ *   - Amount (formatted with trip currency)
  *   - Optional day_index chip
  *   - Optional label/notes (truncated to 1 line)
  *   - Edit + Delete buttons (hidden when canEdit = false)
  *
  * Props:
  *   expenses   — from useTripExpenses
+ *   currency   — from trip.currency; drives Intl.NumberFormat formatting
  *   canEdit    — controls visibility of edit/delete affordances
  *   onAdd      — opens ExpenseEditSheet in "add" mode
  *   onEdit     — opens ExpenseEditSheet in "edit" mode with the selected row
@@ -19,6 +20,7 @@
 import { useMemo } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { formatCurrency } from '@/lib/formatCurrency';
 import type { TripExpense, TripExpenseCategory } from '@/api/types';
 
 const CATEGORY_META: Record<TripExpenseCategory, { label: string; icon: string }> = {
@@ -33,6 +35,8 @@ const CATEGORY_META: Record<TripExpenseCategory, { label: string; icon: string }
 export interface ExpenseListProps {
   expenses: TripExpense[];
   tripId: string;
+  /** Trip's currency code; null/undefined falls back to USD. */
+  currency?: string | null;
   canEdit: boolean;
   onAdd: () => void;
   onEdit: (expense: TripExpense) => void;
@@ -41,6 +45,7 @@ export interface ExpenseListProps {
 
 export function ExpenseList({
   expenses,
+  currency,
   canEdit,
   onAdd,
   onEdit,
@@ -113,9 +118,10 @@ export function ExpenseList({
             <ExpenseRow
               key={expense.id}
               expense={expense}
+              currency={currency}
               canEdit={canEdit}
               onEdit={() => onEdit(expense)}
-              onDelete={() => confirmDelete(expense, onDelete)}
+              onDelete={() => confirmDelete(expense, currency, onDelete)}
             />
           ))}
         </ScrollView>
@@ -126,11 +132,13 @@ export function ExpenseList({
 
 function ExpenseRow({
   expense,
+  currency,
   canEdit,
   onEdit,
   onDelete,
 }: {
   expense: TripExpense;
+  currency?: string | null;
   canEdit: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -138,6 +146,7 @@ function ExpenseRow({
   const t = useTheme();
   const meta = CATEGORY_META[expense.category] ?? { label: expense.category, icon: '📦' };
   const isActual = expense.kind === 'actual';
+  const fmt = (n: number) => formatCurrency(n, currency);
 
   return (
     <View
@@ -152,7 +161,7 @@ function ExpenseRow({
         },
       ]}
       accessible
-      accessibilityLabel={`${meta.label}, ${expense.kind}, ${formatAmt(expense.amount)}${expense.label ? `, ${expense.label}` : ''}`}
+      accessibilityLabel={`${meta.label}, ${expense.kind}, ${fmt(expense.amount)}${expense.label ? `, ${expense.label}` : ''}`}
     >
       <View style={[styles.row, { justifyContent: 'space-between' }]}>
         <View style={[styles.row, { gap: t.spacing.sm, flex: 1 }]}>
@@ -232,7 +241,7 @@ function ExpenseRow({
 
         {/* Amount */}
         <Text style={[t.typography.bodyStrong, { color: t.colors.text, marginLeft: t.spacing.sm }]}>
-          {formatAmt(expense.amount)}
+          {fmt(expense.amount)}
         </Text>
       </View>
 
@@ -277,22 +286,27 @@ function ExpenseRow({
   );
 }
 
-function confirmDelete(expense: TripExpense, onDelete: (e: TripExpense) => void) {
+function confirmDelete(
+  expense: TripExpense,
+  currency: string | null | undefined,
+  onDelete: (e: TripExpense) => void,
+) {
   const meta = CATEGORY_META[expense.category] ?? { label: expense.category };
+  const amtStr = formatCurrency(expense.amount, currency);
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined' && window.confirm(`Delete this ${meta.label} expense?`)) {
       onDelete(expense);
     }
     return;
   }
-  Alert.alert('Delete expense?', `Remove this ${meta.label} expense of ${formatAmt(expense.amount)}?`, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Delete', style: 'destructive', onPress: () => onDelete(expense) },
-  ]);
-}
-
-function formatAmt(n: number): string {
-  return n.toFixed(2).replace(/\.?0+$/, '');
+  Alert.alert(
+    'Delete expense?',
+    `Remove this ${meta.label} expense of ${amtStr}?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => onDelete(expense) },
+    ],
+  );
 }
 
 const styles = StyleSheet.create({

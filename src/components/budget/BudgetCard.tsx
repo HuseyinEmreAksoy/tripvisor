@@ -11,21 +11,25 @@
  * Props:
  *   rollup     — from useTripExpenseRollup; never call the hook directly here
  *                so the parent controls re-render budgets.
+ *   currency   — from trip.currency; drives Intl.NumberFormat formatting.
  *   onSetBudget — opens the BudgetEditSheet.
  *   canEdit    — whether the current user may set / edit the budget.
  */
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { formatCurrency } from '@/lib/formatCurrency';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
 
 export interface BudgetCardProps {
   rollup: TripExpenseRollup;
+  /** Trip's currency code; null/undefined falls back to USD. */
+  currency?: string | null;
   onSetBudget: () => void;
   canEdit: boolean;
 }
 
-export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
+export function BudgetCard({ rollup, currency, onSetBudget, canEdit }: BudgetCardProps) {
   const t = useTheme();
 
   const { hasBudget, budget, totalActual, totalEstimated, remaining } = rollup;
@@ -50,6 +54,8 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
     ? Math.round((totalActual / budget) * 100)
     : null;
 
+  const fmt = (amount: number) => formatCurrency(amount, currency);
+
   return (
     <View
       style={[
@@ -66,7 +72,7 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
       accessible
       accessibilityLabel={
         hasBudget && budget
-          ? `Budget: ${formatCurrency(totalActual)} spent of ${formatCurrency(budget)}, ${pct}%`
+          ? `Budget: ${fmt(totalActual)} spent of ${fmt(budget)}, ${pct}%`
           : 'No budget configured'
       }
     >
@@ -107,7 +113,7 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
           <View style={styles.row}>
             <View>
               <Text style={[t.typography.display, { color: t.colors.text, fontSize: 28, lineHeight: 34 }]}>
-                {formatCurrency(totalActual)}
+                {fmt(totalActual)}
               </Text>
               <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
                 actual spend
@@ -115,7 +121,7 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={[t.typography.bodyStrong, { color: t.colors.textMuted }]}>
-                of {formatCurrency(budget)}
+                of {fmt(budget)}
               </Text>
               {remaining !== null ? (
                 <Text
@@ -128,8 +134,8 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
                   ]}
                 >
                   {remaining >= 0
-                    ? `${formatCurrency(remaining)} remaining`
-                    : `${formatCurrency(Math.abs(remaining))} over budget`}
+                    ? `${fmt(remaining)} remaining`
+                    : `${fmt(Math.abs(remaining))} over budget`}
                 </Text>
               ) : null}
             </View>
@@ -159,7 +165,7 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
 
           {pct !== null ? (
             <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-              {pct}% of budget used · estimated {formatCurrency(totalEstimated)}
+              {pct}% of budget used · estimated {fmt(totalEstimated)}
             </Text>
           ) : null}
         </>
@@ -170,9 +176,9 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
           </Text>
           {totalActual > 0 || totalEstimated > 0 ? (
             <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-              {totalEstimated > 0 ? `Estimated: ${formatCurrency(totalEstimated)}` : ''}
+              {totalEstimated > 0 ? `Estimated: ${fmt(totalEstimated)}` : ''}
               {totalEstimated > 0 && totalActual > 0 ? ' · ' : ''}
-              {totalActual > 0 ? `Actual: ${formatCurrency(totalActual)}` : ''}
+              {totalActual > 0 ? `Actual: ${fmt(totalActual)}` : ''}
             </Text>
           ) : null}
           {canEdit ? (
@@ -199,12 +205,6 @@ export function BudgetCard({ rollup, onSetBudget, canEdit }: BudgetCardProps) {
       )}
     </View>
   );
-}
-
-/** Currency-agnostic number formatter. Shows up to 2 decimal places, drops trailing zeros. */
-function formatCurrency(amount: number): string {
-  const fixed = amount.toFixed(2).replace(/\.?0+$/, '');
-  return fixed;
 }
 
 const styles = StyleSheet.create({

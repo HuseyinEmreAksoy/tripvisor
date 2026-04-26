@@ -5,8 +5,8 @@
  *   - Full list of all collaborators (any status).
  *   - Invite button → email + role form in a bottom sheet.
  *   - Revoke button per accepted/pending row.
- *   - Role toggle is READ-ONLY for v1 (useUpdateCollaborator is not yet
- *     available in the backend; flagged as a follow-up in the deliverables).
+ *   - Role toggle for accepted rows (owner-only): tap the role chip to open
+ *     an inline selector; calls useUpdateCollaborator with optimistic update.
  *
  * Non-owner view:
  *   - Read-only list of collaborators visible to the caller under RLS
@@ -38,6 +38,7 @@ import {
   useTripCollaborators,
   useInviteCollaborator,
   useRevokeCollaborator,
+  useUpdateCollaborator,
   CollaboratorError,
 } from '@/api/trip-collaborators';
 import type { TripCollaborator, TripCollaboratorRole } from '@/api/types';
@@ -63,6 +64,25 @@ const ROLE_OPTIONS: Array<{ value: TripCollaboratorRole; label: string }> = [
   { value: 'editor', label: 'Editor' },
 ];
 
+/**
+ * Map CollaboratorError codes to user-facing copy for the role-update failure case.
+ */
+function roleUpdateErrorMessage(err: unknown): string {
+  if (err instanceof CollaboratorError) {
+    switch (err.code) {
+      case 'not_owner':
+        return 'Only the trip owner can change collaborator roles.';
+      case 'collaborator_not_found':
+        return 'This collaborator no longer exists.';
+      case 'invalid_input':
+        return 'Invalid role.';
+      default:
+        return "Couldn't update role. Try again.";
+    }
+  }
+  return "Couldn't update role. Try again.";
+}
+
 export default function CollaboratorsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -79,8 +99,11 @@ export default function CollaboratorsScreen() {
   } = useTripCollaborators(id);
   const inviteCollaborator = useInviteCollaborator();
   const revokeCollaborator = useRevokeCollaborator();
+  const updateCollaborator = useUpdateCollaborator();
 
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
+  // Per-row role update error messages, keyed by collaborator id.
+  const [roleErrors, setRoleErrors] = useState<Record<string, string>>({});
 
   const isOwner = Boolean(trip && session?.user && trip.user_id === session.user.id);
 
@@ -109,6 +132,23 @@ export default function CollaboratorsScreen() {
   const history = collaborators.filter(
     (c) => c.status === 'declined' || c.status === 'revoked',
   );
+
+  function handleRoleChange(collab: TripCollaborator, newRole: TripCollaboratorRole) {
+    if (newRole === collab.role) return;
+    // Clear any prior error for this row before the new mutation.
+    setRoleErrors((prev) => ({ ...prev, [collab.id]: '' }));
+    updateCollaborator.mutate(
+      { collaboratorId: collab.id, tripId: id ?? '', role: newRole },
+      {
+        onError: (err) => {
+          setRoleErrors((prev) => ({
+            ...prev,
+            [collab.id]: roleUpdateErrorMessage(err),
+          }));
+        },
+      },
+    );
+  }
 
   return (
     <Screen padded={false}>
@@ -179,6 +219,9 @@ export default function CollaboratorsScreen() {
                   revokeCollaborator.mutate({ collaboratorId: collab.id, tripId: id ?? '' });
                 }}
                 revoking={revokeCollaborator.isPending}
+                onRoleChange={(role) => handleRoleChange(collab, role)}
+                updatingRole={updateCollaborator.isPending}
+                roleError={roleErrors[collab.id] ?? null}
               />
             ))
           )}
@@ -195,24 +238,12 @@ export default function CollaboratorsScreen() {
                 tripId={id ?? ''}
                 onRevoke={() => {}}
                 revoking={false}
+                onRoleChange={() => {}}
+                updatingRole={false}
+                roleError={null}
               />
             ))}
           </SectionBlock>
-        ) : null}
-
-        {/* Role-toggle follow-up note (visible only to owner) */}
-        {isOwner ? (
-          <View
-            style={{
-              backgroundColor: t.colors.infoLight,
-              borderRadius: t.radius.md,
-              padding: t.spacing.md,
-            }}
-          >
-            <Text style={[t.typography.caption, { color: t.colors.info }]}>
-              Role changes are read-only in this version. To change a collaborator's role, revoke and re-invite with the new role.
-            </Text>
-          </View>
         ) : null}
       </ScrollView>
 
@@ -245,26 +276,38 @@ function SectionBlock({ label, children }: { label: string; children: React.Reac
 function CollaboratorRow({
   collab,
   isOwner,
-  tripId,
+  tripId: _tripId,
   onRevoke,
   revoking,
+  onRoleChange,
+  updatingRole,
+  roleError,
 }: {
   collab: TripCollaborator;
   isOwner: boolean;
   tripId: string;
   onRevoke: () => void;
   revoking: boolean;
+  onRoleChange: (role: TripCollaboratorRole) => void;
+  updatingRole: boolean;
+  roleError: string | null;
 }) {
   const t = useTheme();
   const colorKey = STATUS_COLOR_KEY[collab.status] ?? 'textMuted';
   const statusColor = t.colors[colorKey];
   const canRevoke = isOwner && (collab.status === 'pending' || collab.status === 'accepted');
+  // Role toggle only for accepted collaborators when the viewer is the owner.
+  const canChangeRole = isOwner && collab.status === 'accepted';
+
+  // Local dropdown-open state per row.
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
   return (
     <View
       style={[
         styles.row,
         {
+          flexDirection: 'column',
           backgroundColor: t.colors.bgElevated,
           borderColor: t.colors.border,
           borderRadius: t.radius.md,
@@ -273,82 +316,207 @@ function CollaboratorRow({
           ...t.shadows.sm(t.colors.shadowColor),
         },
       ]}
-      accessible
-      accessibilityLabel={`${collab.invitee_email}, ${collab.role}, ${STATUS_LABEL[collab.status] ?? collab.status}`}
+      accessible={!canChangeRole}
+      accessibilityLabel={
+        canChangeRole
+          ? undefined
+          : `${collab.invitee_email}, ${collab.role}, ${STATUS_LABEL[collab.status] ?? collab.status}`
+      }
     >
-      {/* Avatar placeholder */}
-      <View
-        style={[
-          styles.avatar,
-          { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.pill },
-        ]}
-      >
-        <Text style={[t.typography.bodyStrong, { color: t.colors.primary }]}>
-          {collab.invitee_email.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-
-      {/* Details */}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]} numberOfLines={1}>
-          {collab.invitee_email}
-        </Text>
-        <View style={[styles.row, { gap: t.spacing.xs }]}>
-          {/* Role chip */}
-          <View
-            style={[
-              styles.chip,
-              {
-                backgroundColor: t.colors.bgMuted,
-                borderRadius: t.radius.pill,
-                paddingHorizontal: t.spacing.sm,
-                paddingVertical: 2,
-              },
-            ]}
-          >
-            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-              {collab.role}
-            </Text>
-          </View>
-          {/* Status chip */}
-          <View
-            style={[
-              styles.chip,
-              {
-                backgroundColor: `${statusColor}22`,
-                borderRadius: t.radius.pill,
-                paddingHorizontal: t.spacing.sm,
-                paddingVertical: 2,
-              },
-            ]}
-          >
-            <Text style={[t.typography.small, { color: statusColor, fontWeight: '600' }]}>
-              {STATUS_LABEL[collab.status] ?? collab.status}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Revoke */}
-      {canRevoke ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Revoke ${collab.invitee_email}'s invitation`}
-          onPress={onRevoke}
-          disabled={revoking}
-          style={({ pressed }) => [
-            styles.revokeBtn,
-            {
-              backgroundColor: pressed ? t.colors.dangerLight : 'transparent',
-              borderRadius: t.radius.sm,
-              paddingHorizontal: t.spacing.sm,
-              paddingVertical: t.spacing.xs,
-              opacity: revoking ? 0.5 : 1,
-            },
+      {/* Main row: avatar + details + revoke */}
+      <View style={[styles.row, { gap: t.spacing.sm }]}>
+        {/* Avatar placeholder */}
+        <View
+          style={[
+            styles.avatar,
+            { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.pill },
           ]}
         >
-          <Text style={[t.typography.caption, { color: t.colors.danger }]}>Revoke</Text>
-        </Pressable>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.primary }]}>
+            {collab.invitee_email.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+
+        {/* Details */}
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text
+            style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}
+            numberOfLines={1}
+          >
+            {collab.invitee_email}
+          </Text>
+          <View style={[styles.row, { gap: t.spacing.xs }]}>
+            {/* Role chip — tappable for owner + accepted rows */}
+            {canChangeRole ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Role: ${collab.role}. Tap to change.`}
+                accessibilityState={{ disabled: updatingRole }}
+                onPress={() => setRoleDropdownOpen((v) => !v)}
+                disabled={updatingRole}
+                style={({ pressed }) => [
+                  styles.chip,
+                  {
+                    backgroundColor: pressed
+                      ? t.colors.gradientSubtle
+                      : t.colors.bgMuted,
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.sm,
+                    paddingVertical: 2,
+                    opacity: updatingRole ? 0.5 : 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  },
+                ]}
+              >
+                <Text style={[t.typography.small, { color: t.colors.primary, fontWeight: '600' }]}>
+                  {collab.role}
+                </Text>
+                {/* Chevron indicator */}
+                <Text
+                  style={[t.typography.small, { color: t.colors.primary, fontSize: 9 }]}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                >
+                  {roleDropdownOpen ? '▲' : '▼'}
+                </Text>
+              </Pressable>
+            ) : (
+              /* Read-only role chip */
+              <View
+                style={[
+                  styles.chip,
+                  {
+                    backgroundColor: t.colors.bgMuted,
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.sm,
+                    paddingVertical: 2,
+                  },
+                ]}
+              >
+                <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                  {collab.role}
+                </Text>
+              </View>
+            )}
+
+            {/* Status chip */}
+            <View
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: `${statusColor}22`,
+                  borderRadius: t.radius.pill,
+                  paddingHorizontal: t.spacing.sm,
+                  paddingVertical: 2,
+                },
+              ]}
+            >
+              <Text style={[t.typography.small, { color: statusColor, fontWeight: '600' }]}>
+                {STATUS_LABEL[collab.status] ?? collab.status}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Revoke */}
+        {canRevoke ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Revoke ${collab.invitee_email}'s invitation`}
+            onPress={onRevoke}
+            disabled={revoking}
+            style={({ pressed }) => [
+              styles.revokeBtn,
+              {
+                backgroundColor: pressed ? t.colors.dangerLight : 'transparent',
+                borderRadius: t.radius.sm,
+                paddingHorizontal: t.spacing.sm,
+                paddingVertical: t.spacing.xs,
+                opacity: revoking ? 0.5 : 1,
+              },
+            ]}
+          >
+            <Text style={[t.typography.caption, { color: t.colors.danger }]}>Revoke</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* Inline role dropdown — only visible when owner taps the role chip */}
+      {roleDropdownOpen && canChangeRole ? (
+        <View
+          style={{
+            backgroundColor: t.colors.bg,
+            borderColor: t.colors.border,
+            borderWidth: 1,
+            borderRadius: t.radius.md,
+            overflow: 'hidden',
+          }}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Select role"
+        >
+          {ROLE_OPTIONS.map((opt) => {
+            const isSelected = collab.role === opt.value;
+            return (
+              <Pressable
+                key={opt.value}
+                accessibilityRole="radio"
+                accessibilityLabel={opt.value === 'viewer'
+                  ? 'Viewer — can see itinerary but cannot edit'
+                  : 'Editor — can add and edit places and expenses'}
+                accessibilityState={{ checked: isSelected }}
+                onPress={() => {
+                  setRoleDropdownOpen(false);
+                  onRoleChange(opt.value);
+                }}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: 'row' as const,
+                    alignItems: 'center' as const,
+                    justifyContent: 'space-between' as const,
+                    padding: t.spacing.md,
+                    backgroundColor: isSelected
+                      ? t.colors.gradientSubtle
+                      : pressed
+                        ? t.colors.bgMuted
+                        : 'transparent',
+                  },
+                ]}
+              >
+                <View style={{ gap: 2 }}>
+                  <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: isSelected ? '600' : '400' }]}>
+                    {opt.label}
+                  </Text>
+                  <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                    {opt.value === 'viewer'
+                      ? 'Can see itinerary, map, and expenses'
+                      : 'Can add and edit places and expenses'}
+                  </Text>
+                </View>
+                {isSelected ? (
+                  <Text
+                    style={[t.typography.caption, { color: t.colors.primary }]}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                  >
+                    ✓
+                  </Text>
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {/* Per-row role update error */}
+      {roleError ? (
+        <Text
+          style={[t.typography.caption, { color: t.colors.danger }]}
+          accessibilityLiveRegion="polite"
+        >
+          {roleError}
+        </Text>
       ) : null}
     </View>
   );

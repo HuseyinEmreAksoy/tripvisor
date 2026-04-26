@@ -4,7 +4,7 @@
  * Fields:
  *   - Category select (all six categories)
  *   - Kind toggle (estimated | actual)
- *   - Amount input (numeric)
+ *   - Amount input (numeric; read-only currency prefix shows trip currency)
  *   - Optional day picker (0-based index; shows "Day N" labels)
  *   - Optional label/notes text
  *
@@ -39,6 +39,8 @@ export interface ExpenseEditSheetProps {
   tripId: string;
   /** Non-null = edit mode; null = add mode. */
   expense: TripExpense | null;
+  /** Trip's currency code; null/undefined falls back to USD display. */
+  currency?: string | null;
   visible: boolean;
   onClose: () => void;
   /** How many days the trip spans — used to build the day picker options. */
@@ -48,6 +50,7 @@ export interface ExpenseEditSheetProps {
 export function ExpenseEditSheet({
   tripId,
   expense,
+  currency,
   visible,
   onClose,
   tripDayCount,
@@ -55,6 +58,9 @@ export function ExpenseEditSheet({
   const t = useTheme();
   const createExpense = useCreateTripExpense();
   const updateExpense = useUpdateTripExpense();
+
+  // Read-only currency prefix for the amount input affordance.
+  const currencyPrefix = (currency ?? 'USD').toUpperCase();
 
   const isEdit = expense !== null;
 
@@ -190,7 +196,9 @@ export function ExpenseEditSheet({
 
         {/* Amount */}
         <View style={{ gap: t.spacing.xs }}>
-          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>Amount</Text>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            Amount ({currencyPrefix})
+          </Text>
           <View
             style={[
               styles.inputRow,
@@ -201,8 +209,16 @@ export function ExpenseEditSheet({
               },
             ]}
           >
-            <Text style={[t.typography.bodyStrong, { color: t.colors.textMuted, paddingLeft: t.spacing.md }]}>
-              $
+            {/* Read-only currency prefix */}
+            <Text
+              style={[
+                t.typography.bodyStrong,
+                { color: t.colors.textMuted, paddingLeft: t.spacing.md },
+              ]}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            >
+              {currencyPrefix}
             </Text>
             <TextInput
               value={amountText}
@@ -212,7 +228,7 @@ export function ExpenseEditSheet({
               inputMode={"decimal" as any}
               placeholder="0.00"
               placeholderTextColor={t.colors.textMuted}
-              accessibilityLabel="Expense amount"
+              accessibilityLabel={`Expense amount in ${currencyPrefix}`}
               style={[styles.input, { color: t.colors.text, ...t.typography.body }]}
             />
           </View>
