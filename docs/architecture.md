@@ -12,6 +12,16 @@
 - Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`, `trip_expenses`, `trip_collaborators`, `trip_accommodations`. See `supabase/migrations/`.
 - **RLS on every table**; child tables scoped via `user_can_access_trip()` helper (Phase 21) — previously scoped directly via `trips.user_id`.
 
+## Data model additions (Phase 23)
+
+### `trips.route_render_mode`
+
+New column `route_render_mode text NOT NULL DEFAULT 'optimized' CHECK (route_render_mode IN ('optimized', 'manual'))` added in migration `0016_trips_route_render_mode.sql`. Controls whether the map polylines are drawn from the optimizer's output ('optimized') or from the user's manual `order_in_day` ('manual'). Editor collaborators are allowed to change this column (in addition to `total_budget`) per the `enforce_trips_column_restrictions` trigger — see "Editor-budget RLS" below.
+
+### `trips.transport_mode` widened
+
+The `transport_mode` CHECK constraint in migration `0016_trips_route_render_mode.sql` now includes `'bicycling'` alongside the existing `'driving'`, `'walking'`, and `'transit'` values. The `TransportMode` type in `src/api/types.ts` reflects: `'driving' | 'walking' | 'transit' | 'bicycling'`.
+
 ## Data model additions (Phase 20)
 
 ### `trips.total_budget`
@@ -122,20 +132,22 @@ These constraints are documented via `COMMENT ON POLICY` in `supabase/migrations
 | Role | Can read trip + child tables | Can write child tables | Can write `trips` row | Can manage collaborators |
 |---|---|---|---|---|
 | `owner` | yes | yes | yes (all columns) | yes |
-| `editor` | yes | yes | `total_budget` only | no |
+| `editor` | yes | yes | `total_budget` and `route_render_mode` only | no |
 | `viewer` | yes | no | no | no |
 | none | no | no | no | no |
 
-"Write child tables" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations` INSERT/UPDATE/DELETE. `trips` UPDATE is owner-only except for `total_budget` — see "Editor-budget RLS" below.
+"Write child tables" covers `trip_places`, `trip_days`, `trip_legs`, `trip_expenses`, `trip_accommodations` INSERT/UPDATE/DELETE. `trips` UPDATE is owner-only except for `total_budget` and `route_render_mode` — see "Editor-budget RLS" below.
 
-### Editor-budget RLS (Phase 22)
+### Editor-budget RLS (Phase 22 + Phase 23 update)
 
 Migration `0015_trips_editor_budget_rls.sql` (note: originally planned as `0014` but that slot was already taken) adds:
 
 - **Policy `trips_editor_budget_update`**: permissive UPDATE policy on `trips` scoped to non-owner editors via `user_can_access_trip(id, auth.uid(), 'editor')`.
-- **Trigger `enforce_trips_column_restrictions`** (BEFORE UPDATE on `trips`, `security definer`): if `auth.uid() = OLD.user_id` (owner), returns NEW unmodified. Otherwise raises `42501 insufficient_privilege` if any column other than `total_budget` or `updated_at` differs between OLD and NEW.
+- **Trigger `enforce_trips_column_restrictions`** (BEFORE UPDATE on `trips`, `security definer`): if `auth.uid() = OLD.user_id` (owner), returns NEW unmodified. Otherwise raises `42501 insufficient_privilege` if any column other than the allowed-diff list differs between OLD and NEW.
 
-**Maintenance contract**: any new column added to `trips` in a future migration MUST be evaluated and either added to the trigger's allowed-diff list or left out (the default is denied for non-owners). The trigger header comment records this contract.
+**Phase 23 update** (`0016_trips_route_render_mode.sql`): `route_render_mode` was added to the trigger's editor-allowed-diff list alongside `total_budget` and `updated_at`. The `useUpdateRouteRenderMode` client hook omits the owner-only `user_id` filter so editors can call it directly.
+
+**Maintenance contract**: any new column added to `trips` in a future migration MUST be evaluated and either added to the trigger's allowed-diff list or left out (the default is denied for non-owners). The trigger header comment records this contract. The current editor-allowed columns are: `total_budget`, `route_render_mode`, `updated_at`.
 
 ### Invite-accept flow
 
@@ -175,6 +187,20 @@ Zod schema + `TripCollaborator`, `Role`, `Status` types. `CollaboratorError exte
 - `useRevokeCollaborator()` — mutation: revoke by collaborator id; invalidates `tripsKeys.all` on success
 - `useUpdateCollaborator()` — (added Phase 22) mutation: `{ collaboratorId, tripId, role }`; owner-only; optimistic update + rollback; invalidates `tripCollaboratorsKeys.forTrip(tripId)` on success
 
+### Client API additions (Phase 23)
+
+**`src/api/routes.ts`**:
+- `useOptimizeTrip()` mutation now accepts optional `mode?: 'optimized' | 'manual'`. When `mode: 'manual'`, the Edge Function skips k-means + 2-opt and recomputes `trip_legs` from existing `(day_index, order_in_day)`.
+
+**`src/api/trips.ts`**:
+- `useUpdateRouteRenderMode(tripId)` — new mutation that updates `trips.route_render_mode`. Deliberately omits the owner-only `user_id` filter so editor collaborators can call it. Optimistically updates the TanStack Query cache and synchronously triggers `useOptimizeTrip({ tripId, mode })` for instant polyline refresh.
+
+**`src/api/types.ts`**:
+- `RouteRenderMode = 'optimized' | 'manual'` — new union type.
+- `Trip.route_render_mode: RouteRenderMode` — non-optional, returned by all trip queries.
+- `UpdateTripPatch.route_render_mode` — available in the trip update payload.
+- `TransportMode` widened: `'driving' | 'walking' | 'transit' | 'bicycling'`.
+
 ### Client API — `src/api/trips.ts` — `useTrips()` (Phase 22 rewrite)
 
 `useTrips()` now returns a UNION of owned trips and accepted-collaborator trips by relying on the `trips_collab_select` RLS policy (which already covers both sets). A secondary lightweight query against `trip_collaborators` (filtered by `user_id = auth.uid()` + `status = 'accepted'`) is joined client-side to tag each row with `{ isOwner: boolean, collaboratorRole: 'viewer' | 'editor' | null }`. These are derived fields — not stored in the `trips` table. The `Trip` type in `src/api/types.ts` has been extended with optional `isOwner?: boolean` and `collaboratorRole?: TripCollaboratorRole | null`. Sort order: owners first by `created_at desc`, then collaborators by `created_at desc`, with `id.localeCompare` as a stable tiebreaker for React Native list keys.
@@ -182,6 +208,14 @@ Zod schema + `TripCollaborator`, `Role`, `Status` types. `CollaboratorError exte
 ### `useTripRole` hook — `src/hooks/useTripRole.ts`
 
 Returns `{ role: 'owner' | 'editor' | 'viewer' | null, canEditTrip: boolean, isOwner: boolean }`. Owner check is local (no network — compares `trips.user_id` to `auth.uid()`). Collaborator role is read via `useTripCollaborators` filtered to the current user's accepted row.
+
+## Duration formatting (Phase 23)
+
+`src/lib/formatDuration.ts` exports:
+- `formatDuration(minutes: number): string` — converts minutes to a human-readable string (e.g. `"1h 20m"`, `"45m"`).
+- `formatDurationSeconds(seconds: number): string` — same output from a seconds input.
+
+Used in `DaySummaryCard`, `PlaceRow`, and `TripCostRollup` to display visit and travel durations in a mode-agnostic format (avoids "Drive Xm" terminology; uses "Travel Xm" instead).
 
 ## Currency formatting
 
@@ -278,17 +312,40 @@ sequenceDiagram
   participant App
   participant EF as optimize-trip
   participant R as Routes API
-  App->>EF: optimize-trip { tripId } (debounced 500ms)
-  EF->>R: computeRouteMatrix (NxN, cached in trip_legs)
-  EF->>EF: k-means + 2-opt (Deno)
-  EF->>App: writes day_index, order_in_day on trip_places
+  App->>EF: optimize-trip { tripId, mode? } (debounced 500ms)
+  alt mode === 'optimized' (default)
+    EF->>R: computeRouteMatrix (NxN, cached in trip_legs)
+    EF->>EF: k-means + 2-opt (Deno)
+    EF->>App: writes day_index, order_in_day on trip_places
+  else mode === 'manual'
+    EF->>EF: reads existing (day_index, order_in_day) — no optimizer
+  end
   loop for each day
     EF->>R: computeRoutes (ordered waypoints, optimize:false)
-    R-->>EF: polyline
+    R-->>EF: polyline (null for transit mode)
     EF->>App: stores polyline in trip_legs
   end
   App->>App: re-renders map + itinerary
 ```
+
+### Edge Function updates (Phase 23)
+
+**`optimize-trip`**: accepts `{ tripId, mode?: 'optimized' | 'manual' }`. Manual branch skips clustering/2-opt and recomputes `trip_legs` from existing `(day_index, order_in_day)`. Row-mutex preserved in both modes. Both modes pass `trip.transport_mode` to downstream functions.
+
+**`directions-polyline`**: when `mode === 'transit'`, returns `polyline: null` (still returns `duration_seconds` + `distance_meters` from Routes API transit response). Other modes unchanged. Bicycling is now mapped to the `BICYCLE` Routes API travel mode enum.
+
+**`distance-matrix`**: bicycling enum (`BICYCLE`) added alongside `DRIVE`, `WALK`, `TRANSIT`.
+
+## Transit rendering
+
+Phase 23 introduces a v1 transit rendering contract:
+
+- `directions-polyline` returns `polyline: null` for transit legs. The DB row stores `duration_seconds` / `distance_meters` from the Routes API transit estimate (which is realistic), but the polyline field is null.
+- The client synthesizes dashed straight-line polylines for transit by reading the ordered `trip_places` for each day and building `[fromLatLng, toLatLng]` point pairs directly — no polyline decode needed.
+- `Map.web.tsx` renders dashed lines via the Google Maps JS `icons` array (dot pattern, `repeat: '20px'`). `Map.native.tsx` uses `lineDashPattern={[6,6]}` on the `react-native-maps` Polyline.
+- `MapPolyline` type in `src/components/Map/types.ts` has optional `isDashed: boolean`, `from: LatLng`, `to: LatLng` fields.
+- Each per-place itinerary connector in transit mode includes a "Plan transit on Google Maps" deep link: `https://www.google.com/maps/dir/?api=1&origin={lat},{lng}&destination={lat},{lng}&travelmode=transit` opened via `expo-linking`.
+- Full transit polyline rendering (multi-leg step list, vehicle icons, transfer points) is explicitly deferred to a later phase.
 
 ## Caching (Google ToS)
 

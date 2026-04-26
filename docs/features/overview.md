@@ -5,10 +5,10 @@ Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 | Feature | Status | Phase | Doc |
 |---|---|---|---|
 | Auth (magic link) | 🚧 In progress (Phase 20: hero redesign + two-column desktop layout shipped; web verified; iOS/Android deferred to user smoke) | 1, 20 | [auth.md](auth.md) |
-| Trip CRUD | 🚧 In progress (Phase 20: time-first copy + `total_budget` column + desktop trips-list grid shipped; web verified; iOS/Android deferred to user smoke) | 1, 20 | [trip-crud.md](trip-crud.md) |
+| Trip CRUD | 🚧 In progress (Phase 20: time-first copy + `total_budget` column + desktop trips-list grid shipped; web verified; iOS/Android deferred. Phase 23: add-place flow rewritten with day picker chips, stay-on-screen after save, inline "Added to Day N" toast, stepper "Switch to Day N+1" / "Add to Unscheduled", `?day=N` URL param; bicycling option in new-trip transport-mode picker; smoke deferred per user direction) | 1, 20, 23 | [trip-crud.md](trip-crud.md) |
 | Place search (autocomplete) + recent places + duplicate warning | 🚧 In progress (Phase 20: `PlacesError` typed error + `server_misconfigured` setup banner shipped; web verified; iOS/Android deferred to user smoke) | 1, 17, 18, 20 | [place-search.md](place-search.md) |
-| Place details + Google reviews | 🚧 In progress | 1 | [place-details.md](place-details.md) |
-| Route optimization (k-means + 2-opt) | 🚧 In progress (Phase 20: `EdgeFunctionError` base class extracted; `OptimizeError` refactored to extend it; web verified) | 2, 20 | [optimization.md](optimization.md) |
+| Place details + Google reviews | 🚧 In progress (Phase 23: per-review "Show more / Show less" toggle for reviews ≥280 chars; "Showing N of M reviews (Google API limit)" footer; a11y labels on toggle and footer; smoke deferred per user direction) | 1, 23 | [place-details.md](place-details.md) |
+| Route optimization (k-means + 2-opt) | 🚧 In progress (Phase 20: `EdgeFunctionError` + `OptimizeError` refactored; Phase 23: `route_render_mode` toggle "Best route" vs "My order"; `optimize-trip` manual branch; transit dashed-line fallback + "Plan transit" deep link; bicycling transport mode; `useUpdateRouteRenderMode`; smoke deferred per user direction) | 2, 20, 23 | [optimization.md](optimization.md) |
 | Day split by time budget | 🚧 In progress | 2 | [day-split.md](day-split.md) |
 | Map + polyline visualization (+ per-day chip filter) | 🚧 In progress (Phase 20: Map import shadowing JS Map fixed; desktop split-view; web verified; native deferred to user smoke) | 2, 15, 20 | [map.md](map.md) |
 | Manual drag / move-to-day | 🚧 In progress | 3 | [manual-edit.md](manual-edit.md) |
@@ -43,4 +43,4 @@ Per-feature docs are created by `docs-specialist` when a feature moves to 🚧 I
 - Packing lists (auto-suggested from destination + weather + activities)
 - Document storage (tickets, reservations, passport copies)
 
-These should be re-evaluated after Phase 21/22 smoke (still deferred) and Phase 23 planning.
+These should be re-evaluated after Phase 21/22/23 smoke (still deferred) and Phase 24 planning.

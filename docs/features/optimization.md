@@ -1,7 +1,7 @@
 # optimization
 
-**Status**: 🚧 In progress (code + tests complete; awaiting live Routes API smoke). Advisory lock upgraded in Phase 12; replaced with row-mutex in Phase 13.
-**Owner agents**: backend-specialist
+**Status**: 🚧 In progress (code + tests complete; awaiting live Routes API smoke). Advisory lock upgraded in Phase 12; replaced with row-mutex in Phase 13. Phase 23: manual mode + transit fallback + bicycling + `route_render_mode` toggle; smoke deferred per user direction.
+**Owner agents**: backend-specialist, ui-specialist
 **Depends on**: trip-crud, place-search
 
 ## Platforms verified
@@ -26,10 +26,39 @@ See [ADR-0001](../adr/0001-kmeans-2opt-over-or-tools.md).
 - Writes: `trip_places.day_index`, `trip_places.order_in_day`, new rows in `trip_legs`
 
 ## APIs
-- Edge Function: `optimize-trip { tripId }` → returns stateHash + days + counts. Returns HTTP 409 `already_optimizing` when a concurrent optimize for the same trip holds the lock.
-- Internally calls: `distance-matrix`, `directions-polyline`
-- Client hook: `useOptimizeTrip()` (TanStack Query mutation); auto-fired debounced 500ms after add/remove/settings changes
+- Edge Function: `optimize-trip { tripId, mode?: 'optimized' | 'manual' }` → returns stateHash + days + counts. Returns HTTP 409 `already_optimizing` when a concurrent optimize for the same trip holds the lock. Returns HTTP 400 `manual_mode_no_assignments` when mode is `'manual'` but no places have a `day_index` assigned.
+- Internally calls: `distance-matrix`, `directions-polyline` (both for optimized and manual modes). `directions-polyline` returns `polyline: null` for transit legs.
+- Client hooks:
+  - `useOptimizeTrip({ tripId, mode? })` (TanStack Query mutation); auto-fired debounced 500ms after add/remove/settings changes; `mode` defaults to `'optimized'`.
+  - `useUpdateRouteRenderMode(tripId)` — updates `trips.route_render_mode` and synchronously triggers `useOptimizeTrip` with the new mode. Omits the owner-only `user_id` filter so editors can toggle.
 - Concurrency guard (Phase 13): `claim_trip_optimize(p_trip_id uuid, p_ttl_seconds int default 300) returns boolean` / `release_trip_optimize(p_trip_id uuid) returns void` SECURITY DEFINER RPCs in `supabase/migrations/0008_trip_optimize_mutex.sql`. Row-mutex on `trips.optimizing_at timestamptz null`; each is a single atomic UPDATE, immune to PgBouncer connection swaps. Granted to `service_role` only. Replaces the Phase 12 `try_lock_trip` / `unlock_trip` advisory-lock pair (dropped in migration `0008`).
+
+## Route render modes (Phase 23)
+
+### Optimized mode (`route_render_mode: 'optimized'`)
+
+Default mode. The Edge Function runs k-means clustering + 2-opt to reorder `trip_places` into an efficient multi-day sequence. `apply_optimization` RPC writes `day_index` + `order_in_day` back onto `trip_places`. One `directions-polyline` call per day computes the encoded polyline and stores it in `trip_legs`.
+
+### Manual mode (`route_render_mode: 'manual'`)
+
+The optimizer skips clustering and 2-opt. Reads the user's existing `(day_index, order_in_day)` as authoritative — does NOT call `apply_optimization`. Groups places by `day_index` and runs per-day `directions-polyline` calls to refresh leg durations (so `DaySummaryCard` travel totals stay accurate). `stateHash` in manual mode includes the full `(id, day_index, order_in_day, visit_duration_minutes)` signature so manual reorders trigger a leg refresh.
+
+### UI toggle
+
+`RouteRenderModeControl` segmented control above the day chips in `MapTab` of `app/(app)/trip/[id]/index.tsx`. Segments: "Best route" (optimized) / "My order" (manual). Viewer role is read-only via `useTripRole`. Bound to `useUpdateRouteRenderMode`.
+
+## Transport mode support (Phase 23)
+
+| Mode | Distance matrix | Directions polyline | Map rendering |
+|---|---|---|---|
+| `driving` | DRIVE enum | DRIVE enum | Solid polyline |
+| `walking` | WALK enum | WALK enum | Solid polyline |
+| `transit` | TRANSIT enum | TRANSIT enum — returns `polyline: null` | Dashed straight-line + "Plan transit" deep link |
+| `bicycling` | BICYCLE enum | BICYCLE enum | Solid polyline |
+
+For transit legs: `directions-polyline` still calls the Routes API and stores `duration_seconds` + `distance_meters` (realistic transit estimates), but sets `polyline: null` in the stored `trip_legs` row. The client synthesizes dashed straight-line polylines from the ordered `trip_places` coordinates. A "Plan transit on Google Maps" deep link is added to each leg connector in the itinerary.
+
+The `SettingsTab` transport mode picker now includes `bicycling` as a fourth option.
 
 ## Cost discipline
 - `trip_legs` rows < 30 days old are reused — only missing pairs hit Distance Matrix

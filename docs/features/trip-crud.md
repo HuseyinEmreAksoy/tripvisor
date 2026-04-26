@@ -1,6 +1,6 @@
 # trip-crud
 
-**Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred to user smoke.
+**Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred. Phase 23: add-place flow rewritten (day picker + stay-on-screen + stepper); bicycling in transport picker; smoke deferred per user direction.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: auth
 
@@ -28,6 +28,18 @@ Tables: `trips`, `trip_days`, `trip_places`, `trip_legs` (schema from Phase 0); 
 Phase 1 only writes to `trips` (create, delete) and `trip_places` (read).
 Phase 20 adds `trips.total_budget numeric null` (migration `0010_trip_budget_categories.sql`) for the overall trip budget. The old `cost_per_km` column is deprecated via SQL COMMENT but not dropped.
 RLS policies scope every query via `auth.uid()` / `trips.user_id`.
+
+## Phase 23 changes
+
+### Add-place flow rewrite (`app/(app)/trip/[id]/add.tsx`)
+
+Complete rewrite of the add-place screen:
+- **Day picker chips**: horizontal scroll row above the search input — Day 1 … Day N + "Unscheduled". Sourced from `useTripDayCount`. Default selection: Day 1 (or the day passed via `?day=N` URL param).
+- **Stay-on-screen after save**: after saving a place, the screen does NOT navigate back. Instead: search input clears, `pickedId` resets, and a transient inline toast shows "Added to Day X".
+- **Stepper**: `◀ Adding to Day X ▶` row below the search input after the first save. Tap arrows to cycle between Unscheduled → Day 1 … Day N → Unscheduled. Tap "Done" to navigate back (same as the previous behavior).
+- **`order_in_day`**: computed client-side as `max(order_in_day) + 1` within the chosen day from `existingPlaces`. Falls back to `0` for the first place on a day.
+- **`?day=N` URL param**: preselects a day chip on mount — used from day-header deep links.
+- **Bicycling**: `app/(app)/trip/new.tsx` transport-mode picker now includes `bicycling` as a fourth option alongside driving / walking / transit.
 
 ## Phase 20 changes
 

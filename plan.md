@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 22 complete — Phase 21 cleanup + hardening
+**Current phase**: Phase 23 code complete — Routing UX + transport-mode polylines + add-flow day picker + reviews expansion
 **Last updated**: 2026-04-26
 
 ## Status by phase
@@ -30,6 +30,7 @@
 | 20 | UX / navigation / maps recovery + expense model cleanup | ✅ Done (web smoke green 2026-04-25; native deferred to user smoke) | ui + backend + docs |
 | 21 | Budget tracking + collaboration + accommodation tracking | ✅ Code complete 2026-04-25 — automated tests + live smoke skipped per user direction; platforms unverified | backend + ui + docs |
 | 22 | Phase 21 cleanup + hardening | ✅ Code complete 2026-04-26 — automated tests (22.9) + live smoke (22.10) explicitly skipped per user direction (same as Phase 21); platforms unverified; migration landed as `0015_trips_editor_budget_rls.sql` (slot 0014 was already taken) | backend + ui + docs |
+| 23 | Routing UX (manual vs. optimal) + per-day add flow + travel/dwell labels + reviews expansion + transport-mode polylines | ✅ Code complete 2026-04-26 — automated tests (23.12) + live smoke (23.13) explicitly skipped per user direction (same as Phases 21 + 22); platforms unverified | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -2694,3 +2695,253 @@ The riskiest spine is **editor budget RLS relaxation** (22.1 + 22.2): it touches
 - Accommodation overlap enforcement at DB level
 - Push notifications
 - Native (iOS/Android) verification of any Phase 22 surface — deferred to user smoke as standard for this project
+
+---
+
+## Phase 23 — Routing UX (manual vs. optimal) + per-day add flow + travel/dwell labels + reviews expansion + transport-mode polylines
+
+**Goal**: Ship the five user-priority items from the 2026-04-26 intake — (1) optimal-vs-manual route render toggle on the map, (2) full review-text expansion on the place detail screen, (3) explicit per-day picker + day stepper inside the add-place flow, (4) clear travel-time vs. dwell-time labels everywhere both numbers appear, and (5) honor `trips.transport_mode` end-to-end on map polylines (driving/walking/transit/bicycling), with a clearly partial-mode fallback for transit. Code only; tests + smoke explicitly skipped per user direction (same as Phases 21 + 22).
+
+**Status**: ✅ Code complete 2026-04-26 — automated tests (23.12) + live smoke (23.13) explicitly skipped per user direction (same as Phases 21 + 22); platforms unverified. See `docs/smoke/phase-23.md` for deferred-state record.
+
+**Entry criteria**:
+- Phase 22 merged (commits up through `40086a8` and the `0015_trips_editor_budget_rls.sql` migration)
+- `npx tsc --noEmit` clean on master
+- `npx supabase db reset` applies all migrations through `0015_trips_editor_budget_rls.sql` cleanly
+
+**Phase exit criteria**:
+- A new `trips.route_render_mode text not null default 'optimized' check in ('optimized','manual')` column exists; the trigger from `0015_trips_editor_budget_rls.sql` is updated so editors are allowed to change `total_budget` AND `route_render_mode` (only) — owner UPDATEs of any other column still permitted.
+- A persistent two-state segmented control ("Optimal" / "Manual order") is rendered above the map in `MapTab` (alongside the day chips). Toggling persists to `trips.route_render_mode` via `useUpdateTrip`. When `mode === 'manual'`, the map polyline + leg durations honor the user's `order_in_day` exactly; when `mode === 'optimized'`, the existing `optimize-trip` path runs.
+- When the trip has zero places, the map's empty state explains the toggle and links to "Add a place" (so the "before map opens" framing the user asked for is satisfied without an extra modal).
+- On `app/(app)/place/[placeId].tsx`, every review's text is expandable: each card shows a "Show more" / "Show less" toggle that flips between `numberOfLines={6}` and full text. A footer line under the reviews list reads `Showing N of M reviews (Google API limit)` whenever `place.userRatingCount > place.reviews.length`.
+- `app/(app)/trip/[id]/add.tsx` shows a "Add to:" row of day chips above the search input (Day 1 … Day N + "Unscheduled"); the chip the user picks defaults the `day_index`/`order_in_day` of the new place. After save, the user stays on the add screen with a fresh search box, a transient toast confirming "Added to Day X", and a small stepper (`◀ Day X ▶`) that shifts the picked day for the next add. A "Done" button returns to the trip.
+- Every UI surface that shows a per-place duration estimate distinguishes **Visit** (dwell — `visit_duration_minutes`) from **Travel** (leg — `trip_legs.duration_seconds`). Specifically:
+  - `PlaceRow` in `app/(app)/trip/[id]/index.tsx` shows `Visit ~Xm` next to the category and `Travel to next ~Ym` on the connector line below the card.
+  - `DaySummaryCard` chips relabel `Xh visit` → `Visit Xh` and `Drive Xm` → `Travel Xm` (mode-agnostic word — works for walking/transit too).
+  - `PlaceActionsSheet`'s duration field's helper text says "Visit duration (time spent at this place)".
+- For `trip.transport_mode === 'walking'` or `'driving'`, the map polyline and leg durations reflect the chosen mode end-to-end (already wired in `optimize-trip` / `directions-polyline` / `distance-matrix`; verified by reading the polyline + duration update after a transport-mode flip).
+- For `trip.transport_mode === 'transit'`, the map renders dashed straight-line connectors per leg (one per `(from, to)` pair) plus a per-leg "Plan transit on Google Maps" deep link in the itinerary row (link target: `https://www.google.com/maps/dir/?api=1&origin=<lat,lng>&destination=<lat,lng>&travelmode=transit`). The `directions-polyline` proxy still returns whatever Google sends for `TRANSIT`, but the UI no longer relies on the polyline for transit — straight-line + deep-link is the v1 contract. Full transit polylines are explicitly deferred to a later phase.
+- `npx tsc --noEmit` clean; `npx supabase db reset` clean.
+- `docs/architecture.md` and the relevant `docs/features/*.md` updated to reflect the new column + the transit fallback contract; `plan.md` Phase 23 status flipped to ✅ Done.
+
+**Decisions (planner-resolved, not deferred to user)**:
+1. **Route render mode persistence** — store on the row as `trips.route_render_mode text not null default 'optimized' check in ('optimized','manual')`. Rationale: a per-trip preference must survive devices and browser restarts, and the column is one boolean's worth of storage. Reject localStorage (doesn't sync across devices) and per-session state (loses intent on every refresh). The mode is added to the editor allow-list in the `enforce_trips_column_restrictions` trigger so collaborators can toggle without owner gate (it's a view preference, not a billing/identity field).
+2. **Toggle placement** — persistent segmented control rendered just above the day-filter chips inside `MapTab`. Rationale: this is the same row the user already scans for "what am I looking at?", and matches the chip-based UX pattern from Phase 15 / Phase 20. The "two buttons before map renders" framing the user described is honored by the empty-state branch: when `places.length === 0`, the segmented control is rendered above the empty-state copy with a hint ("After you add places, this controls how the route is drawn"). Reject one-time prompt (intrusive) and Settings-tab toggle (hidden — defeats the purpose).
+3. **"Manual" mode wiring** — when `route_render_mode === 'manual'`, skip the optimizer and recompute legs from the user's `order_in_day` directly. Implementation: a new mutation `useApplyManualRoute()` (in `src/api/routes.ts`) which calls a new Edge Function action `optimize-trip` with `body: { tripId, mode: 'manual' }` — the existing function branches on the new field. Manual mode reuses the same `directions-polyline` calls (one per day, ordered by `order_in_day`) but skips the 2-opt + k-means call. The `apply_optimization` RPC is NOT called in manual mode (places' `day_index`/`order_in_day` are already authoritative). Rationale: keeps a single Edge Function as the route-mutation entry point and reuses its row-mutex + leg-cache invalidation logic. Reject a separate Edge Function (duplicates the lock + leg upsert path).
+4. **Auto-recompute trigger** — the existing 500ms debounced auto-optimize effect in `app/(app)/trip/[id]/index.tsx` becomes a debounced "auto-recompute" that branches on `trip.route_render_mode`: optimized path (today's behavior) vs. manual path (calls `optimize-trip` with `mode: 'manual'`). The `stateKey` memo gains `mode: trip.route_render_mode` so a toggle flip immediately re-fires legs. Rationale: same UX surface (status pill, error rendering) — minimal new state.
+5. **Transit fallback v1** — for `trip.transport_mode === 'transit'`, the map renders dashed straight-line per-leg connectors (NOT the encoded polyline returned by Routes API, which is unreliable for transit shape). The itinerary row gains a "Plan transit on Google Maps" link per place transition, deep-linking with `dir/?api=1&origin=&destination=&travelmode=transit`. `optimize-trip` continues to call `directions-polyline` with `mode: 'transit'` so leg `duration_seconds` is meaningful (Routes API transit duration is realistic), but the UI ignores the returned polyline for transit and synthesizes a straight-line MapPolyline points list of `[from, to]`. Rationale: full transit polyline rendering is a multi-leg, multi-modal Google response shape (`legs[].steps[].polyline`) that requires a dedicated UI mode (transit-step list, vehicle icons, transfer points) — that's a phase by itself. The deep link gives the user a working escape hatch today without faking a polyline that misrepresents the actual route.
+
+**Critical path**: 23.1 → 23.2 → 23.3 → 23.4 → 23.7 → 23.11
+
+23.1–23.4 are the route-render-mode spine: column + trigger, Edge Function manual branch, client mutation/types, MapTab toggle. They can't run out of order. 23.5/23.6 (reviews expansion + place detail) are independent. 23.7 (add-flow day picker) depends on 23.3's type updates only loosely (it does NOT need 23.4). 23.8 (travel/dwell labels) is pure UI cleanup. 23.9–23.10 (transit deep link + dashed polyline) sit on top of 23.4's MapTab plumbing.
+
+The riskiest spine is **23.1 + 23.2** (RLS-trigger update + Edge Function manual branch): a wrong allow-list in the trigger silently breaks every trip UPDATE for editors, and a wrong manual-mode branch in `optimize-trip` either double-writes legs or fails the row-mutex contract. All other steps are additive UI / docs work.
+
+---
+
+### Step 23.1 — Migration: `route_render_mode` column + trigger allow-list update ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: New migration `supabase/migrations/0016_trips_route_render_mode.sql`. (a) `ALTER TABLE trips ADD COLUMN route_render_mode text not null default 'optimized' check (route_render_mode in ('optimized','manual'))`. (b) Update the `enforce_trips_column_restrictions()` function from `0015_trips_editor_budget_rls.sql` to add `route_render_mode` to the editor-allowed-diff list (alongside `total_budget` and `updated_at`). (c) Inline manual-SQL verification block in the migration header showing: editor flipping `route_render_mode` succeeds; editor flipping `title` still errors with `editors_may_only_update_total_budget` (or its updated message); owner flipping any column succeeds. Update `COMMENT ON POLICY` if the existing comment lists allowed columns.
+- **Inputs**: existing `0015_trips_editor_budget_rls.sql` (trigger function + policy); existing `enforce_trips_column_restrictions()` body
+- **Outputs**: `supabase/migrations/0016_trips_route_render_mode.sql`
+- **Depends on**: None (Phase 23 entry)
+- **Parallel with**: 23.5, 23.6, 23.8
+- **Risks**:
+  - [High] Trigger regression — adding to the allow-list while keeping the owner short-circuit intact. Mitigation: the existing function already short-circuits on `auth.uid() = OLD.user_id` for owners; the diff is a single new `if/elsif` branch. Re-run the migration's inline manual-SQL probe to confirm both success and deny paths.
+  - [Medium] Trigger error message wording change cascades into the editor budget UI's error parsing. Mitigation: keep the `editors_may_only_update_total_budget` exception name OR add a sibling `editors_may_only_update_total_budget_or_route_mode` and update `useUpdateTrip` error mapper if any. Read `src/api/trips.ts` for current parser before deciding.
+  - [Low] Default value migration — existing rows get `'optimized'` by virtue of the `DEFAULT`; no data backfill needed.
+- **Verification**: `npx supabase db reset` applies cleanly. Manual `psql` probes recorded in the migration header all pass. `\d trips` shows `route_render_mode` column with the CHECK constraint.
+
+### Step 23.2 — `optimize-trip` Edge Function: `mode: 'manual'` branch + types ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Extend `supabase/functions/optimize-trip/index.ts`. (a) Widen the input Zod schema to `{ tripId: uuid, mode?: 'optimized' | 'manual' }` (default `'optimized'` if absent for backward compat). (b) When `mode === 'manual'`: SKIP the k-means + 2-opt call. Read `trip_places` ordered by `(day_index NULLS LAST, order_in_day)`. Treat the existing `day_index`/`order_in_day` as authoritative — do NOT call `apply_optimization`. Build `result.days` directly from this read by grouping by `day_index` (filter out `day_index IS NULL`). Then run the per-day `directions-polyline` call exactly like the optimized branch (same row-mutex, same upsert). (c) When the function is called with `mode === 'manual'` but the trip has no places assigned to any day, return `{ days: [], stateHash: '', placesUpdated: 0, legsWritten: 0, cacheHit: false, polylineDays: 0 }` cleanly (no error). (d) Add a new error code `manual_mode_no_assignments` (400) only if the trip has places but none have `day_index` set — this signals the UI to nudge the user to drag their places into a day first.
+- **Inputs**: existing `supabase/functions/optimize-trip/index.ts` (especially lines 99–344)
+- **Outputs**: updated `supabase/functions/optimize-trip/index.ts`
+- **Depends on**: None (no schema change needed for this branch — it reads existing columns)
+- **Parallel with**: 23.1, 23.5, 23.6, 23.8
+- **Risks**:
+  - [High] Row-mutex contract — `claim_trip_optimize` MUST still gate manual mode the same way as optimized. Mitigation: keep the lock claim at the top of the function, before the mode branch. The new branch only changes what happens between lock-claim and lock-release.
+  - [Medium] `freshLegs` upsert from `distance-matrix` — manual mode still needs leg `duration_seconds` for the per-day total in `DaySummaryCard`, so the matrix call must still run for missing pairs. Mitigation: keep the matrix call; it's keyed by `(from, to, transport_mode)` so it's safe to share with optimized cache.
+  - [Medium] `stateHash` semantics — currently used for idempotence ("don't re-optimize if state unchanged"). Mitigation: in manual mode, hash `(places.map(id, day_index, order_in_day, visit_duration_minutes))` instead of just place IDs + budget + mode. The auto-recompute effect re-fires only when this hash changes, which is correct: if the user reorders manually, the leg upsert needs to refresh.
+- **Verification**: `?ping` still 200. With a trip of 5 places assigned to 2 days, calling with `{ mode: 'optimized' }` produces the existing optimized result; calling with `{ mode: 'manual' }` produces a result that exactly mirrors the user's `order_in_day` and writes one polyline per day. The existing optimize tests in `supabase/functions/optimize-trip/test.ts` must still pass (default `mode` is `'optimized'`).
+
+### Step 23.3 — Client API: `useApplyTripRoute()` hook + types ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: In `src/api/routes.ts`, rename or extend `useOptimizeTrip` so the mutation accepts `{ tripId, mode?: 'optimized' | 'manual' }`. Default `mode` to whatever `trips.route_render_mode` is at call time (the caller must pass it explicitly — the hook does NOT read the trip cache to keep the mutation pure). On the server side it forwards through to the Edge Function. Add a new `RouteRenderMode` type to `src/api/types.ts` and add `route_render_mode: RouteRenderMode` to the `Trip` interface. Update `UpdateTripPayload` in `src/api/types.ts` (line ~219) with `route_render_mode?: RouteRenderMode`. Update the `OptimizeError` JSDoc + add `manual_mode_no_assignments` to the known-codes list.
+- **Inputs**: `src/api/routes.ts:170` (`useOptimizeTrip`), `src/api/types.ts` (Trip + UpdateTripPayload), `src/api/trips.ts` (useUpdateTrip)
+- **Outputs**: updated hook signature, new types, JSDoc
+- **Depends on**: 23.2 (Edge Function contract)
+- **Parallel with**: 23.5, 23.6, 23.8
+- **Risks**:
+  - [Medium] Existing call sites of `useOptimizeTrip().mutate({ tripId })` must continue to compile. Mitigation: make `mode` optional and default to `'optimized'` server-side when absent — same shape as the Edge Function default.
+  - [Low] `tsc --noEmit` regression on the trip detail screen's auto-optimize effect. Mitigation: 23.4 updates that call site as part of the same logical change — order accordingly.
+- **Verification**: `tsc --noEmit` clean. The hook's existing consumers in `app/(app)/trip/[id]/index.tsx` still work without code changes (until 23.4 updates them deliberately).
+
+### Step 23.4 — MapTab: route-render-mode segmented control + auto-recompute branching ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: In `app/(app)/trip/[id]/index.tsx`, add a `<SegmentedControl>` above the day-filter chips inside `MapTab` with two options: `Optimal` and `Manual order`. Bind to `trip.route_render_mode`. On change: call `useUpdateTrip(tripId).mutate({ route_render_mode: value })`. The auto-recompute `useEffect` (currently lines 119–128) gains a branch: when `trip.route_render_mode === 'manual'`, it calls `optimize.mutate({ tripId, mode: 'manual' })` instead of `optimize.mutate({ tripId })`. The `stateKey` memo (lines 108–118) adds `mode: trip.route_render_mode` and (for manual mode) `assignments: places.map(p => `${p.id}:${p.day_index}:${p.order_in_day}`).sort()` so manual reorders re-fire legs. When `places.length === 0`, render the segmented control above the empty-state copy with a one-line hint ("Choose how routes draw once places are added"). Pass `trip` (or `route_render_mode`) into `MapTab` as a new prop — currently the function only receives `places, legs, onMarker`.
+- **Inputs**: 23.1 column, 23.3 hook signature
+- **Outputs**: updated `app/(app)/trip/[id]/index.tsx` (`MapTab` signature + auto-recompute effect + new SegmentedControl)
+- **Depends on**: 23.1, 23.3
+- **Parallel with**: 23.5, 23.6, 23.7, 23.8
+- **Risks**:
+  - [High] The auto-recompute effect's `stateKey` change must not cause an infinite re-fire loop. The current pattern uses `lastOptimizedRef` to dedupe; the new key must also be deduped. Mitigation: the existing `lastOptimizedRef` already gates by `stateKey` — adding `mode` + `assignments` to the key keeps the same dedup behavior. Verify by reading lines 119–128 carefully and confirming the ref-reset path.
+  - [Medium] Mode toggle while a previous recompute is still in-flight. Mitigation: the row-mutex on the Edge Function returns 409 `already_optimizing` — the existing pillForOptimizeError already handles that as `info` tone. No UI change needed.
+  - [Medium] Empty-state placement on desktop side-by-side layout (lines 252–278). Mitigation: the segmented control belongs in MapTab, not in the empty state, so it's rendered for both desktop and mobile alike. The empty state lives below it in MapTab when `places.length === 0`.
+  - [Low] `SegmentedControl` component already exists (used for transport mode in SettingsTab) — reuse it.
+- **Verification**: `tsc --noEmit` clean. Manual: toggling Optimal ↔ Manual updates the trip row, triggers a re-fetch of legs, and the polyline visibly redraws. Manual mode preserves the user's drag order from the Itinerary tab.
+
+### Step 23.5 — Place detail: per-review "Show more" + reviews-shown-of-N footer ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: In `app/(app)/place/[placeId].tsx`'s `ReviewCard`, add local `useState` for `expanded` (default `false`). Replace `numberOfLines={6}` with a conditional: when collapsed, `numberOfLines={6}`; when expanded, no truncation. Render a `<Pressable>` "Show more" / "Show less" toggle below the review text — only when `review.text.text.length > 240` (rough threshold for "long enough to need truncation"). Mirror the toggle pattern already used in `PlaceNotesEditor` (lines 933–941 in `app/(app)/trip/[id]/index.tsx`). After the reviews list, render a footer line: `Showing {place.reviews.length} of {place.userRatingCount} reviews (Google API limit)` — only when `userRatingCount > reviews.length`. Use `t.typography.caption` and `t.colors.textMuted`.
+- **Inputs**: `app/(app)/place/[placeId].tsx:151` (`ReviewCard`); `place.userRatingCount`, `place.reviews.length`
+- **Outputs**: updated `ReviewCard` component (now stateful per-card); updated reviews section in `PlaceDetailsScreen`
+- **Depends on**: None
+- **Parallel with**: 23.1, 23.2, 23.3, 23.6, 23.8
+- **Risks**:
+  - [Low] The 240-character threshold may feel arbitrary. Mitigation: 240 is roughly the visible content of a 6-line review card on a 360px viewport; close to "if you can see truncation, the toggle is useful." Easy to tune later.
+  - [Low] Slicing 5 reviews — `place.reviews.slice(0, 5)` is currently the cap. Mitigation: keep the slice (it's a courtesy clamp; Google often returns ≤ 5 anyway). The footer copy already explains the limit.
+- **Verification**: `tsc --noEmit` clean. Visual: a place with a 600-char review shows a "Show more" toggle that expands to full text; a place with `userRatingCount: 1247` and `reviews.length: 5` renders the footer line.
+
+### Step 23.6 — Place detail: small accessibility / copy polish around reviews ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: XS
+- **Task**: Set `accessibilityRole="button"` and a clear `accessibilityLabel` on the per-review toggle ("Show full review by <author>" / "Collapse review by <author>"). Add `accessibilityRole="text"` and `accessibilityLiveRegion="polite"` on the footer line so screen readers announce it when reviews load. No new component — touch only `ReviewCard` and the section footer rendered in 23.5.
+- **Inputs**: 23.5 output
+- **Outputs**: updated a11y attributes in `ReviewCard` and the footer line in `PlaceDetailsScreen`
+- **Depends on**: 23.5
+- **Parallel with**: 23.1, 23.2, 23.3, 23.7, 23.8, 23.9, 23.10
+- **Risks**: [Low] none material
+- **Verification**: a11y inspector reads "Show full review by <author>, button" before tap; "Collapse review by <author>, button" after.
+
+### Step 23.7 — Add-place flow: day picker + post-save stepper + stay-on-screen ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: In `app/(app)/trip/[id]/add.tsx`, render a horizontal scroll row of day chips above the search input: `Day 1 … Day N` + an `Unscheduled` chip. Source `N` from a new `useTripDayCount(tripId)` derivation (same pattern as `tripDayCount` memo in `app/(app)/trip/[id]/index.tsx:98–104` — extract that into a small hook in `src/hooks/useTripDayCount.ts` if it stays a 4-line memo, or inline if simpler). Default selected day to `0` (Day 1). Persist the selection in component state — does NOT need to round-trip to the trip row. On `handleConfirm`, pass `day_index: selectedDayIndex` (use `null` for the Unscheduled chip; backend already accepts null) AND compute `order_in_day` as "max(order_in_day) + 1 within the chosen day, or 0 if empty" — read existing `existingPlaces` (already in scope, line 89) to get the next slot. After save: do NOT call `router.back()`. Instead: clear `query`, clear `pickedId`, show a transient toast ("Added to Day X") via the existing toast primitive (or a 2s-timed inline banner if no shared toast), and render a small stepper below the search input: `◀  Adding to Day X  ▶` with `Done` button on the right. Tapping `◀`/`▶` cycles through `Unscheduled → Day 1 → Day 2 → … → Day N → Unscheduled`. Tapping `Done` calls `router.back()` exactly like the previous behavior.
+- **Inputs**: `app/(app)/trip/[id]/add.tsx`, `useCreateTripPlace`, `useTripPlaces` (already imported)
+- **Outputs**: rewritten `AddPlace` screen with new state machine (search → pick → confirm → stay → next add)
+- **Depends on**: None (independent of 23.1–23.4 — uses existing `day_index`/`order_in_day` columns)
+- **Parallel with**: 23.1, 23.2, 23.3, 23.4, 23.5, 23.6, 23.8, 23.9, 23.10
+- **Risks**:
+  - [Medium] The current flow's `router.back()` is the user's escape signal — staying on screen changes that contract. Mitigation: a clearly labeled `Done` button + the existing top-bar `BackButton` both still navigate back. The stepper sits below the search field; users who prefer one-and-done still tap Done after one save, restoring the old flow.
+  - [Medium] Determining `order_in_day` client-side risks a race when two devices add to the same day simultaneously. Mitigation: out-of-scope for this phase — the existing `useReorderDay` and the auto-optimize-on-add cascade smooths inconsistencies. Note in the planner risk that a future migration could move slot assignment to a DB trigger.
+  - [Medium] `useCreateTripPlace` may not currently accept `day_index` / `order_in_day` in its payload. Mitigation: read the hook in `src/api/trip-places.ts` first; if absent, this step expands its input schema (still a UI-specialist scope because the API surface is one-line additive). If the schema change is non-trivial, split into 23.7a (backend) + 23.7b (UI).
+  - [Low] Post-save toast pattern — check whether an existing `Toast` component is in use elsewhere; if not, render an inline 2s-timed banner above the search input (existing pattern in `add.tsx`'s `mapsSetupError` block).
+- **Verification**: `tsc --noEmit` clean. Manual: open add-place on a 3-day trip → tap "Day 2" chip → search "museum" → pick → confirm → stays on screen with "Added to Day 2" toast + stepper showing "Adding to Day 2"; tap `▶` → stepper shows "Adding to Day 3"; search again → confirm → place lands on Day 3.
+
+### Step 23.8 — Visit vs. Travel labels everywhere ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Rename labels for clarity, no logic changes:
+  - In `app/(app)/trip/[id]/index.tsx`'s `PlaceRow` (lines 780–836), change the category line from `{place.category} · {place.visit_duration_minutes} min` to `{place.category} · Visit ~{place.visit_duration_minutes} min`. Change the connector line from `↓ {leg duration · km}` to `↓ Travel to next: {leg duration · km}` (still gated on `hasNext`).
+  - In `src/components/DaySummaryCard.tsx`, change the chips: `Xh visit` → `Visit Xh`, `Drive Xm` → `Travel Xm`, `X km` → `Travel X km`. Update the `accessLabel` string accordingly.
+  - In `src/components/PlaceActionsSheet.tsx`, find the "duration" field (likely labelled "Duration" or "Visit duration") and ensure its helper text is "Time spent at this place" — adjust if it reads "minutes" without context.
+  - In `src/components/TripCostRollup.tsx` (used in the trip header, line 187), audit for "drive time" / "trip duration" labels and rename `Drive` → `Travel` so the language is mode-agnostic (works for walking/transit too).
+- **Inputs**: existing components
+- **Outputs**: updated copy in 4 components (no behavior change)
+- **Depends on**: None
+- **Parallel with**: 23.1–23.7, 23.9, 23.10
+- **Risks**:
+  - [Low] Tests asserting on exact label text. Mitigation: tests are deferred this phase; if 23.11 (deferred) is later run, those tests get updated alongside.
+  - [Low] Translation keys — there's no i18n in the project today. Mitigation: nothing to do.
+- **Verification**: `tsc --noEmit` clean. Visual: a place card shows `restaurant · Visit ~60 min`; the connector reads `↓ Travel to next: 12 min · 4 km`; DaySummaryCard chips read `Visit 4.0h`, `Travel 1h 20m`, `Travel 28 km`.
+
+### Step 23.9 — Transit fallback: dashed straight-line polylines + per-leg deep link ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: In `app/(app)/trip/[id]/index.tsx`'s `MapTab`, when `trip.transport_mode === 'transit'`, IGNORE the polyline returned by the optimizer and synthesize per-leg straight-line polylines from `trip_legs` rows: for each leg `(from_place_id, to_place_id, day_index)`, build a `MapPolyline` with `points: [fromPlaceLatLng, toPlaceLatLng]` and a new `dashed: true` flag (extend the `MapPolyline` interface in `src/components/Map/types.ts` or wherever it lives). Both `Map.web.tsx` and `Map.native.tsx` must honor `dashed` — for Google Maps JS, set `strokeOpacity: 0` + `icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 4 }, offset: '0', repeat: '20px' }]`; for `react-native-maps`, set `lineDashPattern={[8, 8]}` on the Polyline. In the `ItineraryTab`'s `PlaceRow` connector (the `↓ Travel to next` line from 23.8), when `trip.transport_mode === 'transit'`, append a small "Plan transit on Google Maps" link: `https://www.google.com/maps/dir/?api=1&origin=${fromLat},${fromLng}&destination=${toLat},${toLng}&travelmode=transit`. Use `Linking.openURL` from `expo-linking`.
+- **Inputs**: 23.4 (MapTab now receives `trip`); existing Map component
+- **Outputs**: extended `MapPolyline` type with `dashed` flag; updated `Map.web.tsx` + `Map.native.tsx`; transit-aware polyline synthesis in MapTab; transit deep link in PlaceRow
+- **Depends on**: 23.4 (MapTab's `trip` prop), 23.8 (PlaceRow's connector layout)
+- **Parallel with**: 23.5, 23.6, 23.7
+- **Risks**:
+  - [High] Cross-platform dashed-line API parity. Mitigation: implement on both `.web.tsx` and `.native.tsx` simultaneously; unit-eyeball with the platform-split structure already established in the codebase. If `react-native-maps` doesn't honor `lineDashPattern` for the project's pinned version, fall back to a solid line of a different color (e.g. `t.colors.textMuted`) for transit and document the gap.
+  - [Medium] Decoded polyline cache — the optimizer still writes a `polyline` to `trip_legs` for transit (Routes API returns SOMETHING, even if shape is rough). Mitigation: the UI explicitly does NOT decode it for transit — it builds its own [from, to] points list. The DB row stays for forward compat.
+  - [Medium] Per-leg ↔ per-day polyline mismatch. Today's optimizer writes ONE polyline per day on the FIRST leg of the day (see `optimize-trip/index.ts:315–325`). For the dashed-line straight-line path, the UI needs ALL pairwise legs, not just the first. Mitigation: the optimize-trip's `freshLegs` upsert path (lines 328–340) already writes pairwise rows with `day_index: -1` and `polyline: null` for caching. The transit path can rebuild the per-day pairwise sequence from `trip_places` (ordered by `(day_index, order_in_day)`) and synthesize dashed polylines without reading `trip_legs` at all. Choose this approach — simpler, no schema change.
+  - [Low] `Linking.openURL` failure on web. Mitigation: web-side `Linking.openURL` opens a new tab, which is the desired behavior. No special-casing.
+- **Verification**: `tsc --noEmit` clean. Manual: a trip with `transport_mode: 'transit'` and 4 places across 2 days renders 2 dashed lines (one per day), and tapping the per-leg "Plan transit" link opens Google Maps with the correct deep link.
+
+### Step 23.10 — Transit empty-state copy + per-leg duration label ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: XS
+- **Task**: When `trip.transport_mode === 'transit'`, the per-leg duration label in `PlaceRow` should read `Travel to next (transit estimate): ~Xm` — Routes API transit duration is realistic but the polyline isn't, so the label clarifies. When `trip.transport_mode === 'transit'` AND a leg is missing (`legAfter` undefined), copy reads `Travel to next: estimate not available — see "Plan transit" link`.
+- **Inputs**: 23.8, 23.9
+- **Outputs**: copy update in `PlaceRow`
+- **Depends on**: 23.9
+- **Parallel with**: (none — final UI polish)
+- **Risks**: [Low] none material
+- **Verification**: Visual: transit trip's PlaceRow connector reads `↓ Travel to next (transit estimate): ~25 min · 8 km`.
+
+### Step 23.11 — TypeScript + migration smoke (backend hygiene, not "live smoke") ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Run `npx tsc --noEmit` to confirm no type regressions across the phase's changes. Run `npx supabase db reset` to confirm `0016` applies cleanly on top of `0015`. If either fails, ping the owning specialist for a fix before close-out. This is hygiene, NOT the deferred "live smoke" — no browser walk-through.
+- **Inputs**: All Group A/B output (23.1–23.10)
+- **Outputs**: a one-line confirmation in `docs/smoke/phase-23.md` ("tsc clean; db reset clean — DD 2026-04-DD"). No golden-path smoke.
+- **Depends on**: 23.1, 23.2, 23.3, 23.4, 23.5, 23.6, 23.7, 23.8, 23.9, 23.10
+- **Parallel with**: (none — gates docs)
+- **Risks**: [Low] none material — failure here just loops back to the owning specialist
+- **Verification**: Both commands exit 0
+
+### Step 23.12 — [DEFERRED] Automated tests — explicitly skipped per user direction (same as Phases 21 + 22)
+- **Agent**: test-specialist
+- **Size**: M
+- **Task**: Author (a) RLS test: editor can UPDATE `trips.route_render_mode` AND `total_budget`, but not `title`/`transport_mode`/`currency`/etc. (verifies 23.1's trigger update). (b) Edge Function test for `optimize-trip` `mode: 'manual'` happy path + `manual_mode_no_assignments` error path. (c) Component test for the route-render segmented control toggle round-tripping through `useUpdateTrip`. (d) Component test for `ReviewCard`'s show-more / show-less toggle. (e) Component test for the add-place stepper navigating across days.
+- **Inputs**: All of 23.1–23.10
+- **Outputs**: `tests/rls.route-render-mode.test.ts`, `supabase/functions/optimize-trip/test.ts` extension, `tests/components/route-render-toggle.test.tsx`, `tests/components/review-card.test.tsx`, `tests/components/add-place-stepper.test.tsx`
+- **Depends on**: 23.11
+- **Parallel with**: 23.13 (default execution: SKIP unless user explicitly requests)
+- **Default execution mode**: **DEFER** — per user direction across Phases 21–22, ship without tests.
+- **Risks**: [N/A while deferred]
+- **Verification**: `npm test` green if executed
+
+### Step 23.13 — [DEFERRED] Live smoke (web) — explicitly skipped per user direction (same as Phases 21 + 22)
+- **Agent**: test-specialist
+- **Size**: S
+- **Task**: Walk the five touched golden paths in Chromium against local Supabase: (a) toggling Optimal ↔ Manual on a 5-place / 2-day trip flips the rendered polyline order to match user's drag order; (b) reading a 600-character review with the show-more toggle; (c) adding 3 places to 3 different days via the day picker + stepper without leaving the add screen; (d) creating a transit-mode trip and seeing dashed lines + working "Plan transit" deep links; (e) confirming an editor collaborator can flip `route_render_mode` but cannot rename the trip. Record at `docs/smoke/phase-23.md`.
+- **Inputs**: All preceding steps
+- **Outputs**: `docs/smoke/phase-23.md`
+- **Depends on**: 23.11
+- **Parallel with**: 23.12 (default execution: SKIP unless user explicitly requests)
+- **Default execution mode**: **DEFER** — per user direction, ship without smoke. The hygiene check in 23.11 is the only guaranteed verification.
+- **Risks**: [N/A while deferred]
+- **Verification**: Smoke log shows PASS for all five paths if executed
+
+### Step 23.14 — Docs sync ✅ Done 2026-04-26
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: Update (a) `docs/architecture.md`: in the trip-row schema section, add `route_render_mode` to the column list and the editor-allowed-diff list under the collaboration model; in the routing section, document the manual-vs-optimized branch on `optimize-trip` and the transit fallback contract (dashed straight-line + deep link). (b) `docs/features/optimize.md` (or the equivalent feature doc — read `docs/features/overview.md` first to find the right file): describe the toggle, the manual mode, and the transit v1 fallback. (c) `docs/features/places.md` (or equivalent): note the per-day picker + stepper in the add flow, and the per-review show-more on place details. (d) `plan.md`: flip Phase 23 status to ✅ Done; add the canonical Phase 23 row to the phase table at the top.
+- **Inputs**: All shipped surfaces from 23.1–23.10
+- **Outputs**: updates to `docs/architecture.md`, `docs/features/*.md`, `plan.md`
+- **Depends on**: 23.11 (or 23.13 if smoke was executed)
+- **Parallel with**: (none — final step)
+- **Risks**: [Low] doc drift if naming shifted — Mitigation: this step is the alignment pass
+- **Verification**: All affected docs reflect shipped reality; Phase 23 row in the phase table reads ✅ Done.
+
+---
+
+### Out-of-scope for Phase 23 (push to Phase 24+)
+- Full transit polyline rendering with steps / vehicle icons / transfer points (deferred — this phase ships dashed straight-line + deep link as v1)
+- "Optimal vs. Manual" diff preview ("here's what would change if you optimized" before committing) — nice-to-have, not in user request
+- Per-day transport-mode override (today `transport_mode` is per-trip; per-day would be a schema change)
+- Server-side per-day slot assignment trigger to remove the client-side `order_in_day` race in 23.7 — flagged as a Medium risk; deferred unless smoke surfaces a concrete bug
+- Native (iOS/Android) verification of any Phase 23 surface — deferred to user smoke as standard for this project
+
+---
+
+## Phase 24 candidates (known carryovers from Phase 23)
+
+The following items are code-complete blockers or acknowledged follow-ups from Phase 23, collected here for the next planning conversation.
+
+1. **`useUpdateTripBudget` owner-only filter** — `src/api/trips.ts`'s `useUpdateTripBudget` (and `useUpdateTrip`) still carry a `user_id = auth.uid()` filter on the Supabase `.update()` call that pre-dates Phase 22's editor-budget RLS. The Phase 23 `useUpdateRouteRenderMode` hook was written to deliberately omit this filter (so editors can flip the mode). The budget hook should be relaxed the same way — the RLS layer already permits it; the client filter is now the only gating point.
+2. **Live web smoke for Phases 21 + 22 + 23 features** — no golden-path browser walk has been recorded for budget tracking, collaboration in-place role change, accommodation autocomplete, route-render-mode toggle, transit dashed lines, or the add-place day picker. All three phases are code-complete-unverified.
+3. **Native iOS / Android verification** — all platform-verified boxes across Phases 21, 22, and 23 feature docs remain empty. Standard deferred-to-user-smoke policy; no action required unless user triggers a native smoke run.
+4. **ADRs** — still deferred from Phase 21 Step 21.2 (collaboration model) and Phase 22 (editor-budget RLS). No ADR file exists for either decision. Deferred again for Phase 24 planning.
+5. **Real transit polyline rendering** — Phase 23 ships dashed straight-line fallback + "Plan transit" deep link. Full transit polyline rendering (multi-leg, vehicle icons, transfer points) requires a dedicated UI mode and a separate phase.
+6. **Deletion of deprecated `useCollaboratedTrips`** — the hook is marked `@deprecated` in `src/api/trip-collaborators.ts` with all call sites migrated to `useTrips()`. The dead code can be removed once a grace period passes and no runtime callers remain. Phase 24 candidate for cleanup.
+7. **Migration slot `0016` confirmed** — no slot conflict. `0016_trips_route_render_mode.sql` landed cleanly on top of `0015_trips_editor_budget_rls.sql`.
