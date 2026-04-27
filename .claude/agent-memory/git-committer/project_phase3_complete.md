@@ -113,6 +113,31 @@ scripts/smoke-route-render-mode-rls.sql, src/lib/formatDuration.ts, docs/smoke/p
 Steps 23.X (automated tests) and live smoke explicitly skipped per user direction —
 same standing pattern as Phases 21 + 22. No Co-Authored-By trailer (user policy).
 
+Phase 24 committed 2026-04-26 as 3 commits (user requested 3-group split):
+- `98dbec7` — feat(db,backend): Phase 24 — trip place reactions table + RLS + client API hooks
+  (7 files, 915 ins: migration 0017_trip_place_reactions.sql, scripts/smoke-trip-place-reactions-rls.sql,
+   src/api/trip-place-reactions.ts, _keys.ts tripPlaceReactionsKeys, types.ts TripPlaceReaction,
+   trip-expenses.ts useAllUserExpenses, index.ts re-export)
+- `f485793` — feat(ui): Phase 24 — reactions + analytics + location-aware routing
+  (13 files, 1875 ins/40 del: ReactionChip.tsx, charts/BarChart+PieChart+LineChart.tsx hand-rolled SVG,
+   hooks/useCurrentLocation.ts + useTripUseMyLocation.ts, analytics.tsx new Insights screen,
+   trips.tsx Insights button, trip/[id]/index.tsx ReactionChip+catalog+from-my-location,
+   place/[placeId].tsx reaction control, app.json Android permissions + iOS description,
+   package.json + package-lock.json react-native-svg ^15.15.4)
+- `f917707` — docs: Phase 24 — sync plan + architecture + per-feature + smoke note
+  (7 files, 711 ins/9 del: plan.md, architecture.md, overview.md, NEW features/reactions.md,
+   features/analytics.md, features/location-routing.md, smoke/phase-24.md)
+Pushed to origin master (fast-forward) as f917707.
+
+Phase 24 introduced: supabase/migrations/0017_trip_place_reactions.sql,
+scripts/smoke-trip-place-reactions-rls.sql, src/api/trip-place-reactions.ts,
+src/components/ReactionChip.tsx, src/components/charts/ (BarChart, PieChart, LineChart),
+src/hooks/useCurrentLocation.ts, src/hooks/useTripUseMyLocation.ts,
+app/(app)/analytics.tsx, docs/features/reactions.md, docs/features/analytics.md,
+docs/features/location-routing.md, docs/smoke/phase-24.md.
+Tests and live smoke explicitly skipped per user direction — standing pattern since Phase 21.
+No Co-Authored-By trailer (user policy).
+
 Phase 22 committed 2026-04-26 as 4 commits (user requested 4-group split):
 - `078461b` — feat(db): Phase 22 — editor-budget RLS + INSERT RETURNING fix
   (3 files, 487 ins: migration 0014 INSERT RETURNING fix, migration 0015
