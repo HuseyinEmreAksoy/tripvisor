@@ -78,6 +78,21 @@ export interface Trip {
    * triggers the optimize Edge Function with the new mode.
    */
   route_render_mode: RouteRenderMode;
+  /**
+   * Phase 25 Step 25.2: pointer to which Google Place provides the trip's
+   * cover photo. NULL = no cover (UI renders the gradient placeholder).
+   *
+   * We intentionally store ONLY the place id (not the photo resource
+   * name) because the resource name has a Google ToS TTL while the
+   * place id does not. The cover image is fetched live via the
+   * `place-photo` Edge Function — which re-resolves `photos[].name`
+   * from `place-details` and proxies the bytes server-side so the
+   * Google API key never ships to the client.
+   *
+   * Editor collaborators may update this column — see migration 0018
+   * for the trigger allow-list expansion.
+   */
+  cover_photo_google_place_id: string | null;
   created_at: string;
   updated_at: string;
   /**

@@ -6,6 +6,7 @@ export * from './trip-places';
 export * from './trip-days';
 export * from './trip-expenses';
 export * from './places';
+export * from './place-photos';
 export * from './routes';
 export * from './share';
 export * from './offline';

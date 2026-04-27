@@ -6,8 +6,11 @@ const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') ?? '')
   .filter(Boolean);
 
 export function corsHeaders(origin: string | null): Headers {
+  // GET is included for the place-photo function (Phase 25), which streams
+  // image bytes back via the URL embedded in `<Image src>`. Every other
+  // function uses POST; allowing GET here is a no-op for them.
   const headers = new Headers({
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Client-Info, apikey',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
