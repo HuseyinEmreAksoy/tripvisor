@@ -1,15 +1,57 @@
 /**
  * New trip screen — Redesigned with gradient banner, visual transport mode selector,
  * animated form fields, and refined layout.
+ *
+ * Phase 25 Step 25.11: currency picker added. Defaults to USD or locale-derived
+ * hint. The DB currency CHECK constraint (migration 0005) limits choices to
+ * USD, EUR, GBP, TRY, JPY — we present all five.
  */
+import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Pressable, Platform, ScrollView, Text, View, type ViewStyle } from 'react-native';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { BackButton, Button, Heading, Screen, TextField } from '@/components';
 import { DateField } from '@/components/DateField';
-import { useCreateTrip } from '@/api';
+import { useCreateTrip, useUpdateTrip } from '@/api';
+import type { TripCurrency } from '@/api/types';
 import { useTheme } from '@/theme';
+
+// DB currency CHECK constraint limits choices to exactly these five values.
+// If the constraint widens in a future migration, update this list + TripCurrency
+// union in lockstep. Phase 25 Step 25.11.
+const CURRENCY_OPTIONS: Array<{ value: TripCurrency; label: string }> = [
+  { value: 'USD', label: 'USD — US Dollar' },
+  { value: 'EUR', label: 'EUR — Euro' },
+  { value: 'GBP', label: 'GBP — British Pound' },
+  { value: 'TRY', label: 'TRY — Turkish Lira' },
+  { value: 'JPY', label: 'JPY — Japanese Yen' },
+];
+
+// Derive a default currency hint from the device locale.
+// Falls back to 'USD' when Intl is unavailable or the derived code is not
+// in our allowed set.
+function detectDefaultCurrency(): TripCurrency {
+  try {
+    if (typeof Intl === 'undefined') return 'USD';
+    const locale = Intl.NumberFormat().resolvedOptions().locale;
+    // Map common locale regions to currencies.
+    const regionMap: Record<string, TripCurrency> = {
+      US: 'USD',
+      GB: 'GBP',
+      TR: 'TRY',
+      JP: 'JPY',
+      DE: 'EUR', FR: 'EUR', IT: 'EUR', ES: 'EUR', NL: 'EUR',
+      BE: 'EUR', AT: 'EUR', PT: 'EUR', FI: 'EUR', GR: 'EUR',
+      IE: 'EUR', LU: 'EUR', SK: 'EUR', SI: 'EUR', CY: 'EUR',
+      EE: 'EUR', LT: 'EUR', LV: 'EUR', MT: 'EUR',
+    };
+    const region = locale.split('-')[1]?.toUpperCase() ?? '';
+    return regionMap[region] ?? 'USD';
+  } catch {
+    return 'USD';
+  }
+}
 
 const Schema = z
   .object({
@@ -19,6 +61,8 @@ const Schema = z
     daily_hours_budget: z.number().positive().max(24),
     // Phase 23: bicycling added to match trips_transport_mode_check constraint.
     transport_mode: z.enum(['driving', 'walking', 'bicycling', 'transit']),
+    // Phase 25 Step 25.11: currency picker.
+    currency: z.enum(['USD', 'EUR', 'GBP', 'TRY', 'JPY']),
   })
   .refine(
     (v) => !v.start_date || !v.end_date || v.start_date <= v.end_date,
@@ -42,6 +86,11 @@ export default function NewTrip() {
   const t = useTheme();
   const router = useRouter();
   const createTrip = useCreateTrip();
+  // Phase 25 Step 25.11: after creation, patch currency if not the DB default.
+  // useUpdateTrip must be called unconditionally at the top level; we use 'noop'
+  // as the placeholder id and only call .mutateAsync when we have a real id.
+  const [pendingCurrencyPatch, setPendingCurrencyPatch] = useState<{ tripId: string; currency: TripCurrency } | null>(null);
+  const updateCurrency = useUpdateTrip(pendingCurrencyPatch?.tripId ?? 'noop');
 
   const {
     control,
@@ -56,11 +105,26 @@ export default function NewTrip() {
       end_date: null,
       daily_hours_budget: 8,
       transport_mode: 'driving' as const,
+      currency: detectDefaultCurrency(),
     },
     mode: 'onBlur',
   });
 
   const currentTransport = watch('transport_mode');
+  const currentCurrency = watch('currency');
+
+  // Phase 25 Step 25.11: fire currency patch once we have a real trip id.
+  // This useEffect runs after the state update that sets pendingCurrencyPatch,
+  // at which point updateCurrency is now bound to the correct tripId.
+  useEffect(() => {
+    if (!pendingCurrencyPatch) return;
+    updateCurrency.mutate({ currency: pendingCurrencyPatch.currency });
+    setPendingCurrencyPatch(null);
+    // updateCurrency reference changes each render — intentionally omitted from
+    // deps to avoid infinite loop. The effect only fires when pendingCurrencyPatch
+    // becomes non-null, which only happens once after trip creation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCurrencyPatch]);
 
   const onSubmit = async (values: FormValues) => {
     const parsed = Schema.safeParse(values);
@@ -72,9 +136,20 @@ export default function NewTrip() {
     }
     try {
       const trip = await createTrip.mutateAsync({
-        ...parsed.data,
+        title: parsed.data.title,
+        start_date: parsed.data.start_date,
+        end_date: parsed.data.end_date,
+        daily_hours_budget: parsed.data.daily_hours_budget,
+        transport_mode: parsed.data.transport_mode,
         timezone: detectedTz,
       });
+      // Patch currency if it differs from the DB default ('USD').
+      if (parsed.data.currency !== 'USD') {
+        setPendingCurrencyPatch({ tripId: trip.id, currency: parsed.data.currency });
+        // updateCurrency.mutateAsync can't be awaited here because the hook
+        // is bound to `pendingCurrencyPatch?.tripId ?? 'noop'` which hasn't
+        // updated yet. Navigate immediately; the useEffect below fires the patch.
+      }
       router.replace(`/trip/${trip.id}`);
     } catch (err) {
       setError('title', { message: (err as Error).message });
@@ -224,6 +299,61 @@ export default function NewTrip() {
                         ]}
                       >
                         {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        />
+
+        {/* ── Currency picker (Phase 25 Step 25.11) ────────────────────── */}
+        <Controller
+          control={control}
+          name="currency"
+          render={({ field: { onChange } }) => (
+            <View style={{ gap: t.spacing.xs }}>
+              <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                Currency
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.sm }}>
+                {CURRENCY_OPTIONS.map((opt) => {
+                  const active = opt.value === currentCurrency;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={opt.label}
+                      onPress={() => onChange(opt.value)}
+                      style={({ pressed }) => [
+                        {
+                          paddingHorizontal: t.spacing.md,
+                          paddingVertical: t.spacing.sm,
+                          borderWidth: 2,
+                          borderColor: active ? t.colors.primary : t.colors.border,
+                          borderRadius: t.radius.lg,
+                          backgroundColor: active ? t.colors.gradientSubtle : t.colors.cardBgSolid,
+                          ...(active ? t.shadows.glow(t.colors.glowPrimary) : t.shadows.sm(t.colors.shadowColor)),
+                        },
+                        pressed && { opacity: 0.8 },
+                        Platform.OS === 'web' && ({
+                          transition: 'all 0.15s ease',
+                          cursor: 'pointer',
+                        } as ViewStyle),
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          t.typography.caption,
+                          {
+                            color: active ? t.colors.primary : t.colors.text,
+                            fontWeight: active ? '700' : '500',
+                          },
+                        ]}
+                      >
+                        {opt.value}
                       </Text>
                     </Pressable>
                   );

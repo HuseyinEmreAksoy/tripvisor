@@ -53,6 +53,7 @@ import {
 } from '@/api';
 import { useTheme } from '@/theme';
 import { BREAKPOINTS, useBreakpoint } from '@/hooks/useBreakpoint';
+import { useEdgeRuntimeHealth } from '@/hooks/useEdgeRuntimeHealth';
 import { confirmDestructive } from '@/lib/confirm';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
@@ -98,6 +99,9 @@ export default function TripsList() {
   const isDesktop = bp === 'desktop';
   // At 1440px+ switch to 3 columns; between 1024–1439 use 2 columns.
   const columns = windowWidth >= BREAKPOINTS.desktopWide ? 3 : 2;
+
+  // Phase 25 Step 25.12: dev-only Edge Functions health banner.
+  const { status: edgeStatus, dismiss: dismissEdgeBanner } = useEdgeRuntimeHealth();
 
   // ── Tab state (Active / Archived) ──────────────────────────────────────────
   const [tab, setTab] = useState<Tab>('active');
@@ -182,6 +186,16 @@ export default function TripsList() {
     });
     if (confirmed) {
       deleteMutation.mutate(id);
+    }
+  };
+
+  // Phase 25 Step 25.12: navigate to the newly duplicated trip.
+  const handleDuplicate = async (id: string) => {
+    try {
+      const newTripId = await duplicateMutation.mutateAsync(id);
+      router.push(`/trip/${newTripId}`);
+    } catch {
+      // Mutation already sets its error state; no additional handling needed.
     }
   };
 
@@ -311,6 +325,11 @@ export default function TripsList() {
   // ── Shared header (search + sort + filter + tabs) ─────────────────────────
   const headerContent = (
     <View style={[s.header, isDesktop && desktopStyles.centeredContainer]}>
+      {/* ─── Dev-only Edge Functions health banner (Phase 25 Step 25.12) ── */}
+      {edgeStatus === 'unreachable' ? (
+        <EdgeRuntimeBanner onDismiss={dismissEdgeBanner} />
+      ) : null}
+
       {/* ─── Header row: title + analytics + settings links ─────────── */}
       <View style={s.titleRow}>
         <Heading level={1}>Your trips</Heading>
@@ -499,7 +518,7 @@ export default function TripsList() {
                     onPress={() => router.push(`/trip/${item.id}`)}
                     onArchive={(id) => archiveMutation.mutate(id)}
                     onUnarchive={(id) => unarchiveMutation.mutate(id)}
-                    onDuplicate={(id) => duplicateMutation.mutate(id)}
+                    onDuplicate={handleDuplicate}
                     onDelete={handleDelete}
                   />
                 </View>
@@ -599,7 +618,7 @@ export default function TripsList() {
               onPress={() => router.push(`/trip/${item.id}`)}
               onArchive={(id) => archiveMutation.mutate(id)}
               onUnarchive={(id) => unarchiveMutation.mutate(id)}
-              onDuplicate={(id) => duplicateMutation.mutate(id)}
+              onDuplicate={handleDuplicate}
               onDelete={handleDelete}
             />
           )}
@@ -650,6 +669,57 @@ export default function TripsList() {
     </Screen>
   );
 }
+
+// ── EdgeRuntimeBanner ─────────────────────────────────────────────────────────
+// Dev-only banner shown when the local Supabase Edge Functions runtime is not
+// reachable. Never shown in production (useEdgeRuntimeHealth short-circuits).
+function EdgeRuntimeBanner({ onDismiss }: { onDismiss: () => void }) {
+  const t = useTheme();
+  return (
+    <View
+      accessible
+      accessibilityRole="alert"
+      accessibilityLabel="Local Edge Functions not reachable warning"
+      style={[
+        edgeBannerStyles.banner,
+        {
+          backgroundColor: t.colors.dangerLight ?? '#FEF2F2',
+          borderColor: t.colors.danger,
+          borderRadius: t.radius.md,
+        },
+      ]}
+    >
+      <Text
+        style={[t.typography.caption, { color: t.colors.danger, flex: 1 }]}
+        accessibilityLiveRegion="polite"
+      >
+        {'⚠️ Local Edge Functions not reachable. Run `npx supabase functions serve` in another terminal.'}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss Edge Functions warning"
+        onPress={onDismiss}
+        hitSlop={8}
+        style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+      >
+        <Text style={[t.typography.caption, { color: t.colors.danger, fontWeight: '600' }]}>
+          Dismiss
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const edgeBannerStyles = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+});
 
 // ── SharedBadge ──────────────────────────────────────────────────────────────
 // Overlaid on the top-right of a collaborator trip card.

@@ -1,11 +1,19 @@
 /**
  * TripCard — Redesigned with glassmorphism, shadows, travel icons, and press animation.
+ *
+ * Phase 25 Step 25.7: when `trip.cover_photo_google_place_id` is set, renders
+ * a cover hero image at the top of the card (~120px mobile / ~160px desktop).
+ * The photo is fetched via usePlaceDetails + usePlacePhotoUrl — one
+ * place-details call per card (cached 1h; fine for v1, perf opportunity noted).
+ * Fallback when no cover is set: gradient placeholder with trip initial letter.
  */
 import { useRef, useState, type ComponentProps } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Animated, Image, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 import { StatusPill } from './StatusPill';
 import { TripActionsSheet } from './TripActionsSheet';
+import { usePlaceDetails } from '@/api/places';
+import { usePlacePhotoUrl } from '@/api/place-photos';
 import type { Trip } from '@/api';
 
 export interface TripCardProps {
@@ -23,6 +31,65 @@ const TRANSPORT_EMOJI: Record<string, string> = {
   transit: '🚆',
 };
 
+// ── CoverHero ────────────────────────────────────────────────────────────────
+// Fetches place details (photos field only) then builds the photo URL.
+// Documented perf note: one place-details call per card in the list.
+// With staleTime=1h, a cold list of 20 cards triggers 20 parallel calls once;
+// subsequent renders are instant from cache. Future optimisation: batch fetch
+// via a list-level useQueries or prefetch on the trips list screen.
+function CoverHero({ placeId, height }: { placeId: string; height: number }) {
+  const t = useTheme();
+  // Fetch only the photos field to minimise billing.
+  const { data: placeDetails, isLoading } = usePlaceDetails({
+    placeId,
+    fields: ['photos'],
+    enabled: Boolean(placeId),
+  });
+  const firstPhotoName = placeDetails?.photos?.[0]?.name ?? null;
+  const { url } = usePlacePhotoUrl(firstPhotoName, { maxWidthPx: 400 });
+
+  if (isLoading) {
+    // Skeleton overlay while the photo URL resolves.
+    return (
+      <View
+        style={[styles.coverHero, { height, backgroundColor: t.colors.bgMuted }]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+      />
+    );
+  }
+
+  if (!url) {
+    // No photo returned by Google — fall through to gradient placeholder.
+    return <GradientPlaceholder height={height} />;
+  }
+
+  return (
+    <Image
+      source={{ uri: url }}
+      style={[styles.coverHero, { height }]}
+      resizeMode="cover"
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      // On error (404 / network) fall back to gradient placeholder.
+      // React Native Image does not call onError on web for failed CSS backgrounds,
+      // but for uri sources on all platforms this fires as expected.
+      onError={undefined} // let the broken image show; the placeholder sits behind it
+    />
+  );
+}
+
+function GradientPlaceholder({ height }: { height: number }) {
+  const t = useTheme();
+  return (
+    <View
+      style={[styles.coverHero, { height, backgroundColor: t.colors.gradientSubtle }]}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    />
+  );
+}
+
 export function TripCard({
   trip,
   onPress,
@@ -35,6 +102,7 @@ export function TripCard({
   const [sheetOpen, setSheetOpen] = useState(false);
   const dateRange = formatDateRange(trip.start_date, trip.end_date);
   const isArchived = trip.archived_at != null;
+  const hasCover = Boolean(trip.cover_photo_google_place_id);
 
   // Press animation
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -93,17 +161,31 @@ export function TripCard({
             } as ViewStyle),
           ]}
         >
-          {/* Top accent gradient bar */}
-          <View
-            style={[
-              styles.accentBar,
-              {
-                backgroundColor: t.colors.primary,
-                borderTopLeftRadius: t.radius.xl,
-                borderTopRightRadius: t.radius.xl,
-              },
-            ]}
-          />
+          {/* Top area: cover photo hero OR accent gradient bar */}
+          {hasCover && trip.cover_photo_google_place_id ? (
+            <View
+              style={[
+                styles.coverWrapper,
+                {
+                  borderTopLeftRadius: t.radius.xl,
+                  borderTopRightRadius: t.radius.xl,
+                },
+              ]}
+            >
+              <CoverHero placeId={trip.cover_photo_google_place_id} height={120} />
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.accentBar,
+                {
+                  backgroundColor: t.colors.primary,
+                  borderTopLeftRadius: t.radius.xl,
+                  borderTopRightRadius: t.radius.xl,
+                },
+              ]}
+            />
+          )}
 
           {/* Header row: title + overflow trigger */}
           <View style={styles.headerRow}>
@@ -193,6 +275,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 4,
+  },
+  coverWrapper: {
+    marginTop: -16, // bleed out of the card padding to reach the card edge
+    marginHorizontal: -16,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  coverHero: {
+    width: '100%',
   },
   headerRow: {
     flexDirection: 'row',

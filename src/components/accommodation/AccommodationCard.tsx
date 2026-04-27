@@ -3,9 +3,14 @@
  *
  * Shows: name, date range, day-bridge indicator, address / place chip, optional notes.
  * Edit + delete affordances, gated by canEdit.
+ *
+ * Phase 25 Step 25.10: inline notes editor — editors/owners can add/edit/delete
+ * notes; viewers see existing notes read-only, nothing if no notes.
  */
-import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { useUpdateTripAccommodation } from '@/api/trip-accommodations';
 import type { TripAccommodation } from '@/api/types';
 
 export interface AccommodationCardProps {
@@ -98,12 +103,8 @@ export function AccommodationCard({
         </View>
       ) : null}
 
-      {/* Notes */}
-      {accommodation.notes ? (
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={2}>
-          {accommodation.notes}
-        </Text>
-      ) : null}
+      {/* Phase 25 Step 25.10: Inline notes editor (editors/owners) or read-only (viewers) */}
+      <AccommodationNotesEditor accommodation={accommodation} canEdit={canEdit} />
 
       {/* Actions */}
       {canEdit ? (
@@ -145,6 +146,105 @@ export function AccommodationCard({
     </View>
   );
 }
+
+// ── AccommodationNotesEditor ─────────────────────────────────────────────────
+// Inline note editor matching the PlaceNotesEditor pattern. Viewers see
+// existing notes read-only; editors/owners can tap to edit.
+function AccommodationNotesEditor({
+  accommodation,
+  canEdit,
+}: {
+  accommodation: TripAccommodation;
+  canEdit: boolean;
+}) {
+  const t = useTheme();
+  const updateAcc = useUpdateTripAccommodation();
+  const [focused, setFocused] = useState(false);
+  const [localText, setLocalText] = useState(accommodation.notes ?? '');
+
+  useEffect(() => {
+    setLocalText(accommodation.notes ?? '');
+  }, [accommodation.notes]);
+
+  function handleBlur() {
+    setFocused(false);
+    const trimmed = localText.trim();
+    const next = trimmed.length > 0 ? trimmed : null;
+    if (next !== accommodation.notes) {
+      updateAcc.mutate({ id: accommodation.id, notes: next });
+    }
+  }
+
+  // Viewer with no notes — render nothing.
+  if (!canEdit && !localText) return null;
+
+  if (!canEdit) {
+    return (
+      <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={3}>
+        {localText}
+      </Text>
+    );
+  }
+
+  if (focused) {
+    return (
+      <TextInput
+        multiline
+        numberOfLines={3}
+        maxLength={2000}
+        value={localText}
+        onChangeText={setLocalText}
+        onBlur={handleBlur}
+        placeholder="Add notes…"
+        placeholderTextColor={t.colors.textMuted}
+        accessibilityLabel={`Notes for accommodation: ${accommodation.name}`}
+        style={[
+          accNotesStyles.input,
+          {
+            borderColor: t.colors.border,
+            borderRadius: t.radius.sm,
+            backgroundColor: t.colors.bg,
+            color: t.colors.text,
+            ...t.typography.caption,
+          },
+        ]}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        localText
+          ? `Notes: ${localText.slice(0, 60)}. Tap to edit.`
+          : `Add note for ${accommodation.name}`
+      }
+      onPress={() => setFocused(true)}
+    >
+      <Text
+        style={[
+          t.typography.caption,
+          { color: localText ? t.colors.textMuted : t.colors.primary },
+        ]}
+        numberOfLines={localText ? 2 : undefined}
+      >
+        {localText || 'Add note…'}
+      </Text>
+    </Pressable>
+  );
+}
+
+const accNotesStyles = StyleSheet.create({
+  input: {
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    minHeight: 60,
+    textAlignVertical: 'top',
+  },
+});
 
 /**
  * Computes "Day X → Day Y" string for an accommodation, based on the trip

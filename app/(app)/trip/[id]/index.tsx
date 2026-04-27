@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   BackButton,
@@ -74,6 +74,9 @@ import { useSession } from '@/api/auth';
 // Phase 24: location
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
+// Phase 25 Steps 25.7 + 25.8: cover picker + place thumbnails
+import { usePlaceDetails } from '@/api/places';
+import { usePlacePhotoUrl } from '@/api/place-photos';
 
 type TabKey = 'map' | 'itinerary' | 'settings';
 
@@ -240,6 +243,7 @@ export default function TripDetail() {
               tripDayCount={tripDayCount}
               canEdit={canEditTrip}
               isOwner={isOwner}
+              coverPhotoPlaceId={trip.cover_photo_google_place_id}
               onDelete={async () => {
                 await deleteTrip.mutateAsync(trip.id);
                 router.replace('/trips');
@@ -280,6 +284,7 @@ export default function TripDetail() {
                 legs={legs}
                 trip={trip}
                 accommodations={tripAccommodations}
+                canEdit={canEditTrip}
                 onOpen={(gid) => router.push(`/place/${gid}`)}
               />
               {canEditTrip ? (
@@ -325,6 +330,7 @@ export default function TripDetail() {
           legs={legs}
           trip={trip}
           accommodations={tripAccommodations}
+          canEdit={canEditTrip}
           onOpen={(gid) => router.push(`/place/${gid}`)}
         />
       ) : (
@@ -339,6 +345,7 @@ export default function TripDetail() {
           tripDayCount={tripDayCount}
           canEdit={canEditTrip}
           isOwner={isOwner}
+          coverPhotoPlaceId={trip.cover_photo_google_place_id}
           onDelete={async () => {
             await deleteTrip.mutateAsync(trip.id);
             router.replace('/trips');
@@ -853,6 +860,7 @@ function ItineraryTab({
   legs,
   trip,
   accommodations,
+  canEdit = true,
   onOpen,
 }: {
   tripId: string;
@@ -860,6 +868,8 @@ function ItineraryTab({
   legs: TripLeg[];
   trip: import('@/api').Trip;
   accommodations: TripAccommodation[];
+  /** Phase 25 Step 25.10: role gate for notes. Viewers see notes read-only. */
+  canEdit?: boolean;
   onOpen: (googlePlaceId: string) => void;
 }) {
   const t = useTheme();
@@ -976,6 +986,7 @@ function ItineraryTab({
                         hasNext={Boolean(next)}
                         transportMode={trip.transport_mode}
                         onOpenDetails={() => onOpen(place.google_place_id)}
+                        canEdit={canEdit}
                         reaction={myReaction}
                         onReactionChange={(next) =>
                           setReaction.mutate({
@@ -1132,6 +1143,30 @@ function DayNotesEditor({
   );
 }
 
+// ── PlaceThumbnail (Phase 25 Step 25.8) ──────────────────────────────────────
+// 40×40 square photo for each itinerary row. Uses the same place-details +
+// place-photo flow as the TripCard cover. Renders nothing when Google returns
+// no photos — keeps the list clean rather than showing a placeholder.
+function PlaceThumbnail({ googlePlaceId }: { googlePlaceId: string }) {
+  const { data: details } = usePlaceDetails({
+    placeId: googlePlaceId,
+    fields: ['photos'],
+    enabled: Boolean(googlePlaceId),
+  });
+  const firstName = details?.photos?.[0]?.name ?? null;
+  const { url } = usePlacePhotoUrl(firstName, { maxWidthPx: 100 });
+  if (!url) return null;
+  return (
+    <Image
+      source={{ uri: url }}
+      style={styles.placeThumbnail}
+      resizeMode="cover"
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    />
+  );
+}
+
 /**
  * PlaceRow — itinerary row card.
  *
@@ -1139,6 +1174,7 @@ function DayNotesEditor({
  * Phase 23 Step 23.9: when transportMode is 'transit' the travel connector
  * renders a "Plan transit" deep-link that opens Google Maps directions in the
  * external browser.
+ * Phase 25 Step 25.8: small thumbnail image prepended to the row.
  */
 function PlaceRow({
   place,
@@ -1147,6 +1183,7 @@ function PlaceRow({
   hasNext,
   transportMode,
   onOpenDetails,
+  canEdit = true,
   reaction,
   onReactionChange,
 }: {
@@ -1156,6 +1193,8 @@ function PlaceRow({
   hasNext: boolean;
   transportMode: TransportMode;
   onOpenDetails: () => void;
+  /** Phase 25 Step 25.10: role gate — viewers see notes read-only; owners + editors can edit. */
+  canEdit?: boolean;
   reaction?: import('@/api/trip-place-reactions').TripPlaceReactionType | null;
   onReactionChange?: (next: import('@/api/trip-place-reactions').TripPlaceReactionType | null) => void;
 }) {
@@ -1218,38 +1257,45 @@ function PlaceRow({
           },
         ]}
       >
-        {/* Title row with reaction chip on the right */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-              {place.user_title ?? 'Place'}
-            </Text>
-            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-              {place.category ?? 'Unclassified'}
-            </Text>
-            {/* Step 23.8: Visit duration label */}
-            <Text
-              style={[t.typography.caption, { color: t.colors.textMuted }]}
-              accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
-            >
-              {'⏱ Visit ~'}{visitLabel}
-            </Text>
-          </View>
-          {/* Phase 24 Step 24.3: Reaction chip — right side of row */}
-          {onReactionChange ? (
-            <ReactionChip
-              reaction={reaction ?? null}
-              onChange={onReactionChange}
-              accentColor={dayColor(place.day_index ?? -1)}
-              size="sm"
-            />
+        {/* Title row: optional thumbnail + text content + reaction chip */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+          {/* Phase 25 Step 25.8: thumbnail — omitted when no photo URL */}
+          {!dragging ? (
+            <PlaceThumbnail googlePlaceId={place.google_place_id} />
           ) : null}
+
+          <View style={{ flex: 1, justifyContent: 'space-between', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+                {place.user_title ?? 'Place'}
+              </Text>
+              <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                {place.category ?? 'Unclassified'}
+              </Text>
+              {/* Step 23.8: Visit duration label */}
+              <Text
+                style={[t.typography.caption, { color: t.colors.textMuted }]}
+                accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+              >
+                {'⏱ Visit ~'}{visitLabel}
+              </Text>
+            </View>
+            {/* Phase 24 Step 24.3: Reaction chip — right side of row */}
+            {onReactionChange ? (
+              <ReactionChip
+                reaction={reaction ?? null}
+                onChange={onReactionChange}
+                accentColor={dayColor(place.day_index ?? -1)}
+                size="sm"
+              />
+            ) : null}
+          </View>
         </View>
       </Pressable>
 
-      {/* ── Per-place notes editor (Step 9.4) — Option A inline ── */}
+      {/* ── Per-place notes editor (Step 9.4 / Phase 25 Step 25.10) — Option A inline ── */}
       {!dragging ? (
-        <PlaceNotesEditor place={place} />
+        <PlaceNotesEditor place={place} canEdit={canEdit} />
       ) : null}
 
       {/* Step 23.8: Travel connector — two distinct labeled time values */}
@@ -1308,7 +1354,7 @@ function PlaceRow({
 
 const NOTES_COLLAPSE_THRESHOLD = 120;
 
-function PlaceNotesEditor({ place }: { place: TripPlace }) {
+function PlaceNotesEditor({ place, canEdit = true }: { place: TripPlace; canEdit?: boolean }) {
   const t = useTheme();
   const updatePlace = useUpdateTripPlace();
   const [focused, setFocused] = useState(false);
@@ -1341,9 +1387,12 @@ function PlaceNotesEditor({ place }: { place: TripPlace }) {
       ? localText.slice(0, NOTES_COLLAPSE_THRESHOLD) + '…'
       : localText;
 
+  // If viewer (canEdit = false) and no notes — render nothing (keeps list tight).
+  if (!canEdit && !localText) return null;
+
   return (
     <View style={{ gap: t.spacing.xs, paddingHorizontal: t.spacing.xs }}>
-      {focused ? (
+      {focused && canEdit ? (
         <TextInput
           multiline
           numberOfLines={4}
@@ -1368,13 +1417,13 @@ function PlaceNotesEditor({ place }: { place: TripPlace }) {
         />
       ) : (
         <Pressable
-          accessibilityRole="button"
+          accessibilityRole={canEdit ? 'button' : 'text'}
           accessibilityLabel={
             localText
-              ? `Notes for ${place.user_title ?? 'place'}: ${localText.slice(0, 60)}. Tap to edit.`
+              ? `Notes for ${place.user_title ?? 'place'}: ${localText.slice(0, 60)}.${canEdit ? ' Tap to edit.' : ''}`
               : `Add notes for ${place.user_title ?? 'place'}`
           }
-          onPress={() => setFocused(true)}
+          onPress={canEdit ? () => setFocused(true) : undefined}
         >
           <Text
             accessibilityRole="text"
@@ -1404,6 +1453,289 @@ function PlaceNotesEditor({ place }: { place: TripPlace }) {
   );
 }
 
+// ── CoverPhotoSection (Phase 25 Step 25.7) ──────────────────────────────────
+// Shows current cover preview + Set/Change/Remove buttons.
+// Rendered inside the SettingsTab ScrollView.
+
+function CoverPhotoSection({
+  tripId: _tripId,
+  coverPhotoPlaceId,
+  canEdit,
+  onOpenPicker,
+  onRemove,
+}: {
+  tripId: string;
+  coverPhotoPlaceId: string | null;
+  canEdit: boolean;
+  onOpenPicker: () => void;
+  onRemove: () => void;
+}) {
+  const t = useTheme();
+  const { data: coverDetails } = usePlaceDetails({
+    placeId: coverPhotoPlaceId ?? undefined,
+    fields: ['photos'],
+    enabled: Boolean(coverPhotoPlaceId),
+  });
+  const firstName = coverDetails?.photos?.[0]?.name ?? null;
+  const { url: coverUrl } = usePlacePhotoUrl(firstName, { maxWidthPx: 400 });
+
+  return (
+    <View style={{ gap: t.spacing.sm }}>
+      {/* Preview */}
+      {coverPhotoPlaceId ? (
+        <View
+          style={{
+            height: 120,
+            borderRadius: t.radius.lg,
+            overflow: 'hidden',
+            backgroundColor: t.colors.bgMuted,
+          }}
+          accessibilityLabel="Current cover photo preview"
+        >
+          {coverUrl ? (
+            <Image
+              source={{ uri: coverUrl }}
+              style={{ flex: 1 }}
+              resizeMode="cover"
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+          ) : (
+            <View
+              style={{ flex: 1, backgroundColor: t.colors.gradientSubtle }}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+          )}
+        </View>
+      ) : (
+        <View
+          style={{
+            height: 80,
+            borderRadius: t.radius.lg,
+            backgroundColor: t.colors.bgMuted,
+            borderWidth: 1,
+            borderColor: t.colors.border,
+            borderStyle: 'dashed',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            No cover photo set
+          </Text>
+        </View>
+      )}
+
+      {/* Actions */}
+      {canEdit ? (
+        <View style={{ flexDirection: 'row', gap: t.spacing.sm }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={coverPhotoPlaceId ? 'Change cover photo' : 'Set cover photo'}
+            onPress={onOpenPicker}
+            style={({ pressed }) => [
+              {
+                flex: 1,
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: 36,
+                borderRadius: t.radius.md,
+                backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+                borderWidth: 1,
+                borderColor: t.colors.border,
+              },
+            ]}
+          >
+            <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+              {coverPhotoPlaceId ? 'Change' : 'Set cover'}
+            </Text>
+          </Pressable>
+          {coverPhotoPlaceId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Remove cover photo"
+              onPress={onRemove}
+              style={({ pressed }) => [
+                {
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: 36,
+                  paddingHorizontal: t.spacing.md,
+                  borderRadius: t.radius.md,
+                  backgroundColor: pressed ? t.colors.dangerLight : t.colors.bgElevated,
+                  borderWidth: 1,
+                  borderColor: t.colors.border,
+                },
+              ]}
+            >
+              <Text style={[t.typography.caption, { color: t.colors.danger }]}>Remove</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ── CoverPickerModal (Phase 25 Step 25.7) ────────────────────────────────────
+// Lists all trip_places. Each row shows place name + small thumbnail.
+// Tapping a place calls onSelect(googlePlaceId) → parent calls useUpdateTrip.
+
+function CoverPickerModal({
+  tripId,
+  visible,
+  onClose,
+  onSelect,
+}: {
+  tripId: string;
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (placeId: string) => void;
+}) {
+  const t = useTheme();
+  const { data: placesForPicker = [] } = useTripPlaces(tripId);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      accessibilityViewIsModal
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: t.colors.bgElevated,
+            borderTopLeftRadius: t.radius.xl,
+            borderTopRightRadius: t.radius.xl,
+            maxHeight: '70%',
+            paddingBottom: t.spacing.xl,
+          }}
+          accessible
+          accessibilityLabel="Choose cover photo"
+        >
+          {/* Header */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: t.spacing.lg,
+              borderBottomWidth: 1,
+              borderBottomColor: t.colors.border,
+            }}
+          >
+            <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
+              Choose cover photo
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close cover photo picker"
+              onPress={onClose}
+              hitSlop={8}
+              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+            >
+              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>✕</Text>
+            </Pressable>
+          </View>
+
+          {placesForPicker.length === 0 ? (
+            <View style={{ padding: t.spacing.lg }}>
+              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+                Add places to the trip first.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={{ padding: t.spacing.md, gap: t.spacing.sm }}>
+              {placesForPicker.map((place) => (
+                <CoverPickerRow
+                  key={place.id}
+                  place={place}
+                  onSelect={() => onSelect(place.google_place_id)}
+                />
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CoverPickerRow({
+  place,
+  onSelect,
+}: {
+  place: TripPlace;
+  onSelect: () => void;
+}) {
+  const t = useTheme();
+  const { data: details } = usePlaceDetails({
+    placeId: place.google_place_id,
+    fields: ['photos'],
+    enabled: Boolean(place.google_place_id),
+  });
+  const firstName = details?.photos?.[0]?.name ?? null;
+  const { url } = usePlacePhotoUrl(firstName, { maxWidthPx: 100 });
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Set ${place.user_title ?? 'place'} as cover photo`}
+      onPress={onSelect}
+      style={({ pressed }) => [
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: t.spacing.sm,
+          padding: t.spacing.sm,
+          borderRadius: t.radius.md,
+          backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+          borderWidth: 1,
+          borderColor: t.colors.border,
+        },
+      ]}
+    >
+      {/* Thumbnail */}
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: t.radius.sm,
+          overflow: 'hidden',
+          backgroundColor: t.colors.bgMuted,
+          flexShrink: 0,
+        }}
+      >
+        {url ? (
+          <Image
+            source={{ uri: url }}
+            style={{ width: 44, height: 44 }}
+            resizeMode="cover"
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        ) : null}
+      </View>
+      <Text
+        style={[t.typography.body, { color: t.colors.text, flex: 1 }]}
+        numberOfLines={1}
+      >
+        {place.user_title ?? 'Place'}
+      </Text>
+      <Text style={{ fontSize: 16, color: t.colors.textMuted }}>›</Text>
+    </Pressable>
+  );
+}
+
 // ── Settings tab ──────────────────────────────────────────────────────────────
 
 const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
@@ -1419,6 +1751,7 @@ function SettingsTab({
   tripDayCount,
   canEdit,
   isOwner,
+  coverPhotoPlaceId,
   onDelete,
   deleting,
 }: {
@@ -1432,6 +1765,8 @@ function SettingsTab({
   tripDayCount: number;
   canEdit: boolean;
   isOwner: boolean;
+  /** Phase 25 Step 25.7: current cover photo place id, if set. */
+  coverPhotoPlaceId: string | null;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -1489,6 +1824,9 @@ function SettingsTab({
   // ICS export state
   const downloadIcs = useDownloadTripIcs(tripId);
   const [icsStatus, setIcsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  // ── Cover photo (Phase 25 Step 25.7) ──────────────────────────────────────
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
 
   // ── Cost settings (Step 8.6) ──────────────────────────────────────────────
   const updateTrip = useUpdateTrip(tripId);
@@ -1577,6 +1915,16 @@ function SettingsTab({
 
   return (
     <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
+      {/* ── Cover photo (Phase 25 Step 25.7) ────────────────────────────── */}
+      <SectionHeading label="Cover photo" t={t} />
+      <CoverPhotoSection
+        tripId={tripId}
+        coverPhotoPlaceId={coverPhotoPlaceId}
+        canEdit={canEdit}
+        onOpenPicker={() => setCoverPickerOpen(true)}
+        onRemove={() => updateTrip.mutate({ cover_photo_google_place_id: null })}
+      />
+
       {/* ── Trip settings ───────────────────────────────────────────────── */}
       {/* Step 5: "Daily plan time" is time-first language — it's hours of
           activities per day, not a financial budget. */}
@@ -1608,12 +1956,24 @@ function SettingsTab({
           full trip money budget. Step 6 (backend) will replace this model with
           category-based budgets. */}
       <SectionHeading label="Estimated travel cost" t={t} />
-      <SegmentedControl<TripCurrency>
-        label="Currency"
-        value={currency}
-        onChange={handleCurrencyChange}
-        options={CURRENCIES.map((c) => ({ value: c, label: c }))}
-      />
+      {/* Phase 25 Step 25.11: currency is owner-only — editors cannot change it.
+          The enforce_trips_column_restrictions trigger denies currency updates
+          from non-owners. We gate the control in the UI to match. */}
+      {isOwner ? (
+        <SegmentedControl<TripCurrency>
+          label="Currency"
+          value={currency}
+          onChange={handleCurrencyChange}
+          options={CURRENCIES.map((c) => ({ value: c, label: c }))}
+        />
+      ) : (
+        <View style={{ gap: t.spacing.xs }}>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+            Currency
+          </Text>
+          <Text style={[t.typography.body, { color: t.colors.text }]}>{currency}</Text>
+        </View>
+      )}
       <View style={{ gap: t.spacing.xs }}>
         <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
           Travel cost per km ({currency})
@@ -1883,6 +2243,17 @@ function SettingsTab({
       {/* ── Danger zone ─────────────────────────────────────────────────── */}
       <SectionHeading label="Danger zone" t={t} />
       <Button variant="danger" label="Delete trip" onPress={confirmDelete} loading={deleting} />
+
+      {/* ── Cover picker modal ──────────────────────────────────────────── */}
+      <CoverPickerModal
+        tripId={tripId}
+        visible={coverPickerOpen}
+        onClose={() => setCoverPickerOpen(false)}
+        onSelect={(placeId) => {
+          updateTrip.mutate({ cover_photo_google_place_id: placeId });
+          setCoverPickerOpen(false);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -1977,6 +2348,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     height: 44,
+  },
+  // Phase 25 Step 25.8: place thumbnail in itinerary row
+  placeThumbnail: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    flexShrink: 0,
   },
   // Per-place and per-day notes inputs (Steps 9.4 + 9.5)
   notesInput: {
