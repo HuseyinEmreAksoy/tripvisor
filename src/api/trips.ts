@@ -328,16 +328,34 @@ export type UpdateTripPatch = Partial<
     // allow-list expansion. Adding it here lets the existing
     // `useUpdateTrip` mutation patch it without a dedicated hook.
     | 'route_render_mode'
+    // Phase 25 Step 25.3: trip cover-photo pointer. Editor-collaborators
+    // can flip this column too — see migration 0018 for the trigger
+    // allow-list expansion.
+    | 'cover_photo_google_place_id'
   >
 >;
 
 /**
- * Update editable trip metadata. Mirrors the `useArchiveTrip` shape: the
- * `.eq('user_id', userId)` is defense-in-depth on top of RLS, and on
- * settle we invalidate both the lists (in case `title` changed) and the
- * detail (so the trip screen recomputes the cost rollup with the new rate
- * and the optimizer picks up new `daily_hours_budget` / `transport_mode`
- * values on the next run).
+ * Update editable trip metadata.
+ *
+ * Authorization model (Phase 25 Step 25.1)
+ * ----------------------------------------
+ * No `.eq('user_id', userId)` filter. RLS handles this via the OR of the
+ * `trips_owner_update` policy (owners) and the `trips_editor_budget_update`
+ * policy (accepted editors), with the `enforce_trips_column_restrictions`
+ * BEFORE UPDATE trigger clamping editors to the allow-list
+ * `{ total_budget, route_render_mode, cover_photo_google_place_id }`.
+ *
+ * Why we removed the filter
+ * -------------------------
+ * Earlier (pre-Phase 22) `useUpdateTrip` was strictly owner-only and the
+ * `.eq('user_id', userId)` filter was defense-in-depth. Phase 22 + 23 + 25
+ * extended the allow-list so editors can patch a narrow set of columns
+ * (`total_budget`, `route_render_mode`, `cover_photo_google_place_id`).
+ * The client-side filter blocked editors from issuing those legitimate
+ * patches even though RLS + the trigger would have permitted them. The
+ * filter is now wrong, so we drop it. RLS + the trigger remain the
+ * single source of truth for authorization.
  *
  * Bound to a specific `tripId` at hook time — callers do
  * `useUpdateTrip(id).mutate({ cost_per_km: 0.35 })` rather than threading
@@ -351,12 +369,14 @@ export function useUpdateTrip(tripId: Uuid) {
       // Empty patch is a no-op; avoid issuing a pointless UPDATE that would
       // still bump updated_at via the trigger.
       if (Object.keys(patch).length === 0) return tripId;
-      const userId = await getCallerId();
+      // Touch the auth session so the supabase client picks up an expired
+      // JWT before the UPDATE hits PostgREST. RLS + the trigger gate
+      // authorization — no client-side user_id filter (see fn doc).
+      await getCallerId();
       const { error } = await supabase
         .from('trips')
         .update(patch)
-        .eq('id', tripId)
-        .eq('user_id', userId);
+        .eq('id', tripId);
       if (error) throw error;
       return tripId;
     },
@@ -436,12 +456,19 @@ export function useUpdateTripBudget(tripId: Uuid) {
     mutationFn: async (total_budget) => {
       // `null` is a meaningful value (clear the ceiling); we deliberately
       // do NOT short-circuit on `null` like we would on `undefined`.
-      const userId = await getCallerId();
+      //
+      // Phase 25 Step 25.1: no `.eq('user_id', userId)` filter. The
+      // `trips_editor_budget_update` RLS policy explicitly grants editors
+      // permission to UPDATE total_budget; the prior client filter
+      // blocked that path. RLS + the
+      // `enforce_trips_column_restrictions` trigger (which permits
+      // total_budget for editors) gate authorization correctly.
+      // Touching the session keeps the JWT fresh before the round trip.
+      await getCallerId();
       const { error } = await supabase
         .from('trips')
         .update({ total_budget })
-        .eq('id', tripId)
-        .eq('user_id', userId);
+        .eq('id', tripId);
       if (error) throw error;
       return tripId;
     },
