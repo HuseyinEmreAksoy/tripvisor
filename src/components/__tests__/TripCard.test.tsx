@@ -19,6 +19,7 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     cost_per_km: 0.2,
     total_budget: null,
     route_render_mode: 'optimized',
+    cover_photo_google_place_id: null,
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,
