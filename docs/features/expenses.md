@@ -1,6 +1,6 @@
 # expenses
 
-**Status**: 🚧 In progress — data layer shipped Phase 20 (2026-04-25); UI shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (currency formatting, editor budget edit, see below); web smoke pending (skipped per user direction).
+**Status**: 🚧 In progress — data layer shipped Phase 20 (2026-04-25); UI shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (currency formatting, editor budget edit); Phase 25 bug fix 2026-04-26: `useUpdateTripBudget` and `useUpdateTrip` owner-only client filters removed so editor collaborators can actually save budget changes (the Phase 22 RLS was correct; the client filter was the remaining blocker); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer), ui-specialist (UI)
 **Depends on**: trip-crud
 
@@ -87,6 +87,6 @@ Nullable column `total_budget numeric null` on `trips` (migration `0010_trip_bud
 
 ## Known limitations
 1. ~~Budget UI uses static `$` symbol~~ — resolved Phase 22 via `formatCurrency()` helper and `trip.currency` prop threading.
-2. ~~Editor collaborators cannot edit `trips.total_budget`~~ — resolved Phase 22 via `0015_trips_editor_budget_rls.sql` (column-restricted RLS + trigger).
+2. ~~Editor collaborators cannot edit `trips.total_budget`~~ — resolved Phase 22 via `0015_trips_editor_budget_rls.sql` (column-restricted RLS + trigger). Phase 25 additionally removed the client-side `.eq('user_id', ...)` filter in `useUpdateTripBudget` and `useUpdateTrip` that was silently blocking editors despite the RLS permitting the update.
 3. Per-leg or per-place expense granularity is out of scope for MVP; `day_index` provides day-level granularity.
 4. `cost_per_km` on `trips` is deprecated but not dropped; any UI referencing it is legacy.

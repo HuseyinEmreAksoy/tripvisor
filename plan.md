@@ -1,6 +1,6 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 24 complete — Analytics + place reactions + use-my-location routing
+**Current phase**: Phase 25 complete — Editor unblock + travel-product polish + carryover sweep
 **Last updated**: 2026-04-26
 
 ## Status by phase
@@ -32,6 +32,7 @@
 | 22 | Phase 21 cleanup + hardening | ✅ Code complete 2026-04-26 — automated tests (22.9) + live smoke (22.10) explicitly skipped per user direction (same as Phase 21); platforms unverified; migration landed as `0015_trips_editor_budget_rls.sql` (slot 0014 was already taken) | backend + ui + docs |
 | 23 | Routing UX (manual vs. optimal) + per-day add flow + travel/dwell labels + reviews expansion + transport-mode polylines | ✅ Code complete 2026-04-26 — automated tests (23.12) + live smoke (23.13) explicitly skipped per user direction (same as Phases 21 + 22); platforms unverified | backend + ui + docs |
 | 24 | Analytics + place reactions + use-my-location routing | ✅ Code complete 2026-04-26 — automated tests (24.15) + live smoke (24.14) explicitly skipped per user direction (same as Phases 21–23); reviewer pass (24.13) skipped per user direction; platforms unverified | backend + ui + docs |
+| 25 | Editor unblock + travel-product polish + carryover sweep | ✅ Code complete 2026-04-26 — automated tests + live smoke explicitly skipped per user direction (same as Phases 21–24); reviewer pass skipped per user direction; platforms unverified. Steps 25.1–25.12 shipped; Step 25.13 (delete `useCollaboratedTrips`) NOT executed — carried to Phase 26 candidates. | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -3207,3 +3208,237 @@ The following items are code-complete blockers or acknowledged follow-ups from P
 6. **Deletion of deprecated `useCollaboratedTrips`** — the hook is marked `@deprecated` in `src/api/trip-collaborators.ts` with all call sites migrated to `useTrips()`. The dead code can be removed once a grace period passes and no runtime callers remain.
 7. **Chart library upgrade** — if/when the project upgrades to React 19, `victory-native@41` (which requires `@shopify/react-native-skia >= 1.2.3` + React 19) becomes an option. The hand-rolled SVG charts can be replaced at that point. No action required while on React 18.
 8. **Per-collaborator reaction views** — the `trip_place_reactions` data layer (Phase 24) already stores reactions per `user_id`, making cross-collaborator reaction visibility ("your travel partner liked this too") possible without a schema change. The UI surface was explicitly deferred to Phase 25+.
+
+---
+
+## Phase 25 — Editor unblock + travel-product polish + carryover sweep
+
+**Goal**: Ship a tightly-scoped polish phase that (a) fixes the owner-only client filters that silently block editor collaborators from saving the very rows the Phase 22 RLS was widened for, (b) lifts the trips list and itinerary out of "bare CRUD" with cover photos and place thumbnails, (c) closes high-impact missing UX (auth-credential editing, place notes UI, currency picker, trip duplicate shortcut, archived-trip filter visibility, dev-only Edge banner), and (d) clears two carryovers from Phase 24 candidates (delete deprecated `useCollaboratedTrips`, audit owner-filter mistakes across `src/api/`).
+
+**Status**: ✅ Code complete 2026-04-26 — automated tests + live smoke explicitly skipped per user direction (same as Phases 21–24). Reviewer pass skipped per user direction. Platforms unverified. Step 25.13 (delete deprecated `useCollaboratedTrips`) was NOT executed in this wave — moved to Phase 26 candidates. See `docs/smoke/phase-25.md` for the deferred-state record.
+
+**Entry criteria**:
+- Phase 24 code complete (analytics + reactions + use-my-location shipped)
+- All Phase 22 editor-budget RLS migrations live (`0015_trips_editor_budget_rls.sql`)
+- Migration slot 0018 confirmed available (last shipped: `0017_trip_place_reactions.sql`)
+- `place-details` Edge Function already deployed and supporting a `photos` field mask (verified in Phase 1+; no change to its signature in this phase)
+
+**Phase exit criteria**:
+- An editor collaborator can save a `total_budget` change AND any field in `UpdateTripPatch` (`title`, `currency`, `daily_hours_budget`, `transport_mode`, `total_budget`) within the bounds of the `enforce_trips_column_restrictions` trigger allow-list, with no client-side blocker. Owner can still do everything they could before.
+- Every `.eq('user_id', ...)` filter in `src/api/` has either been removed (RLS gates it) or has an inline comment stating "defense-in-depth on top of RLS, intentional".
+- Trip list cards show a cover photo when one is configured; the trip detail header lets the user pick any place from the trip as the cover (or "no cover").
+- Each place row in ItineraryTab shows a small thumbnail (first Google photo per place) when available and degrades gracefully to the existing no-photo layout when not.
+- Settings screen has working "Change email" and "Change password" affordances calling Supabase Auth `updateUser`.
+- Each `trip_places` row in ItineraryTab has an inline "Add note" affordance that opens a small editor and persists `trip_places.notes` via the existing `useUpdateTripPlace` hook.
+- Each `trip_accommodations` row has the same affordance against `trip_accommodations.notes`.
+- The trip card kebab menu has a "Duplicate trip" entry that calls the existing `duplicate_trip` RPC (already shipped in Phase 7) and routes to the new trip on success.
+- New-trip form has a currency picker (defaults from the user's locale; falls back to USD); the chosen currency persists on `trips.currency`.
+- Trips list has a search box (case-insensitive substring on title) and the existing archived-tab toggle is visible from one tap (no regression).
+- Dev-only banner: when `__DEV__ && process.env.EXPO_PUBLIC_SUPABASE_URL` points to localhost, an unobtrusive banner shows "Local Edge Functions unreachable" if a `?ping` to the optimize function fails on app boot. Production: banner code path is dead-stripped or no-ops via the env check.
+- `useCollaboratedTrips` is deleted; `tripCollaboratorsKeys.mine` is removed if no other consumers reference it; no runtime callers reference the deleted symbol.
+- Phase 25 candidate item #1 (budget hook) and #6 (deprecated `useCollaboratedTrips`) are struck from the carryover list.
+
+**Default execution mode**: Per the user's standing direction across Phases 21–24, automated tests and live smoke are EXPLICITLY SKIPPED for Phase 25. Reviewer pass also skipped (same as Phase 24). Native iOS / Android verification deferred-to-user-smoke as standard.
+
+**Out of scope for Phase 25**:
+- ADRs for collaboration model + editor-budget RLS (still deferred from Phase 21–22; user has not asked)
+- Real transit polyline rendering (carryover #5 — needs a dedicated phase; ships dashed fallback as v1)
+- Per-collaborator reaction views (carryover #8 — UI surface deferred to Phase 26+)
+- Chart library upgrade (carryover #7 — gated on React 19)
+- "Delete my account" flow (legal complexity; existing JSON export covers data takeout)
+- Cross-trip recommendations / ML scoring
+- `expo-sharing` native share-intent integration on the share-link screen — deferred to Phase 26 if user requests; copy-to-clipboard ships in this phase
+- Email-change confirmation UX (deep-linking the confirmation back into the app) — Supabase sends the email; v1 just shows a "check your inbox" toast and lets the existing magic-link flow handle the click
+
+**Critical path**: 25.1 → 25.2 → 25.4 → 25.7 → 25.13
+
+The four highest-risk items run in front: 25.1 (owner-filter audit) drives the bug fixes; 25.2 (cover-photo schema) gates the trip-list cover-photo UI in 25.7; 25.4 (`place-details` photos field-mask verification) gates both 25.7 (cover) and 25.8 (itinerary thumbnails); 25.13 is the docs sweep. Everything else can fan out in parallel.
+
+---
+
+### Step 25.1 — Owner-filter audit + fix in `src/api/` ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Audit every `.eq('user_id', ...)` call in `src/api/`. For each, decide one of three outcomes and apply: (A) **remove** if the call is on a write/read against a row whose RLS already gates it AND the filter is the only thing blocking editor collaborators (e.g. `useUpdateTripBudget` line 444, `useUpdateTrip` line 359, `useArchiveTrip` line 235, `useUnarchiveTrip` line 270 — but only if archive/unarchive should be allowed for editors per Phase 22 design; if owner-only, keep with a comment); (B) **keep with comment** if the filter is intentional defense-in-depth on a write that is owner-only by design (e.g. RLS already permits, but we want a hard client gate too); (C) **keep without comment** if it is a legitimate selector against `trip_collaborators.user_id` or `trip_place_reactions.user_id` (these are filtering by ownership of a per-user child row, not by trip ownership). Specifically: change `useUpdateTripBudget` and `useUpdateTrip` to outcome A (drop the filter, drop `getCallerId()` call). Verify `enforce_trips_column_restrictions` trigger allow-list covers `total_budget`, `route_render_mode`, and any other fields editor-collaborators are expected to write — if `title`/`currency`/`daily_hours_budget`/`transport_mode` should remain owner-only, the trigger gates those server-side; the client filter is redundant and should be removed.
+- **Inputs**: `src/api/trips.ts`, `src/api/trip-collaborators.ts`, `src/api/trip-place-reactions.ts`, migration `0015_trips_editor_budget_rls.sql`, migration `0016_trips_route_render_mode.sql` (for the trigger allow-list)
+- **Expected output**: edits to the affected hooks; comments inline on every remaining `.eq('user_id', ...)` explaining why it stayed; `npm run typecheck` clean; `useUpdateTripBudget` and `useUpdateTrip` no longer call `getCallerId()` for the `.eq('user_id', ...)` purpose
+- **Depends on**: None
+- **Parallel with**: 25.2, 25.3, 25.10
+- **Risks**:
+  - [Medium] Removing a filter on `useArchiveTrip`/`useUnarchiveTrip` could allow editors to archive someone else's trip if the trigger allow-list doesn't cover `archived_at` — Mitigation: read migration 0015 + 0016 trigger column allow-list; if `archived_at` is NOT in the editor allow-list, keep the filter on archive/unarchive with a comment. Default safe choice: only remove the filter on the two known broken hooks (`useUpdateTripBudget`, `useUpdateTrip`).
+  - [Low] A future contributor copying an existing hook may re-introduce the bug — Mitigation: a single comment block at the top of `trips.ts` summarizing the rule
+- **Verification**: editor collaborator can save a budget change in a manual two-user test (deferred per user direction); typecheck passes; grep shows every remaining occurrence has an explanatory comment
+
+### Step 25.2 — Trip cover-photo schema migration ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Author migration `supabase/migrations/0018_trips_cover_photo.sql` adding column `cover_photo_google_place_id text null` to `trips`. No FK (the column references Google's identifier, not a trip_places row — see ADR rationale below). Update `enforce_trips_column_restrictions` trigger allow-list to include `cover_photo_google_place_id` so editor-collaborators can change the cover (matches the spirit of `route_render_mode` being editor-flippable). No backfill (existing trips show "no cover").
+- **Inputs**: `supabase/migrations/0015_trips_editor_budget_rls.sql` (allow-list reference), `supabase/migrations/0016_trips_route_render_mode.sql` (the most recent trigger expansion)
+- **Expected output**: new migration; `npx supabase db reset` runs clean locally; `select cover_photo_google_place_id from trips` works; trigger test (manually in psql with two roles) shows editor can update the new column, viewer cannot
+- **Depends on**: None
+- **Parallel with**: 25.1, 25.3, 25.10
+- **Risks**:
+  - [Low] Migration slot collision — Mitigation: 0017 is the last shipped, 0018 confirmed open in plan entry criteria
+- **Verification**: migration runs clean; column visible in psql; trigger allows owner + editor writes, blocks viewer writes
+
+### Step 25.3 — Trip cover-photo client API hook ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Extend `UpdateTripPatch` in `src/api/trips.ts` to include `cover_photo_google_place_id`. No new hook — `useUpdateTrip` already covers it. Add the field to the Zod create schema if cover can be set at creation time (it cannot in this phase — set later from the trip detail screen — so the create schema is unchanged). Update `Trip` type in `src/api/types.ts` to include the new column.
+- **Inputs**: 25.1 (the cleaned-up `useUpdateTrip` is the consumer), 25.2 (the schema)
+- **Expected output**: type + patch shape updated; typecheck clean
+- **Depends on**: 25.1, 25.2
+- **Parallel with**: 25.4, 25.10, 25.11
+- **Risks**: [Low] Type drift if Trip is referenced in many places — Mitigation: typecheck catches it
+- **Verification**: `npm run typecheck` green; calling `useUpdateTrip(id).mutate({ cover_photo_google_place_id: 'ChIJ...' })` compiles
+
+### Step 25.4 — `place-details` photos field-mask verification + photo-URL hook ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: S
+- **Note**: `place-details` already accepted `'photos'` in the field mask. A new `place-photo` Edge Function was added (proxy with `verify_jwt = false`, photoName regex, 6h cache) rather than extending `place-details`. `usePlacePhotoUrl` is a pure URL builder in `src/api/place-photos.ts`, not a TanStack Query hook.
+- **Task**: Verify the existing `place-details` Edge Function accepts a `photos` field mask and returns a `photos[].name` (or equivalent — per Places API New, the call is `places/{place_id}/photos/{photo_resource}/media`). If the function already returns photos, no change. If it doesn't, widen its field mask whitelist and document the new shape. Then add `usePlacePhotoUrl(googlePlaceId, opts?: { maxWidthPx?: number })` in `src/api/places.ts` that issues a TanStack Query against the function with `staleTime: 1000 * 60 * 60 * 5` (5h — Google says photo URLs expire after a few hours; we cap below that to be safe), keyed on `(googlePlaceId, maxWidthPx)`. Returns `string | null`. Caller passes `null` for "no photo configured" and the hook short-circuits without a fetch.
+- **Inputs**: existing `supabase/functions/place-details/index.ts`; Places API (New) photo media URL contract
+- **Expected output**: hook + types in `src/api/places.ts`; field-mask widened in the Edge Function if needed; TanStack Query cache key registered in `_keys.ts`
+- **Depends on**: None (the hook is independent of 25.1–25.3 — but consumers in 25.7 + 25.8 need it)
+- **Parallel with**: 25.1, 25.2, 25.10
+- **Risks**:
+  - [High] Places API photo URLs may require a server-side proxy because the photo media URL itself encodes the API key — Mitigation: the Edge Function already proxies Place Details; if photos require a separate proxy hop, add `place-photo` Edge Function or expand `place-details` to redirect/return a signed proxy URL. Decide based on what `place-details` returns today.
+  - [Medium] Photo-URL expiry is shorter than 5h in some regions — Mitigation: TanStack Query refetches on window focus by default; if smoke shows broken images, drop staleTime to 1h
+  - [Low] Cost: each photo fetch is a Place Photos billable call — Mitigation: only fetch the first photo per place; skip in list views beyond the visible window if perf bites
+- **Verification**: hook returns a non-null URL for a known-good `google_place_id`; image renders in a sandbox screen; typecheck clean
+
+### Step 25.5 — Auth credential management hooks (change email + change password) ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Add `useChangeEmail()` and `useChangePassword()` mutations in `src/api/auth.ts` (or wherever `useSignOut` lives — read `app/(app)/settings.tsx` line 25 to confirm). Both call Supabase's `auth.updateUser({ email })` / `auth.updateUser({ password })`. `useChangeEmail` returns success once Supabase has queued the confirmation email; the UI surfaces "Check your inbox to confirm" copy. `useChangePassword` returns success on persist (no email confirmation step). Both invalidate any session-derived caches.
+- **Inputs**: existing `useSignOut` for hook structure reference
+- **Expected output**: two new exported hooks; typecheck clean
+- **Depends on**: None
+- **Parallel with**: 25.1, 25.2, 25.4, 25.10, 25.11
+- **Risks**:
+  - [Low] Supabase `updateUser` sends confirmation links; user may not realize email change is pending — Mitigation: UI copy makes the two-step flow explicit (Step 25.9)
+- **Verification**: `npm run typecheck` clean; hooks compile
+
+### Step 25.6 — Trip notes field on update-trip-place + accommodation hooks ✅ Done 2026-04-26
+- **Agent**: backend-specialist
+- **Size**: XS
+- **Task**: Verify `useUpdateTripPlace` already accepts a `notes` patch (per `src/api/trip-places.ts` line 86 — it does). Same for `useUpdateTripAccommodation`. If both already work, this step is a no-op verification only — mark complete and move on. If either doesn't accept `notes`, add it to the Zod update schema + type. Likely no code change needed; this is a guard against the UI step (25.10) finding a missing API surface mid-implementation.
+- **Inputs**: `src/api/trip-places.ts`, `src/api/trip-accommodations.ts`
+- **Expected output**: confirmation note in step verification; or a small type/schema patch if the field is missing
+- **Depends on**: None
+- **Parallel with**: 25.1, 25.2, 25.4, 25.5, 25.11
+- **Risks**: [Low] Hidden mismatch — Mitigation: this step exists exactly to catch one
+- **Verification**: typecheck clean; notes can be patched via existing hook
+
+### Step 25.7 — Trip list cards + cover-picker UI ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: (a) Update the trip card in `app/(app)/trips.tsx` (or wherever `TripCard` is rendered — read the file first) to render a cover photo when `trip.cover_photo_google_place_id` is set; degrade gracefully (existing no-photo card) when null. Use `usePlacePhotoUrl` from 25.4; show a low-opacity gradient overlay so the title remains readable. Reserve enough card height for the photo so layout doesn't jump as photos load. (b) On the trip detail header, add a "Set cover" affordance (kebab menu entry or inline pencil button) that opens a small modal listing all `trip_places` for the trip (using existing `useTripPlaces` hook); tapping a place persists `cover_photo_google_place_id` via `useUpdateTrip(id).mutate({ cover_photo_google_place_id: place.google_place_id })` and dismisses. Include a "Remove cover" entry that sets it to `null`.
+- **Inputs**: 25.3 (patch shape), 25.4 (photo URL hook); existing trip card layout
+- **Expected output**: trip cards render with photos; cover picker modal works on web mobile, web desktop, iOS, Android
+- **Depends on**: 25.3, 25.4
+- **Parallel with**: 25.8, 25.9, 25.10, 25.11, 25.12
+- **Risks**:
+  - [Medium] Layout jump if photo loads after the row is laid out — Mitigation: reserve the photo's aspect-ratio container at render time; show a skeleton placeholder while loading
+  - [Low] Photo aspect ratio varies — Mitigation: `objectFit: 'cover'` with fixed container ratio
+- **Verification**: pick a place as cover; reload; cover photo renders on the trip card; "Remove cover" clears it; typecheck clean
+
+### Step 25.8 — Place thumbnails in itinerary rows ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Add a 48x48 thumbnail to the left of each `trip_places` row in ItineraryTab using `usePlacePhotoUrl(place.google_place_id, { maxWidthPx: 96 })`. Degrade gracefully when the URL is null (show the existing icon placeholder). Skip the thumbnail entirely on the print view (`app/(app)/trip/[id]/print.tsx`) to avoid extra fetches in the print flow.
+- **Inputs**: 25.4 (photo URL hook); existing ItineraryTab row layout
+- **Expected output**: rows show thumbnails on web + native; print view unchanged
+- **Depends on**: 25.4
+- **Parallel with**: 25.7, 25.9, 25.10, 25.11, 25.12
+- **Risks**:
+  - [Medium] N+1 photo fetches on a 30-place trip — Mitigation: TanStack Query dedupes across components; first paint may be slow but subsequent renders hit cache. If smoke shows >2s of network spam, batch via a single Edge Function call and return a map of `{ placeId: photoUrl }`.
+  - [Low] Thumbnail layout breaks on very narrow web mobile — Mitigation: hide the thumbnail under 360px viewport
+- **Verification**: thumbnails render; missing photos show the existing placeholder; no layout regression on web desktop / web mobile / iOS / Android
+
+### Step 25.9 — Settings screen: change email + change password sections ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Add two collapsible sections to `app/(app)/settings.tsx`: "Change email" (TextField + submit button calling `useChangeEmail.mutate(value)`; on success, show a toast/banner: "Confirmation sent to <new email>. Click the link to finish.") and "Change password" (two TextFields — new password + confirm — with min-length validation, submit calls `useChangePassword.mutate(value)`; on success, "Password updated."). Both sections sit above the existing Sign Out button. Hide both behind `session?.user?.aud === 'authenticated'` (already implicit if the Settings screen requires auth).
+- **Inputs**: 25.5 (the hooks); existing settings screen layout + sign-out pattern
+- **Expected output**: settings screen has two new sections; submitting a password change actually changes it (manually verifiable); typecheck clean
+- **Depends on**: 25.5
+- **Parallel with**: 25.7, 25.8, 25.10, 25.11, 25.12
+- **Risks**: [Low] User confusion about email-confirmation flow — Mitigation: explicit copy ("Click the link in your inbox to finish")
+- **Verification**: change-password works in a manual signed-in session (deferred per user direction); change-email shows the inbox prompt; typecheck clean
+
+### Step 25.10 — Inline place-notes UI on itinerary rows + accommodation rows ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Add a small "Add note" affordance below each `trip_places` row in ItineraryTab (and below each `trip_accommodations` row on the Accommodation tab if it exists — read `app/(app)/trip/[id]/index.tsx` to confirm). Tapping expands an inline TextField (multiline, max 2000 chars to match `trip_places.notes` constraint); blur or "Save" persists via `useUpdateTripPlace.mutate({ id, notes })` (or the accommodation equivalent). Already-noted rows show the note preview in a smaller font with a "Edit note" affordance. Notes are visible to all viewers/editors (not author-private).
+- **Inputs**: 25.6 (verified API surface); existing per-day notes UI in `app/(app)/trip/[id]/index.tsx` line 1018+ as the visual + interaction pattern reference
+- **Expected output**: place rows have notes UI; accommodation rows have notes UI; persisted notes survive reload; typecheck clean
+- **Depends on**: 25.6
+- **Parallel with**: 25.7, 25.8, 25.9, 25.11, 25.12
+- **Risks**:
+  - [Medium] Crowded layout on small phones — Mitigation: collapsed-by-default; expand on tap; same pattern as the existing per-day note editor
+  - [Low] Editor collaborator may want to edit notes — RLS already permits; no client filter blocks
+- **Verification**: type a note, blur, reload, note persists; works on web + native
+
+### Step 25.11 — New-trip currency picker ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Add a Currency picker to `app/(app)/trip/new.tsx` between the transport-mode selector and the daily-hours field. Default to the user's locale-detected currency (`Intl.NumberFormat(undefined, { style: 'currency' }).resolvedOptions().currency` — fall back to USD). Use a fixed list of common currencies (USD, EUR, GBP, JPY, CAD, AUD, INR, TRY, CNY, KRW, BRL, MXN, NZD, CHF, SGD — pull from architecture if a canonical list exists). Persist via the existing `useCreateTrip` flow (extend `createTripSchema` to include `currency`). Existing trips' currency stays untouched.
+- **Inputs**: existing new-trip form layout
+- **Expected output**: currency dropdown/segmented control; new trip rows have correct currency; typecheck clean
+- **Depends on**: None
+- **Parallel with**: 25.7, 25.8, 25.9, 25.10, 25.12
+- **Risks**:
+  - [Low] Wide currency lists are visually noisy on web — Mitigation: searchable picker on web, segmented chips on native, or a single Picker component with the canonical 15-list
+- **Verification**: create a trip in EUR; trip detail shows EUR symbol on the budget card; typecheck clean
+
+### Step 25.12 — Trips list: search box + duplicate kebab + dev Edge banner ✅ Done 2026-04-26
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Three small additions to `app/(app)/trips.tsx`. (a) Search box at the top of the list (always visible above the active/archived tab toggle): debounced 200ms, case-insensitive substring filter against `trip.title`, applied client-side after the existing `useTrips({ archived })` query. Empty result shows existing EmptyState with copy "No trips match \"<query>\"". (b) Duplicate-trip entry in the trip card kebab menu: calls `useDuplicateTrip().mutateAsync(id)` and routes to `/trip/<newId>` on success; toast on error. (c) Dev-only Edge-banner: a `<DevEdgeBanner>` component mounted at the top of `app/(app)/_layout.tsx` (so it covers every signed-in screen, not just the trips list). On mount it pings `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/optimize-trip?ping` with a 2s timeout. If `__DEV__` and the URL contains `localhost`/`127.0.0.1` and the ping fails, render a slim red bar: "Local Edge Functions unreachable — run `npx supabase functions serve`". Production: the env check fails and the component returns null. Re-tries every 30s while it's failing.
+- **Inputs**: existing trips list, existing kebab menu, existing `useDuplicateTrip` from `src/api/trips.ts` line 379
+- **Expected output**: search filter works; duplicate kebab works; dev banner appears only locally on Edge failure; typecheck clean
+- **Depends on**: None
+- **Parallel with**: 25.7, 25.8, 25.9, 25.10, 25.11
+- **Risks**:
+  - [Medium] Banner might cover important UI on small viewports — Mitigation: 28px max height; respects safe-area
+  - [Low] Search debounce + cache invalidation interaction — Mitigation: filter is purely client-side over already-loaded data; no extra query
+- **Verification**: search works; duplicate creates a new trip with the same places; banner appears only when Edge is down in dev
+
+### Step 25.13 — Carryover sweep: delete deprecated `useCollaboratedTrips` + docs sync ⚠ NOT EXECUTED in Phase 25 wave — carried to Phase 26 candidates
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: (a) Delete `useCollaboratedTrips` from `src/api/trip-collaborators.ts` (line 239); delete `tripCollaboratorsKeys.mine()` if unreferenced (read `_keys.ts` line 116); confirm no callers in `app/` or `src/components/`. (b) Update `docs/architecture.md`: add the `cover_photo_google_place_id` column to the `trips` schema section + the editor allow-list under collaboration; add `usePlacePhotoUrl` to the place-details client surface; add the change-email/change-password flow to the auth section. (c) Update `docs/features/overview.md` to add (or extend existing) feature docs: trip cover photos, place thumbnails, place notes UI, currency picker, profile credentials. (d) Update `plan.md`: flip Phase 25 status to ✅ Done; add the canonical Phase 25 row to the phase table at the top; strike candidate items #1 (budget hook) and #6 (deprecated `useCollaboratedTrips`) from the Phase 25 candidates list (they shipped in this phase).
+- **Inputs**: all preceding steps shipped
+- **Expected output**: deprecated function gone; docs reflect shipped reality; phase table updated; carryover list trimmed
+- **Depends on**: 25.1–25.12
+- **Parallel with**: (none — final step)
+- **Risks**: [Low] Doc drift — Mitigation: this step is the alignment pass
+- **Verification**: grep for `useCollaboratedTrips` returns 0 results in `src/`; phase table has Phase 25 row; carryover items #1 and #6 struck
+
+---
+
+### Out-of-scope for Phase 25 (push to Phase 26+)
+- ADRs for collaboration model + editor-budget RLS (still deferred from Phase 21–22)
+- Real transit polyline rendering (carryover #5 — needs a dedicated phase; ships dashed fallback as v1)
+- Per-collaborator reaction views (carryover #8 — UI surface deferred)
+- Chart library upgrade (carryover #7 — gated on React 19)
+- "Delete my account" flow (legal complexity)
+- `expo-sharing` native share-intent integration on share-link screen (deferred to Phase 26 if requested; copy-to-clipboard ships)
+- Email-change confirmation deep-link routing back into the app
+- Native iOS/Android verification of any Phase 25 surface — deferred to user smoke as standard
+
+---
+
+## Phase 26 candidates (known carryovers from Phases 21–25)
+
+The following items are acknowledged follow-ups or explicit deferrals from prior phases, collected here for the next planning conversation.
+
+1. **Live web smoke for Phases 21–25 features** — no golden-path browser walk has been recorded for budget tracking, collaboration role change, accommodation autocomplete, route-render-mode toggle, transit dashed lines, add-place day picker (Phases 21–23), analytics, reactions, use-my-location (Phase 24), or any Phase 25 surface (cover photos, profile credential changes, place thumbnails, notes editors, currency picker, duplicate navigation). All five phases are code-complete-unverified.
+2. **Native iOS / Android verification** — all platform-verified boxes across Phases 21–25 remain empty. Standard deferred-to-user-smoke policy.
+3. **Delete deprecated `useCollaboratedTrips`** — hook is marked `@deprecated` in `src/api/trip-collaborators.ts`; Phase 25 Step 25.13 was NOT executed. The dead code can be removed once a Phase 26 passes confirms no runtime callers remain. `tripCollaboratorsKeys.mine` should also be removed at the same time.
+4. **ADRs** — still deferred from Phase 21 Step 21.2 (collaboration model) and Phase 22 (editor-budget RLS). No ADR file exists for either decision.
+5. **Real transit polyline rendering** — Phase 23 ships dashed straight-line fallback + "Plan transit" deep link. Full transit polyline rendering (multi-leg, vehicle icons, transfer points) requires a dedicated UI mode and a separate phase.
+6. **Chart library upgrade** — `victory-native@41` requires `@shopify/react-native-skia >= 1.2.3` + React 19. The hand-rolled SVG charts can be replaced once the project upgrades to React 19.
+7. **Per-collaborator reaction views** — `trip_place_reactions` data layer already stores reactions per `user_id`; cross-collaborator visibility UI ("your travel partner liked this too") was deferred from Phase 24.
+8. **Email-change confirmation deep-link** — Supabase sends the confirmation link; routing that link click back into the app (universal links / custom scheme) was deferred from Phase 25.

@@ -3,7 +3,7 @@
 **Status**: ✅ Done (Web). Native deferred to user smoke.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: trip-crud
-**Shipped on**: 2026-04-25 — commit a2a24e3 (Phase 7)
+**Shipped on**: 2026-04-25 — commit a2a24e3 (Phase 7). Phase 25 (2026-04-26): duplicate kebab now navigates to the new trip's detail screen via `useDuplicateTrip().mutateAsync` + `router.push`.
 
 ## Platforms verified
 - ☐ iOS — deferred to user smoke

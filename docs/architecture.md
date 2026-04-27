@@ -12,6 +12,72 @@
 - Tables: `trips`, `trip_days`, `trip_places`, `trip_legs`, `trip_expenses`, `trip_collaborators`, `trip_accommodations`. See `supabase/migrations/`.
 - **RLS on every table**; child tables scoped via `user_can_access_trip()` helper (Phase 21) — previously scoped directly via `trips.user_id`.
 
+## Data model additions (Phase 25)
+
+### `trips.cover_photo_google_place_id` (migration `0018_trips_cover_photo.sql`)
+
+New nullable column `cover_photo_google_place_id text null` on `trips`. Stores the `google_place_id` of whichever trip place the user has designated as the trip cover. A `google_place_id` is permanently storable per the Google Places ToS (30-day ceiling applies to transient data like ratings, reviews, and photos; the place ID itself is permanently referenceable).
+
+The column is included in the editor allow-list of the `enforce_trips_column_restrictions` trigger, matching the same rationale as `route_render_mode` — it is a display preference, not a billing or identity field, so editor collaborators can set it without owner permission.
+
+Updated via `useUpdateTrip({ cover_photo_google_place_id })`. The `UpdateTripPatch` type in `src/api/types.ts` was extended with the new field.
+
+**Trigger maintenance note**: the current editor-allowed columns are `total_budget`, `route_render_mode`, `cover_photo_google_place_id`, and `updated_at`. Any future column added to `trips` must be explicitly added to this list or it will be owner-only by default.
+
+### Phase 25 — owner-filter bug fix
+
+Two hooks in `src/api/trips.ts` carried a client-side `.eq('user_id', auth.uid())` filter on UPDATE calls that pre-dated Phase 22's editor-budget RLS:
+
+- `useUpdateTrip` — owner filter removed; RLS + trigger now gate all writes correctly
+- `useUpdateTripBudget` — owner filter removed for the same reason
+
+These filters were silently returning zero rows for editor collaborators — the Supabase `update()` would succeed at the HTTP level (no error) but update no row because the `user_id` of the trip did not match the editor's `auth.uid()`. The RLS policies and `enforce_trips_column_restrictions` trigger provide the correct server-side enforcement. Removing the client filter unblocks editors without relaxing any server-side rule.
+
+Audit: 9 total `.eq('user_id', ...)` occurrences across `src/api/`. 2 dropped. 7 retained with inline comments explaining the design intent (auth-scoped reads or owner-only writes).
+
+## Photos (Phase 25)
+
+### How cover photos and place thumbnails work
+
+The photo pipeline has three stages:
+
+1. **`place-details` Edge Function** — called with `fields: ['photos']`; returns `photos[].name` resource names (e.g. `places/<id>/photos/<ref>`). Photo names are held in the TanStack Query cache only and are never written to the DB.
+2. **`usePlacePhotoUrl(photoName, { maxWidthPx? })`** — pure URL builder in `src/api/place-photos.ts`. Constructs a URL to the `place-photo` Edge Function proxy. No network call, no React Query hook.
+3. **`place-photo` Edge Function** — receives the URL, fetches the binary image bytes from Google using the server API key, and streams them back with `Cache-Control: public, max-age=21600` (6 h).
+
+`<Image src={url}>` from `expo-image` is used at the render site; it has no knowledge of the proxy layer.
+
+### `place-photo` Edge Function contract
+
+- **Endpoint**: `GET /functions/v1/place-photo?photoName=<resource>&maxWidthPx=<n>`
+- **Auth**: `verify_jwt = false` (configured in `supabase/config.toml [functions.place-photo]`). `<Image src>` cannot send Authorization headers. Photo names are tied to public Google Place IDs and carry no user data; the server API key never leaves the function.
+- **Security**: `photoName` is validated against `^places/[A-Za-z0-9_\-]+/photos/[A-Za-z0-9_\-]+$` before forwarding to Google. Requests that fail this regex return 400 `invalid_input`. This prevents the function from being used as a generic CDN proxy.
+- **Caching**: `Cache-Control: public, max-age=21600` (6 h, matches Google's photo URL expiry).
+- **Error codes**: `invalid_input` (400), `server_misconfigured` (500), `photo_not_found` (404), `google_places_disabled | google_key_restricted | google_places_forbidden | upstream_error` (502), `upstream_timeout` (504).
+- **README**: `supabase/functions/place-photo/README.md`.
+
+### `_shared/cors.ts` update
+
+`Access-Control-Allow-Methods` was widened from `POST, OPTIONS` to `GET, POST, OPTIONS` in Phase 25 to support the new GET-based `place-photo` function.
+
+### Why server-side proxying for photos
+
+Fetching a photo from the Google Places Photos API requires a server API key, which the project's ToS compliance rules forbid from shipping to the client. The proxy lets the client use a bare `<Image src>` URL (no auth header needed) while keeping the server key exclusively on the Edge Function side.
+
+### Client API additions (Phase 25)
+
+**`src/api/place-photos.ts`** (new):
+- `usePlacePhotoUrl(photoName, options?)` — pure URL builder; returns `{ url: string | null }`. Exported from `src/api/index.ts`.
+
+**`src/api/auth.ts`** (extended):
+- `useChangeEmail()` — calls `supabase.auth.updateUser({ email })`. Email change is double-confirm (Supabase emails the new address). Throws `AuthMutationError`.
+- `useChangePassword()` — validates min 8 chars client-side; calls `supabase.auth.updateUser({ password })`. Throws `AuthMutationError`.
+- `AuthMutationError extends Error` — new class with `code: 'email_exists' | 'weak_password' | 'same_password' | 'unknown'` and `message: string`.
+
+**`src/api/trips.ts`** — `useUpdateTrip` and `useUpdateTripBudget` no longer carry the `.eq('user_id', auth.uid())` owner filter (Phase 25 bug fix — see above). The `UpdateTripPatch` type now includes `cover_photo_google_place_id`.
+
+**`src/api/types.ts`** — `Trip.cover_photo_google_place_id: string | null` added.
+
 ## Data model additions (Phase 24)
 
 ### `trip_place_reactions` table (migration `0017_trip_place_reactions.sql`)
@@ -184,7 +250,7 @@ Migration `0015_trips_editor_budget_rls.sql` (note: originally planned as `0014`
 
 **Phase 23 update** (`0016_trips_route_render_mode.sql`): `route_render_mode` was added to the trigger's editor-allowed-diff list alongside `total_budget` and `updated_at`. The `useUpdateRouteRenderMode` client hook omits the owner-only `user_id` filter so editors can call it directly.
 
-**Maintenance contract**: any new column added to `trips` in a future migration MUST be evaluated and either added to the trigger's allowed-diff list or left out (the default is denied for non-owners). The trigger header comment records this contract. The current editor-allowed columns are: `total_budget`, `route_render_mode`, `updated_at`.
+**Maintenance contract**: any new column added to `trips` in a future migration MUST be evaluated and either added to the trigger's allowed-diff list or left out (the default is denied for non-owners). The trigger header comment records this contract. The current editor-allowed columns are: `total_budget`, `route_render_mode`, `cover_photo_google_place_id`, `updated_at`.
 
 ### Invite-accept flow
 
@@ -503,12 +569,10 @@ ALLOWED_ORIGINS=https://tripvisor.pages.dev,https://tripvisor.app,http://localho
 
 `ALLOWED_ORIGINS` fails closed. If unset, Edge Functions accept no cross-origin browser traffic — set it explicitly for every environment.
 
-### Google Places photos — referer restriction REQUIRED
+### Google Places photos — server proxy (Phase 25)
 
-Photo URLs are built client-side on the place-details screen using
-`EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY` as the query param. That key **must** be
-referer-restricted in Google Cloud Console (HTTPS allow-list for the
-deployed web host, plus `localhost` for dev). Without the restriction the
-key can be extracted from network traffic and reused to burn quota.
+Photo bytes are now fetched via the `place-photo` Edge Function proxy, which uses `GOOGLE_MAPS_SERVER_KEY` (a Supabase secret — never bundled in the client). The client constructs a URL to the proxy using only `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`, both of which are already exposed publicly by design.
+
+`EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY` is still required for the Maps JavaScript API (web map rendering), but is no longer used for photo fetches.
 
 Native Maps SDK keys live in `app.json` under `ios.config.googleMapsApiKey` and `android.config.googleMaps.apiKey` — those are embedded in the binary and restricted by bundle id.

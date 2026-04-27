@@ -1,6 +1,6 @@
 # trip-crud
 
-**Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred. Phase 23: add-place flow rewritten (day picker + stay-on-screen + stepper); bicycling in transport picker; smoke deferred per user direction.
+**Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred. Phase 23: add-place flow rewritten (day picker + stay-on-screen + stepper); bicycling in transport picker; smoke deferred per user direction. Phase 25: cover photo, currency picker in new-trip form, search box, duplicate kebab shortcut shipped 2026-04-26; smoke deferred per user direction.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: auth
 
@@ -40,6 +40,41 @@ Complete rewrite of the add-place screen:
 - **`order_in_day`**: computed client-side as `max(order_in_day) + 1` within the chosen day from `existingPlaces`. Falls back to `0` for the first place on a day.
 - **`?day=N` URL param**: preselects a day chip on mount — used from day-header deep links.
 - **Bicycling**: `app/(app)/trip/new.tsx` transport-mode picker now includes `bicycling` as a fourth option alongside driving / walking / transit.
+
+## Phase 25 changes
+
+### Cover photo (`trips.cover_photo_google_place_id`)
+
+New nullable column added via migration `0018_trips_cover_photo.sql`. See `docs/features/photos.md` for the full pipeline.
+
+- **`TripCard.tsx`** — renders a `CoverHero` block when `cover_photo_google_place_id` is set; falls back to a gradient placeholder.
+- **SettingsTab `CoverPhotoSection`** — "Set cover" / "Change" / "Remove" affordances; role-gated to `canEdit`.
+- **`CoverPickerModal`** — lists trip places with thumbnails; tap picks a place as cover; calls `useUpdateTrip({ cover_photo_google_place_id })`.
+- `useUpdateTrip` and `useUpdateTripBudget` had their `.eq('user_id', auth.uid())` owner-only client filters dropped (Phase 25.1 bug fix) — editor collaborators can now actually save these mutations via RLS.
+
+### Currency picker in new-trip form
+
+`app/(app)/trip/new.tsx` now includes a visual chip picker for currency at creation time. Options: USD, EUR, GBP, TRY, JPY. `detectDefaultCurrency` derives the default from the device locale. The chosen currency is persisted post-create via `useUpdateTrip` patch.
+
+### Trip list improvements (Phase 25)
+
+- **Search box** in `app/(app)/trips.tsx` (already shipped in Phase 11/23; Phase 25 confirms it is present and working alongside the cover photo and kebab changes).
+- **Duplicate kebab**: the existing TripCard kebab (Phase 7) now also navigates to the newly created trip's detail screen on duplicate via `useDuplicateTrip().mutateAsync` + `router.push`.
+
+### EdgeRuntimeBanner (dev-only)
+
+New `EdgeRuntimeBanner` component in `app/(app)/trips.tsx` — only renders in localhost/127.0.0.1 dev mode when `useEdgeRuntimeHealth` returns `'unreachable'`. Production users never see it.
+
+- `src/hooks/useEdgeRuntimeHealth.ts` — pings `${SUPABASE_URL}/functions/v1/places-autocomplete?ping` once on mount in localhost mode; returns `{ status: 'reachable' | 'unreachable' | 'unknown' }`. Returns `'unknown'` (no banner) in production.
+
+### Notes editors (Phase 25 co-ship)
+
+- **`PlaceNotesEditor`** in `PlaceRow` — inline tap-to-edit; gated on `canEdit`.
+- **`AccommodationNotesEditor`** in `AccommodationCard.tsx` — inline tap-to-edit; viewer read-only.
+
+### Currency segmented control (SettingsTab)
+
+In `app/(app)/trip/[id]/index.tsx` SettingsTab, the currency segmented control is now gated to owner-only (`isOwner`). Editor collaborators see currency as read-only text.
 
 ## Phase 20 changes
 
