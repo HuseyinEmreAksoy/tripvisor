@@ -1,0 +1,75 @@
+name: Build web
+
+# This workflow is a build sanity check, not a deploy. Cloudflare Pages
+# pulls from the GitHub repo directly via its own integration and runs
+# `npm install && npm run build:web` itself; this job mirrors that build
+# on every push so a broken bundle is caught in PR review rather than
+# discovered after the Pages deploy attempt fails.
+#
+# The compiled `dist/` is uploaded as an artifact for inspection
+# (download from the Actions run page), but is NOT deployed from here.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+# Cancel any in-progress run on the same ref when a new commit lands.
+# Mirrors the policy in ci.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: expo export --platform web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # EXPO_PUBLIC_* values are inlined at bundle time. They MUST be set
+      # in the GitHub repo Settings -> Secrets and variables -> Actions.
+      # Missing values do not fail the build (Metro bundles `undefined`),
+      # but the resulting bundle will misbehave at runtime — the smoke
+      # checklist in docs/deployment.md catches this.
+      - name: Build web bundle
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY }}
+          EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
+        run: npm run build:web
+
+      - name: Report bundle size
+        if: always()
+        run: |
+          if [ -d dist ]; then
+            echo "## Web bundle" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            du -sh dist >> "$GITHUB_STEP_SUMMARY" || true
+            find dist -type f -name '*.js' -exec du -h {} + | sort -rh | head -10 >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::dist/ directory not found — build likely failed."
+          fi
+
+      - name: Upload dist artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

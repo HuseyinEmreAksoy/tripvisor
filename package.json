@@ -14,7 +14,14 @@
     "test:coverage": "jest --coverage",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "smoke": "playwright test --reporter=list"
+    "smoke": "playwright test --reporter=list",
+    "deploy:db": "supabase db push --linked",
+    "deploy:functions": "supabase functions deploy places-autocomplete && supabase functions deploy place-details && supabase functions deploy place-photo --no-verify-jwt && supabase functions deploy distance-matrix && supabase functions deploy directions-polyline && supabase functions deploy optimize-trip && supabase functions deploy manage-collaborators && supabase functions deploy share-trip && supabase functions deploy delete-account && supabase functions deploy export-account",
+    "deploy:web:preview": "npm run build:web && echo \"Web bundle built at dist/. Cloudflare Pages will deploy on push to master.\"",
+    "deploy:android:preview": "eas build --platform android --profile preview",
+    "deploy:android:production": "eas build --platform android --profile production",
+    "deploy:ios:preview": "eas build --platform ios --profile preview",
+    "deploy:ota": "eas update --branch production"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
