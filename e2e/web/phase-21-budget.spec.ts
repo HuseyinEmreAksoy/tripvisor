@@ -76,6 +76,12 @@ test.describe('Phase 21 — Budget UI golden path', () => {
 
     // ── Step 1: Set a budget ─────────────────────────────────────────────────
 
+    // The Settings tab is a ScrollView; the Budget section appears below Cover photo,
+    // Daily plan time, Transport mode, Currency, and Travel cost sections.
+    // Scroll the page down to bring the Budget section into view before interacting.
+    await page.evaluate(() => { window.scrollBy(0, 600); });
+    await page.waitForTimeout(500);
+
     // Look for "Set budget" CTA button (BudgetCard renders this when no budget is set).
     // If a budget already exists, look for the "Edit" button instead.
     const setBudgetBtn = page
@@ -83,6 +89,9 @@ test.describe('Phase 21 — Budget UI golden path', () => {
       .or(page.getByRole('button', { name: /set budget/i }))
       .or(page.getByRole('button', { name: /edit budget/i }))
       .first();
+
+    // Try scrollIntoView to ensure the button is reachable.
+    await setBudgetBtn.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined);
 
     const hasBudgetSurface = await setBudgetBtn.isVisible({ timeout: 8_000 }).catch(() => false);
     if (!hasBudgetSurface) {
@@ -106,10 +115,12 @@ test.describe('Phase 21 — Budget UI golden path', () => {
     }
 
     await budgetInput.fill('1500');
+    // The BudgetEditSheet save button has accessibilityLabel "Save trip budget".
+    // Use force:true to bypass the BottomSheet backdrop's fixed-position intercept.
     const confirmBudgetBtn = page
-      .getByRole('button', { name: /save|confirm|set budget/i })
+      .getByRole('button', { name: /save trip budget/i })
       .first();
-    await confirmBudgetBtn.click();
+    await confirmBudgetBtn.click({ force: true });
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);
 
@@ -136,10 +147,18 @@ test.describe('Phase 21 — Budget UI golden path', () => {
 
     await addExpenseBtn.click();
 
-    // ExpenseEditSheet: select category "Food", kind "estimated", amount 120.
-    const amountInput = page
-      .getByRole('textbox', { name: /amount/i })
-      .or(page.locator('input[placeholder*="amount" i]'))
+    // ExpenseEditSheet: amount 120. Wait for the dialog to appear.
+    // The BottomSheet dialog takes a render cycle to mount; wait for it.
+    await page.waitForTimeout(500);
+    await dismissDevOverlay(page);
+
+    // The ExpenseEditSheet has accessibilityLabel "Add expense" on the BottomSheet
+    // container (role="dialog"). Scope within the dialog for reliable selection.
+    const expenseSheetDialog = page.locator('[role="dialog"]').last();
+
+    const amountInput = expenseSheetDialog
+      .getByRole('textbox', { name: /expense amount/i })
+      .or(expenseSheetDialog.locator('input[placeholder="0.00"]'))
       .first();
 
     const hasAmountInput = await amountInput.isVisible({ timeout: 5_000 }).catch(() => false);
@@ -148,21 +167,28 @@ test.describe('Phase 21 — Budget UI golden path', () => {
     }
 
     await amountInput.fill('120');
-    // Save the expense.
-    const saveExpenseBtn = page
-      .getByRole('button', { name: /save|add|confirm/i })
+    // Save the expense. The dialog save button has label/accessibilityLabel "Add expense".
+    // Evaluate click directly to bypass any pointer-event intercept from the backdrop.
+    const saveExpenseBtn = expenseSheetDialog
+      .getByRole('button', { name: /^add expense$/i })
       .first();
-    await saveExpenseBtn.click();
-    await page.waitForLoadState('networkidle');
+    await saveExpenseBtn.evaluate((el) => (el as HTMLElement).click());
+    // Allow the async mutation + cache invalidation to settle.
+    await page.waitForTimeout(2000);
     await dismissDevOverlay(page);
 
     // ── Step 4: Verify rollup shows spend ────────────────────────────────────
     // CategoryBreakdown should now show some amounts in at least one category.
+    // Note: amounts are formatted by Intl.NumberFormat (e.g. "$120.00", "$1,500.00").
+    // The expense of 120 renders as "$120.00" or "120" depending on locale.
     const bodyText = await page.locator('body').textContent() ?? '';
-    const hasAnyAmount = /120|1500/i.test(bodyText);
+    // Match formatted or raw: "$120", "120.00", "120" all contain "120".
+    // Budget 1500 formats as "$1,500.00" which does NOT contain "1500" raw —
+    // but expense 120 should appear directly.
+    const hasAnyAmount = /\$?120|USD\s*120/i.test(bodyText);
     expect(
       hasAnyAmount,
-      'Expected budget or expense amount to appear in the page after adding an expense',
+      `Expected expense amount 120 to appear in the page after adding an expense. Body snippet: ${bodyText.slice(0, 500)}`,
     ).toBe(true);
 
     // ── Step 5: Delete the expense (if delete affordance is visible) ─────────

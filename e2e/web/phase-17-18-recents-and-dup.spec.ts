@@ -242,41 +242,45 @@ test.describe('Phase 17-18 — duplicate place warning', () => {
     await dismissDevOverlay(page);
 
     // Search for the mock place.
-    const searchInput = page.getByLabel(/^search$/i).or(
+    const searchInput = page.getByLabel(/search places/i).or(
       page.getByPlaceholder(/restaurant, museum/i),
     ).first();
     await searchInput.fill('Sagrada');
-    await expect(page.getByText('Sagrada Familia (E2E Dup)')).toBeVisible({ timeout: 5_000 });
-    await page.getByText('Sagrada Familia (E2E Dup)').first().click();
+    // Use the Pressable accessibilityLabel "Choose ..." to avoid the "hidden"
+    // state issue that plain text nodes inside FlatList can exhibit.
+    const suggestionBtn1 = page.getByRole('button', { name: /choose sagrada familia/i }).first();
+    await expect(suggestionBtn1).toBeVisible({ timeout: 5_000 });
+    await suggestionBtn1.click();
 
     // Confirm add.
     const addToTripBtn = page.getByRole('button', { name: /add to trip/i });
     await expect(addToTripBtn).toBeVisible({ timeout: 5_000 });
     await addToTripBtn.click();
 
-    // Back on trip detail.
-    await expect(page).toHaveURL(/\/trip\/[0-9a-f-]+$/, { timeout: 10_000 });
+    // Phase 23 Step 23.7: after adding, the screen stays on /add (showing a
+    // toast "Added to Day N") so the user can immediately add another place.
+    // The spec previously expected a navigation back to trip detail — that
+    // behaviour was intentionally removed. Wait briefly for the toast to render
+    // and for the cache to register the new place, then proceed with the second add.
+    await page.waitForTimeout(1500);
     await dismissDevOverlay(page);
 
     // ── Second add — expect duplicate warning ─────────────────────────────────
-    const addBtn2 = page.getByRole('button', { name: /add a place/i }).first();
-    const hasAdd2 = await addBtn2.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (!hasAdd2) {
-      test.skip(true, 'Add a place button not visible for second add');
-    }
-
-    await addBtn2.click();
-    await expect(page).toHaveURL(/\/add$/, { timeout: 10_000 });
+    // We are already on /add (Phase 23 stays on the screen). Just confirm the
+    // URL is still correct and search again.
+    await expect(page).toHaveURL(/\/add$/, { timeout: 5_000 });
     await dismissDevOverlay(page);
 
-    const searchInput2 = page.getByLabel(/^search$/i).or(
+    const searchInput2 = page.getByLabel(/search places/i).or(
       page.getByPlaceholder(/restaurant, museum/i),
     ).first();
     await searchInput2.fill('Sagrada');
-    // Use .first() to avoid strict-mode violation when the place name appears in
-    // both the autocomplete suggestion row and the itinerary card simultaneously.
-    await expect(page.getByText('Sagrada Familia (E2E Dup)').first()).toBeVisible({ timeout: 5_000 });
-    await page.getByText('Sagrada Familia (E2E Dup)').first().click();
+    // Wait for the autocomplete mock to respond.
+    // Use the accessibilityLabel on the Pressable ("Choose Sagrada Familia (E2E Dup)")
+    // to avoid the "hidden" state issue with FlatList overflow clipping of plain text nodes.
+    const suggestionBtn = page.getByRole('button', { name: /choose sagrada familia/i }).first();
+    await expect(suggestionBtn).toBeVisible({ timeout: 5_000 });
+    await suggestionBtn.click();
 
     // The duplicate warning banner should appear.
     const dupWarning = page.getByRole('alert').filter({

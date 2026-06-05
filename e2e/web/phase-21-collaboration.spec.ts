@@ -121,9 +121,26 @@ test.describe('Phase 21 — Collaboration UI', () => {
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);
 
-    // Check for email input (invite form).
+    // The invite form lives inside the InviteSheet BottomSheet, which opens
+    // only when the owner presses the "Invite" button. The email input is NOT
+    // inline on the page. Click "Invite" first to open the sheet.
+    const inviteBtn = page.getByRole('button', { name: /^invite$/i })
+      .or(page.getByRole('button', { name: /invite a collaborator/i }))
+      .first();
+
+    const hasInviteBtn = await inviteBtn.isVisible({ timeout: 8_000 }).catch(() => false);
+    if (!hasInviteBtn) {
+      test.skip(true, 'Invite button not visible — user may not be owner of this trip');
+    }
+
+    await inviteBtn.click();
+    // Wait for the BottomSheet to animate open.
+    await page.waitForTimeout(500);
+    await dismissDevOverlay(page);
+
+    // The InviteSheet contains a TextInput with accessibilityLabel="Collaborator email address".
     const emailInput = page
-      .getByRole('textbox', { name: /email/i })
+      .getByRole('textbox', { name: /collaborator email|email address/i })
       .or(page.locator('input[type="email"]'))
       .or(page.locator('input[placeholder*="email" i]'))
       .first();
@@ -131,7 +148,7 @@ test.describe('Phase 21 — Collaboration UI', () => {
     const hasEmailInput = await emailInput.isVisible({ timeout: 8_000 }).catch(() => false);
     expect(
       hasEmailInput,
-      'Expected an email input field on the Collaborators screen for the invite form',
+      'Expected an email input field in the InviteSheet after pressing Invite button',
     ).toBe(true);
   });
 

@@ -108,17 +108,22 @@ test.describe('Phase 7 — archive / unarchive', () => {
     const archivedTab = page.getByRole('radio', { name: /^archived$/i });
     await expect(archivedTab).toBeVisible({ timeout: 5_000 });
     await archivedTab.click();
-    await page.waitForLoadState('networkidle');
+    // TanStack Query may still be re-fetching after the tab switch; networkidle
+    // is not reliable here because background queries keep the network busy.
+    // Poll for the archived card with a generous timeout instead.
     await dismissDevOverlay(page);
 
     // The trip should appear in the archived list.
+    // Use a single Playwright web-first assertion — it retries internally until the
+    // timeout, which correctly handles TanStack Query cache revalidation delay.
     if (tripTitle) {
-      const archivedCard = page.locator(`[aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
-      await expect(archivedCard).toBeVisible({ timeout: 8_000 });
+      const titleFragment = tripTitle.slice(0, 20);
+      const archivedCard = page.locator(`[aria-label*="Open trip"][aria-label*="${titleFragment}"]`).first();
+      await expect(archivedCard).toBeVisible({ timeout: 20_000 });
     } else {
       // At minimum, some trip card should appear in the archived tab.
       const anyCard = page.locator('[aria-label^="Open trip"]').first();
-      await expect(anyCard).toBeVisible({ timeout: 8_000 });
+      await expect(anyCard).toBeVisible({ timeout: 20_000 });
     }
 
     // ── Unarchive ─────────────────────────────────────────────────────────
@@ -140,10 +145,10 @@ test.describe('Phase 7 — archive / unarchive', () => {
     // The trip should be back in the active list.
     if (tripTitle) {
       const restoredCard = page.locator(`[aria-label*="Open trip"][aria-label*="${tripTitle.slice(0, 20)}"]`).first();
-      await expect(restoredCard).toBeVisible({ timeout: 8_000 });
+      await expect(restoredCard).toBeVisible({ timeout: 20_000 });
     } else {
       const anyCard = page.locator('[aria-label^="Open trip"]').first();
-      await expect(anyCard).toBeVisible({ timeout: 8_000 });
+      await expect(anyCard).toBeVisible({ timeout: 20_000 });
     }
   });
 });

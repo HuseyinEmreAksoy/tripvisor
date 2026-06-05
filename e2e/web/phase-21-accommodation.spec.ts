@@ -130,15 +130,23 @@ test.describe('Phase 21 — Accommodation golden path', () => {
     }
 
     // Save the accommodation.
-    const saveBtn = page
-      .getByRole('button', { name: /save|add|confirm/i })
+    // The AccommodationEditSheet is a BottomSheet rendered as role="dialog".
+    // Scope the save button within the dialog to avoid matching the list's
+    // "+ Add" button which is also visible in the DOM behind the overlay.
+    const dialog = page.locator('[role="dialog"]').last();
+    const saveBtn = dialog
+      .getByRole('button', { name: /save changes|add accommodation/i })
       .first();
     await saveBtn.click();
     await page.waitForLoadState('networkidle');
     await dismissDevOverlay(page);
 
     // ── Step 3: Verify accommodation name appears in the Settings list ─────────
+    // The accommodation card sits below the fold of the Settings tab ScrollView;
+    // the sticky "Add a place" bar at the bottom can clip it so isVisible() returns
+    // false even though the element is in the DOM. Scroll it into view first.
     const accomCard = page.getByText(ACCOM_NAME).first();
+    await accomCard.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined);
     const hasAccomCard = await accomCard.isVisible({ timeout: 8_000 }).catch(() => false);
     expect(
       hasAccomCard,
