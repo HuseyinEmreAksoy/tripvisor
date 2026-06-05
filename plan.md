@@ -1,7 +1,7 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 25 complete — Editor unblock + travel-product polish + carryover sweep
-**Last updated**: 2026-04-26
+**Current phase**: Phase 26 — Verification sweep: test restoration + first live smoke of Phase 21-25 surfaces
+**Last updated**: 2026-06-05
 
 ## Status by phase
 
@@ -33,6 +33,7 @@
 | 23 | Routing UX (manual vs. optimal) + per-day add flow + travel/dwell labels + reviews expansion + transport-mode polylines | ✅ Code complete 2026-04-26 — automated tests (23.12) + live smoke (23.13) explicitly skipped per user direction (same as Phases 21 + 22); platforms unverified | backend + ui + docs |
 | 24 | Analytics + place reactions + use-my-location routing | ✅ Code complete 2026-04-26 — automated tests (24.15) + live smoke (24.14) explicitly skipped per user direction (same as Phases 21–23); reviewer pass (24.13) skipped per user direction; platforms unverified | backend + ui + docs |
 | 25 | Editor unblock + travel-product polish + carryover sweep | ✅ Code complete 2026-04-26 — automated tests + live smoke explicitly skipped per user direction (same as Phases 21–24); reviewer pass skipped per user direction; platforms unverified. Steps 25.1–25.12 shipped; Step 25.13 (delete `useCollaboratedTrips`) NOT executed — carried to Phase 26 candidates. | backend + ui + docs |
+| 26 | Verification sweep: test restoration + first live smoke of Phase 21-25 surfaces | 🚧 In progress — web smoke green 2026-06-05; native + remaining feature smoke pending | test + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
