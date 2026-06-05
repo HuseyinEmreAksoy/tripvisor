@@ -8,12 +8,28 @@
  *   4. google_place_id rendering: "Google Place" chip when no address.
  *   5. Edit + Delete buttons visible when canEdit=true; hidden when false.
  *   6. Notes rendering when notes is non-null.
+ *
+ * Phase 25 Step 25.10 added AccommodationNotesEditor, an inline sub-component
+ * that unconditionally calls useUpdateTripAccommodation() (which requires a
+ * QueryClientProvider). We mock that module at the boundary and wrap renders
+ * with a fresh QueryClientProvider so the hook context is always satisfied.
  */
 import { render, fireEvent } from '@testing-library/react-native';
 import { AccommodationCard } from '../AccommodationCard';
 import { ThemeProvider } from '@/theme';
 import type { TripAccommodation } from '@/api/types';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// ---- Module mock: trip-accommodations ----------------------------------------
+// useUpdateTripAccommodation is called unconditionally by AccommodationNotesEditor;
+// mock it with a no-op mutate so tests don't need a real Supabase client.
+jest.mock('@/api/trip-accommodations', () => ({
+  useUpdateTripAccommodation: () => ({
+    mutate: jest.fn(),
+    isPending: false,
+  }),
+}));
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -37,8 +53,17 @@ function makeAccommodation(
   };
 }
 
+function makeQueryClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
 function wrap(node: React.ReactElement) {
-  return render(<ThemeProvider>{node}</ThemeProvider>);
+  const qc = makeQueryClient();
+  return render(
+    <QueryClientProvider client={qc}>
+      <ThemeProvider>{node}</ThemeProvider>
+    </QueryClientProvider>,
+  );
 }
 
 // ---- Tests -------------------------------------------------------------------

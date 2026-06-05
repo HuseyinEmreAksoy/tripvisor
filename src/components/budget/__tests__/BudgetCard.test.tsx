@@ -70,8 +70,9 @@ describe('BudgetCard', () => {
       <BudgetCard rollup={rollup} onSetBudget={jest.fn()} canEdit />,
     );
 
-    // "remaining" text appears.
-    expect(getByText(/700 remaining/i)).toBeTruthy();
+    // "remaining" text appears. Phase 22: formatCurrency produces locale-formatted
+    // output (e.g. "$700,00 remaining"), so match loosely on the numeric content.
+    expect(getByText(/700.*remaining/i)).toBeTruthy();
     // Percentage summary text confirms bar is rendered.
     expect(getByText(/30% of budget used/i)).toBeTruthy();
     // Over-budget copy must NOT appear.
@@ -90,7 +91,9 @@ describe('BudgetCard', () => {
       <BudgetCard rollup={rollup} onSetBudget={jest.fn()} canEdit />,
     );
 
-    expect(getByText(/200 over budget/i)).toBeTruthy();
+    // Phase 22: formatCurrency produces locale-formatted output (e.g. "$200,00
+    // over budget"), so match loosely on the numeric content.
+    expect(getByText(/200.*over budget/i)).toBeTruthy();
     // "remaining" text must NOT appear.
     expect(queryByText(/remaining/i)).toBeNull();
   });

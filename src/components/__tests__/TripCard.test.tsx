@@ -35,8 +35,12 @@ describe('TripCard', () => {
     const trip = makeTrip();
     const { getByText } = renderWithTheme(<TripCard trip={trip} onPress={() => {}} />);
     expect(getByText('Lisbon 3 days')).toBeTruthy();
-    expect(getByText('2026-05-01 → 2026-05-03')).toBeTruthy();
-    expect(getByText('8h / day · walking')).toBeTruthy();
+    // Phase 20 travel-product polish: the date Text node has two children —
+    // "📅 " (emoji prefix) and the date range string — so getByText with an
+    // exact string no longer matches. Use a regex that matches the date portion.
+    expect(getByText(/2026-05-01 → 2026-05-03/)).toBeTruthy();
+    // Transport pill also renders an emoji prefix as a sibling child node.
+    expect(getByText(/8h \/ day · walking/)).toBeTruthy();
   });
 
   it('omits date range when both dates are null', () => {

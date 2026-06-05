@@ -78,8 +78,9 @@ describe('CategoryBreakdown', () => {
     const rollup = makeRollup({ byCategory, totalEstimated: 200, totalActual: 150 });
     const { getByText } = wrap(<CategoryBreakdown rollup={rollup} />);
 
-    // The food row renders "150 / 200" (actual / estimated).
-    expect(getByText('150 / 200')).toBeTruthy();
+    // Phase 22: formatCurrency produces locale-formatted output, e.g. "$150,00 / $200,00".
+    // Match loosely so the test is resilient to locale/currency formatting changes.
+    expect(getByText(/150.*\/.*200/)).toBeTruthy();
   });
 
   it('renders the accessible "no expenses recorded" label for zero categories', () => {
@@ -98,8 +99,9 @@ describe('CategoryBreakdown', () => {
     const rollup = makeRollup({ byCategory });
     const { getByLabelText } = wrap(<CategoryBreakdown rollup={rollup} />);
 
-    // accessibilityLabel includes "estimated 100, actual 80"
-    expect(getByLabelText(/estimated 100.*actual 80/i)).toBeTruthy();
+    // Phase 22: formatCurrency formats amounts with locale separators, e.g.
+    // "Transport: estimated $100,00, actual $80,00". Match on numeric substrings.
+    expect(getByLabelText(/estimated.*100.*actual.*80/i)).toBeTruthy();
   });
 
   it('totals of individual category actuals match totalActual in input', () => {
@@ -118,9 +120,10 @@ describe('CategoryBreakdown', () => {
 
     const { getByLabelText } = wrap(<CategoryBreakdown rollup={rollup} />);
 
-    // accommodation row: estimated 300, actual 250
-    expect(getByLabelText(/estimated 300.*actual 250/i)).toBeTruthy();
+    // Phase 22: formatCurrency formats amounts with locale separators, e.g.
+    // "Accommodation: estimated $300,00, actual $250,00". Match on numeric substrings.
+    expect(getByLabelText(/estimated.*300.*actual.*250/i)).toBeTruthy();
     // food row: estimated 100, actual 90
-    expect(getByLabelText(/estimated 100.*actual 90/i)).toBeTruthy();
+    expect(getByLabelText(/estimated.*100.*actual.*90/i)).toBeTruthy();
   });
 });
