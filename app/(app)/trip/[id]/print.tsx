@@ -116,13 +116,6 @@ export default function PrintRoute() {
   }
 
   const dateRange = formatRange(trip.start_date, trip.end_date);
-  // Step 5: label clearly identifies this as estimated travel cost per km
-  // (fuel / transport), not a full-trip money budget.
-  const costRateLabel = `${trip.currency} · Est. travel cost ${new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: trip.currency,
-    maximumFractionDigits: 2,
-  }).format(trip.cost_per_km)}/km`;
 
   return (
     <>
@@ -149,13 +142,10 @@ export default function PrintRoute() {
 
             <Heading level={1}>{trip.title}</Heading>
             <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{dateRange}</Text>
-            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-              {costRateLabel}
-            </Text>
           </View>
 
-          {/* ── Cost rollup (reused component) ───────────────────────────── */}
-          <TripCostRollup trip={trip} legs={legs} />
+          {/* ── Route summary (reused component; time-first, v2 Phase 0.1) ── */}
+          <TripCostRollup legs={legs} />
 
           {/* ── Native-only hint ─────────────────────────────────────────── */}
           {Platform.OS !== 'web' ? (
@@ -196,7 +186,6 @@ export default function PrintRoute() {
                     dayIndex={section.dayIndex}
                     places={places}
                     legs={legs}
-                    trip={trip}
                   />
                 ) : null}
 

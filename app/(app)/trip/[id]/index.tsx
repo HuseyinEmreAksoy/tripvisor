@@ -196,8 +196,8 @@ export default function TripDetail() {
           ) : null}
         </View>
 
-        {/* Cost rollup card */}
-        <TripCostRollup trip={trip} legs={legs} />
+        {/* Route summary card (time-first, v2 Phase 0.1) */}
+        <TripCostRollup legs={legs} />
       </View>
     </View>
   );
@@ -238,7 +238,6 @@ export default function TripDetail() {
               dailyHoursBudget={trip.daily_hours_budget}
               transportMode={trip.transport_mode}
               currency={trip.currency}
-              costPerKm={trip.cost_per_km}
               hasPlaces={places.length > 0}
               tripDayCount={tripDayCount}
               canEdit={canEditTrip}
@@ -340,7 +339,6 @@ export default function TripDetail() {
           dailyHoursBudget={trip.daily_hours_budget}
           transportMode={trip.transport_mode}
           currency={trip.currency}
-          costPerKm={trip.cost_per_km}
           hasPlaces={places.length > 0}
           tripDayCount={tripDayCount}
           canEdit={canEditTrip}
@@ -950,7 +948,6 @@ function ItineraryTab({
                 dayIndex={section.dayIndex}
                 places={places}
                 legs={legs}
-                trip={trip}
               />
             ) : null}
 
@@ -1746,7 +1743,6 @@ function SettingsTab({
   dailyHoursBudget,
   transportMode,
   currency,
-  costPerKm,
   hasPlaces,
   tripDayCount,
   canEdit,
@@ -1760,7 +1756,6 @@ function SettingsTab({
   dailyHoursBudget: number;
   transportMode: TransportMode;
   currency: TripCurrency;
-  costPerKm: number;
   hasPlaces: boolean;
   tripDayCount: number;
   canEdit: boolean;
@@ -1828,37 +1823,10 @@ function SettingsTab({
   // ── Cover photo (Phase 25 Step 25.7) ──────────────────────────────────────
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
 
-  // ── Cost settings (Step 8.6) ──────────────────────────────────────────────
+  // ── Trip metadata mutations ───────────────────────────────────────────────
+  // v2 Phase 0.1: the per-km travel-cost rate input (Step 8.6) was retired —
+  // money is tracked via the category-based budget below, not km × rate.
   const updateTrip = useUpdateTrip(tripId);
-  // Local text value for the rate input so the user can type freely.
-  const [rateText, setRateText] = useState(String(costPerKm));
-  const [rateError, setRateError] = useState<string | null>(null);
-  // Keep a stable timer ref to implement a simple 500ms debounce without
-  // a library. A new ref on each render is fine; we only mutate .current.
-  const rateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Clear any pending debounce timer on unmount so a delayed setTimeout doesn't
-  // fire a stealth mutation against a stale tripId after the user navigates
-  // away (M1 from Phase 8 review).
-  useEffect(() => {
-    return () => {
-      if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
-    };
-  }, []);
-
-  function handleRateChange(raw: string) {
-    setRateText(raw);
-    setRateError(null);
-    if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
-    rateTimerRef.current = setTimeout(() => {
-      const parsed = Number(raw.replace(',', '.'));
-      if (!Number.isFinite(parsed) || parsed < 0) {
-        setRateError('Enter a positive number, e.g. 0.20');
-        return;
-      }
-      updateTrip.mutate({ cost_per_km: parsed });
-    }, 500);
-  }
 
   function handleCurrencyChange(value: TripCurrency) {
     updateTrip.mutate({ currency: value });
@@ -1950,12 +1918,11 @@ function SettingsTab({
         ]}
       />
 
-      {/* ── Travel cost settings (Step 8.6 + Step 5 label cleanup) ──────── */}
-      {/* Step 5: renamed from "Cost settings" to "Estimated travel cost" so it
-          reads as a derived, narrow metric (fuel / transport) rather than the
-          full trip money budget. Step 6 (backend) will replace this model with
-          category-based budgets. */}
-      <SectionHeading label="Estimated travel cost" t={t} />
+      {/* ── Budget (Phase 21 Step 21.10) ────────────────────────────────── */}
+      {/* v2 Phase 0.1: the "Estimated travel cost" section (per-km rate input)
+          was retired. The currency picker moved here — it now exclusively
+          drives budget / expense formatting. */}
+      <SectionHeading label="Budget" t={t} />
       {/* Phase 25 Step 25.11: currency is owner-only — editors cannot change it.
           The enforce_trips_column_restrictions trigger denies currency updates
           from non-owners. We gate the control in the UI to match. */}
@@ -1974,44 +1941,6 @@ function SettingsTab({
           <Text style={[t.typography.body, { color: t.colors.text }]}>{currency}</Text>
         </View>
       )}
-      <View style={{ gap: t.spacing.xs }}>
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-          Travel cost per km ({currency})
-        </Text>
-        <TextInput
-          value={rateText}
-          onChangeText={handleRateChange}
-          keyboardType="decimal-pad"
-          // inputMode is a web-standard hint; RN ≥ 0.72 honours it on web.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          inputMode={"decimal" as any}
-          accessibilityLabel="Travel cost per kilometre"
-          accessibilityHint="Enter the fuel or transport cost per kilometre for estimated travel cost"
-          style={[
-            styles.rateInput,
-            {
-              borderColor: rateError ? t.colors.danger : t.colors.border,
-              borderRadius: t.radius.sm,
-              color: t.colors.text,
-              backgroundColor: t.colors.bgElevated,
-              ...t.typography.body,
-            },
-          ]}
-          placeholder="0.20"
-          placeholderTextColor={t.colors.textMuted}
-        />
-        {rateError ? (
-          <Text
-            style={[t.typography.caption, { color: t.colors.danger }]}
-            accessibilityLiveRegion="polite"
-          >
-            {rateError}
-          </Text>
-        ) : null}
-      </View>
-
-      {/* ── Budget (Phase 21 Step 21.10) ────────────────────────────────── */}
-      <SectionHeading label="Budget" t={t} />
       <BudgetCard
         rollup={rollup}
         currency={currency}
@@ -2343,12 +2272,6 @@ const styles = StyleSheet.create({
   },
   dayHeader: { borderLeftWidth: 4, paddingLeft: 12 },
   placeCard: { borderWidth: 1 },
-  rateInput: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    height: 44,
-  },
   // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {
     width: 44,

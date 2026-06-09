@@ -26,16 +26,18 @@
  *       'recent'     — created_at descending.
  *       'az'         — locale-aware ascending by title.
  *       'start_date' — ascending; null start_dates sink to the bottom.
- *       'cost'       — sum(leg.distance_meters / 1000 * trip.cost_per_km)
- *                      descending; trips with no legs (cost = 0) sink last,
- *                      with created_at descending as tiebreak.
+ *       'duration'   — total trip travel time = sum(leg.duration_seconds)
+ *                      descending (longest travel time first); trips with no
+ *                      legs (total = 0) sink last, with created_at descending
+ *                      as tiebreak. Time-first replacement for the retired
+ *                      per-km 'cost' sort (v2 Phase 0.1).
  */
 
 import type { Trip } from '@/api/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type SortKey = 'recent' | 'az' | 'start_date' | 'cost';
+export type SortKey = 'recent' | 'az' | 'start_date' | 'duration';
 
 export type DateFilter = 'all' | 'upcoming' | 'past';
 
@@ -91,14 +93,14 @@ export function applyDateFilter(trips: Trip[], filter: DateFilter, today: string
 /**
  * Sorts a copy of `trips` by `key`. Never mutates the input array.
  *
- * `legsByTripId` is only consulted for `'cost'` sort. For all other keys it
- * may be an empty Map — the caller can pass `new Map()` or the hook value
- * without cost.
+ * `legsByTripId` is only consulted for the `'duration'` sort. For all other
+ * keys it may be an empty Map — the caller can pass `new Map()` or the hook
+ * value without cost.
  */
 export function applySort(
   trips: Trip[],
   key: SortKey,
-  legsByTripId: Map<string, { distance_meters: number }[]>,
+  legsByTripId: Map<string, { duration_seconds: number }[]>,
 ): Trip[] {
   // Slice to avoid mutating the TanStack Query cache array.
   const sorted = trips.slice();
@@ -120,21 +122,19 @@ export function applySort(
         return a.start_date.localeCompare(b.start_date);
       });
       break;
-    case 'cost': {
+    case 'duration': {
       /**
-       * Compute trip cost = sum(leg.distance_meters / 1000 * trip.cost_per_km).
-       * Trips with no legs (total cost = 0) sink to the bottom via the
-       * fallback `created_at` tiebreak to keep ordering stable.
+       * Time-first sort (v2 Phase 0.1, replaces the retired per-km 'cost'
+       * sort): total trip travel time = sum(leg.duration_seconds).
+       * Trips with no legs (total = 0) sink to the bottom via the fallback
+       * `created_at` tiebreak to keep ordering stable.
        */
-      const cost = (trip: Trip): number => {
+      const travelSeconds = (trip: Trip): number => {
         const legs = legsByTripId.get(trip.id) ?? [];
-        return legs.reduce(
-          (acc, leg) => acc + (leg.distance_meters / 1000) * trip.cost_per_km,
-          0,
-        );
+        return legs.reduce((acc, leg) => acc + leg.duration_seconds, 0);
       };
       sorted.sort((a, b) => {
-        const diff = cost(b) - cost(a); // descending
+        const diff = travelSeconds(b) - travelSeconds(a); // descending
         if (diff !== 0) return diff;
         // Tiebreak: more recent first.
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();

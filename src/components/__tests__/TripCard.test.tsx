@@ -16,7 +16,6 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     timezone: 'Europe/Lisbon',
     archived_at: null,
     currency: 'USD',
-    cost_per_km: 0.2,
     total_budget: null,
     route_render_mode: 'optimized',
     cover_photo_google_place_id: null,

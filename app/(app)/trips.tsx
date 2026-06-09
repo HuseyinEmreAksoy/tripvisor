@@ -5,7 +5,7 @@
  *   1. archive filter  — driven by `useTrips({ archived })`, server-side
  *   2. search filter   — case-insensitive substring on trip.title
  *   3. date filter     — All | Upcoming | Past
- *   4. sort            — one of: Recent | A→Z | Start date | Cost (desc)
+ *   4. sort            — one of: Recent | A→Z | Start date | Duration (desc)
  *
  * Desktop layout (≥ 1024px):
  *   - Header (search, sort, filter, tabs) is constrained to maxWidth 1200px, centred.
@@ -17,9 +17,10 @@
  *
  * Mobile / tablet layout: unchanged from before.
  *
- * Cost sort defers the legs fetch until the user selects it; if `sortKey`
- * is not `'cost'`, `useAllTripLegs` receives an empty array which keeps
- * the hook disabled (no network request).
+ * Duration sort (total leg duration_seconds, descending) defers the legs
+ * fetch until the user selects it; if `sortKey` is not `'duration'`,
+ * `useAllTripLegs` receives an empty array which keeps the hook disabled
+ * (no network request).
  *
  * Date filter runs AFTER search and BEFORE sort so that searches like
  * "Paris" already filter by date category before sorting. Today's date is
@@ -70,14 +71,14 @@ const TAB_OPTIONS: Array<{ value: Tab; label: string }> = [
   { value: 'archived', label: 'Archived' },
 ];
 
-const SORT_CYCLE: SortKey[] = ['recent', 'az', 'start_date', 'cost'];
+const SORT_CYCLE: SortKey[] = ['recent', 'az', 'start_date', 'duration'];
 
 const SORT_LABELS: Record<SortKey, string> = {
   recent: 'Recent',
   az: 'A→Z',
   start_date: 'Start',
-  // "Cost ↓" communicates the descending direction on the button face.
-  cost: 'Cost ↓',
+  // "Duration ↓" communicates the descending direction on the button face.
+  duration: 'Duration ↓',
 };
 
 const DATE_FILTER_OPTIONS: Array<{ value: DateFilter; label: string }> = [
@@ -155,7 +156,7 @@ export default function TripsList() {
   const collaboratedTrips = useMemo(() => (trips ?? []).filter((t) => t.isOwner === false), [trips]);
 
   const activeTripsIds = useMemo(
-    () => (sortKey === 'cost' ? ownedTrips.map((trip) => trip.id) : []),
+    () => (sortKey === 'duration' ? ownedTrips.map((trip) => trip.id) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ownedTrips, sortKey],
   );

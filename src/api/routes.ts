@@ -76,32 +76,34 @@ export function useTripLegs(tripId: Uuid | undefined) {
 }
 
 /**
- * Narrow projection of `trip_legs` for the cost rollup. Only the two
- * fields the trips-list sort actually needs.
+ * Narrow projection of `trip_legs` for the trips-list duration sort. Only
+ * the two fields the sort actually needs. (v2 Phase 0.1: replaces the
+ * retired `TripLegCostRow` / per-km cost projection.)
  */
-export interface TripLegCostRow {
+export interface TripLegDurationRow {
   trip_id: Uuid;
-  distance_meters: number;
+  duration_seconds: number;
 }
 
 /**
  * Batched trip_legs read for many trips in a single query — designed for
- * the trips list cost sort (Phase 12, deferred from Phase 11).
+ * the trips list duration sort (originally built for the Phase 12 cost
+ * sort; repointed to time-first metrics in v2 Phase 0.1).
  *
  * Why this exists
  * ---------------
- * Sorting the trips list by total cost requires summing
- * `distance_meters * cost_per_km` across every leg of every trip. Issuing
+ * Sorting the trips list by total travel time requires summing
+ * `duration_seconds` across every leg of every trip. Issuing
  * one `useTripLegs(id)` per row would be N+1 (one query per trip × N
  * trips). This hook collapses that into a single
- *   SELECT trip_id, distance_meters FROM trip_legs WHERE trip_id IN (...)
+ *   SELECT trip_id, duration_seconds FROM trip_legs WHERE trip_id IN (...)
  * — RLS still gates each row by the parent trip's `user_id`, so callers
  * can't see legs they shouldn't.
  *
  * Why a projected SELECT (not `*`)
  * ---------------------------------
- * The cost sort only consumes `trip_id` (for grouping) and
- * `distance_meters` (for the sum). Projecting saves transferring
+ * The duration sort only consumes `trip_id` (for grouping) and
+ * `duration_seconds` (for the sum). Projecting saves transferring
  * `polyline` (which can be many KB per leg, especially for long days),
  * `from_place_id`, `to_place_id`, `day_index`, etc. for every leg of
  * every trip on every list refetch. RLS evaluation cost is unaffected by
@@ -109,7 +111,7 @@ export interface TripLegCostRow {
  *
  * Return shape
  * ------------
- * A `Map<Uuid, TripLegCostRow[]>` keyed by `trip_id` for O(1) per-trip
+ * A `Map<Uuid, TripLegDurationRow[]>` keyed by `trip_id` for O(1) per-trip
  * lookup. The map is built in a `useMemo` over `data` so its identity is
  * stable across renders that don't refetch — list rows that read it via
  * `map.get(trip.id)` won't re-render unnecessarily.
@@ -132,7 +134,7 @@ export interface TripLegCostRow {
  * single-trip and multi-trip caches.
  */
 export function useAllTripLegs(tripIds: readonly Uuid[]) {
-  const query = useQuery<TripLegCostRow[]>({
+  const query = useQuery<TripLegDurationRow[]>({
     queryKey: tripLegsKeys.byTripIds(tripIds),
     enabled: tripIds.length > 0,
     refetchOnWindowFocus: false,
@@ -140,15 +142,15 @@ export function useAllTripLegs(tripIds: readonly Uuid[]) {
       if (tripIds.length === 0) return [];
       const { data, error } = await supabase
         .from('trip_legs')
-        .select('trip_id, distance_meters')
+        .select('trip_id, duration_seconds')
         .in('trip_id', tripIds as Uuid[]);
       if (error) throw error;
-      return (data ?? []) as TripLegCostRow[];
+      return (data ?? []) as TripLegDurationRow[];
     },
   });
 
   const byTripId = useMemo(() => {
-    const map = new Map<Uuid, TripLegCostRow[]>();
+    const map = new Map<Uuid, TripLegDurationRow[]>();
     if (!query.data) return map;
     for (const leg of query.data) {
       const bucket = map.get(leg.trip_id);

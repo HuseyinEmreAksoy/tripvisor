@@ -23,7 +23,6 @@ function makeTrip(overrides: Partial<Trip> & { id: Uuid }): Trip {
     timezone: null,
     archived_at: null,
     currency: 'USD',
-    cost_per_km: 0.2,
     total_budget: null,
     route_render_mode: 'optimized',
     cover_photo_google_place_id: null,
@@ -148,7 +147,7 @@ describe('applyDateFilter', () => {
 // ── applySort ─────────────────────────────────────────────────────────────────
 
 describe('applySort', () => {
-  const emptyLegs: Map<string, { distance_meters: number }[]> = new Map();
+  const emptyLegs: Map<string, { duration_seconds: number }[]> = new Map();
 
   const alpha = makeTrip({ id: 'a', title: 'Alpha', created_at: '2026-01-01T00:00:00Z', start_date: '2026-06-10' });
   const beta = makeTrip({ id: 'b', title: 'Beta', created_at: '2026-03-01T00:00:00Z', start_date: '2026-05-01' });
@@ -191,36 +190,25 @@ describe('applySort', () => {
     });
   });
 
-  describe('"cost" sort', () => {
-    it('sorts by total cost descending (highest cost first)', () => {
-      const legs: Map<string, { distance_meters: number }[]> = new Map([
-        ['a', [{ distance_meters: 10000 }]], // 10 km * 0.2 = 2.0
-        ['b', [{ distance_meters: 50000 }]], // 50 km * 0.2 = 10.0
-        ['z', []],                           // 0
+  describe('"duration" sort', () => {
+    it('sorts by total travel time descending (longest first)', () => {
+      const legs: Map<string, { duration_seconds: number }[]> = new Map([
+        ['a', [{ duration_seconds: 3600 }]],                              // 1h
+        ['b', [{ duration_seconds: 7200 }, { duration_seconds: 10800 }]], // 5h
+        ['z', []],                                                        // 0
       ]);
-      const a = makeTrip({ id: 'a', title: 'A', cost_per_km: 0.2, created_at: '2026-01-01T00:00:00Z' });
-      const b = makeTrip({ id: 'b', title: 'B', cost_per_km: 0.2, created_at: '2026-02-01T00:00:00Z' });
-      const z = makeTrip({ id: 'z', title: 'Z', cost_per_km: 0.2, created_at: '2026-03-01T00:00:00Z' });
-      const result = applySort([a, b, z], 'cost', legs);
+      const a = makeTrip({ id: 'a', title: 'A', created_at: '2026-01-01T00:00:00Z' });
+      const b = makeTrip({ id: 'b', title: 'B', created_at: '2026-02-01T00:00:00Z' });
+      const z = makeTrip({ id: 'z', title: 'Z', created_at: '2026-03-01T00:00:00Z' });
+      const result = applySort([a, b, z], 'duration', legs);
       expect(result.map((t) => t.id)).toEqual(['b', 'a', 'z']);
     });
 
-    it('breaks cost ties by created_at descending (more recent first)', () => {
-      const older = makeTrip({ id: 'old', title: 'Old', cost_per_km: 0.2, created_at: '2026-01-01T00:00:00Z' });
-      const newer = makeTrip({ id: 'new', title: 'New', cost_per_km: 0.2, created_at: '2026-06-01T00:00:00Z' });
-      const result = applySort([older, newer], 'cost', emptyLegs);
+    it('breaks duration ties by created_at descending (more recent first)', () => {
+      const older = makeTrip({ id: 'old', title: 'Old', created_at: '2026-01-01T00:00:00Z' });
+      const newer = makeTrip({ id: 'new', title: 'New', created_at: '2026-06-01T00:00:00Z' });
+      const result = applySort([older, newer], 'duration', emptyLegs);
       expect(result[0]!.id).toBe('new');
-    });
-
-    it('uses cost_per_km from the trip, not a hardcoded rate', () => {
-      const legs: Map<string, { distance_meters: number }[]> = new Map([
-        ['cheap', [{ distance_meters: 100000 }]], // 100 km * 0.01 = 1
-        ['pricey', [{ distance_meters: 5000 }]],  // 5 km * 1.0 = 5
-      ]);
-      const cheap = makeTrip({ id: 'cheap', title: 'Cheap', cost_per_km: 0.01, created_at: '2026-01-01T00:00:00Z' });
-      const pricey = makeTrip({ id: 'pricey', title: 'Pricey', cost_per_km: 1.0, created_at: '2026-01-01T00:00:00Z' });
-      const result = applySort([cheap, pricey], 'cost', legs);
-      expect(result[0]!.id).toBe('pricey');
     });
   });
 

@@ -1,57 +1,46 @@
 /**
- * TripCostRollup
+ * TripCostRollup — time-first route summary card.
  *
- * Displays the aggregate cost, distance, and drive time for a trip based on
- * the legs returned from the optimizer. Uses Intl.NumberFormat for currency
- * formatting so it works consistently on iOS, Android, and web without any
- * polyfill (all three platforms include Intl in their JS engines).
+ * v2 Phase 0.1: the per-km cost estimate (km × trip.cost_per_km) was retired.
+ * Money now lives exclusively in the category-based budget surface
+ * (BudgetCard / CategoryBreakdown / trip_expenses), so this card is a pure
+ * TIME + DISTANCE summary of the optimized route: total drive time as the
+ * headline, plus distance and leg count. The component (and file) name is
+ * kept to avoid churn — `humanizeDuration` is imported from this module by
+ * DaySummaryCard and the unit tests. A rename to `TripRouteSummary` can ride
+ * along with the Phase 15 `cost_per_km` column drop.
  *
  * Usage:
- *   <TripCostRollup trip={trip} legs={legs} />
+ *   <TripCostRollup legs={legs} />
  *
  * Empty state (legs.length === 0): renders the same card with "—" placeholders
  * and a prompt to run the optimizer.
  *
- * Memoization: the cost/distance/duration reductions are wrapped in useMemo
- * keyed on [legs, cost_per_km, currency] so unrelated re-renders (e.g. tab
- * changes) do not recompute. Intl.NumberFormat construction is NOT memoized
- * because its overhead is negligible compared to the DOM diffing cost.
+ * Memoization: the distance/duration reductions are wrapped in useMemo keyed
+ * on [legs] so unrelated re-renders (e.g. tab changes) do not recompute.
  */
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
-import type { Trip, TripLeg } from '@/api/types';
+import type { TripLeg } from '@/api/types';
 
 export interface TripCostRollupProps {
-  trip: Trip;
   legs: TripLeg[];
 }
 
-export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
+export function TripCostRollup({ legs }: TripCostRollupProps) {
   const t = useTheme();
 
-  // Explicit dep array includes cost_per_km and currency as required by spec.
   const totals = useMemo(() => {
     if (legs.length === 0) return null;
     const totalMeters = legs.reduce((s, l) => s + l.distance_meters, 0);
     const totalSeconds = legs.reduce((s, l) => s + l.duration_seconds, 0);
-    const totalKm = totalMeters / 1000;
-    const cost = totalKm * trip.cost_per_km;
-    return { totalMeters, totalSeconds, totalKm, cost };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legs, trip.cost_per_km, trip.currency]);
+    return { totalMeters, totalSeconds, totalKm: totalMeters / 1000 };
+  }, [legs]);
 
-  const formattedCost = totals
-    ? new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency: trip.currency,
-        maximumFractionDigits: 0,
-        minimumFractionDigits: 0,
-      }).format(totals.cost)
-    : '—';
-
-  const formattedDistance = totals ? `${totals.totalKm.toFixed(0)} km` : '—';
   const formattedDuration = totals ? humanizeDuration(totals.totalSeconds) : '—';
+  const formattedDistance = totals ? `${totals.totalKm.toFixed(0)} km` : '—';
+  const formattedLegs = totals ? `${legs.length}` : '—';
 
   const isEmpty = legs.length === 0;
 
@@ -70,21 +59,20 @@ export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
       accessibilityRole="summary"
       accessibilityLabel={
         isEmpty
-          ? 'Estimated travel cost: optimize the trip to see estimate'
-          : `Estimated travel cost ${formattedCost}, ${formattedDistance}, drive time ${formattedDuration}`
+          ? 'Route summary: optimize the trip to see drive time and distance'
+          : `Route summary: total drive time ${formattedDuration}, ${formattedDistance}, ${formattedLegs} travel legs`
       }
     >
-      {/* Header row — Step 5: "Estimated travel cost" clarifies this is
-          derived from km × rate (fuel/transport), not the full trip budget. */}
+      {/* Header row — drive time is the headline metric (time-first model). */}
       <View style={styles.headerRow}>
         <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-          Estimated travel cost
+          Total drive time
         </Text>
         <Text
           style={[t.typography.title, { color: isEmpty ? t.colors.textMuted : t.colors.text }]}
           accessibilityRole="text"
         >
-          {formattedCost}
+          {formattedDuration}
         </Text>
       </View>
 
@@ -92,7 +80,7 @@ export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
       <View style={styles.statsRow}>
         <StatItem label="Distance" value={formattedDistance} t={t} />
         <Divider t={t} />
-        <StatItem label="Drive time" value={formattedDuration} t={t} />
+        <StatItem label="Travel legs" value={formattedLegs} t={t} />
       </View>
 
       {/* Empty hint */}
@@ -101,11 +89,12 @@ export function TripCostRollup({ trip, legs }: TripCostRollupProps) {
           style={[t.typography.caption, { color: t.colors.textMuted }]}
           accessibilityLiveRegion="polite"
         >
-          Optimize the trip to see estimated travel cost
+          Optimize the trip to see drive time and distance
         </Text>
       ) : null}
 
-      {/* Google attribution footer — required per Tripvisor rule #4 */}
+      {/* Google attribution footer — required per Tripvisor rule #4 (drive
+          times + distances are Routes API data). */}
       <Text style={[t.typography.small, { color: t.colors.attribution }]}>
         estimate · Powered by Google
       </Text>

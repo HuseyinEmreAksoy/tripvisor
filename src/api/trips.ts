@@ -291,17 +291,17 @@ export function useUnarchiveTrip() {
 }
 
 // ============================================================
-// Phase 8: in-place metadata edits (title / currency / cost_per_km)
+// Phase 8: in-place metadata edits (title / currency / budget fields)
 // ============================================================
 
 /**
  * Patch shape for `useUpdateTrip`. Intentionally narrow — only fields the UI
  * actually edits in place:
  *   - `title` — rename affordance (Phase 8)
- *   - `currency`, `cost_per_km` — Phase 8 cost rollup card
- *     (`cost_per_km` is DEPRECATED as of Phase 20 Step 6 — kept for
- *     back-compat until Phase 21 Step 4 migrates the UI to the
- *     category-based budget model)
+ *   - `currency` — unit-of-account for `total_budget` / `trip_expenses`
+ *     (v2 Phase 0.1 retired the per-km cost model; the per-km rate field
+ *     was removed from this patch shape and from the `Trip` type — the DB
+ *     column drop is deferred to v2 Phase 15.1)
  *   - `daily_hours_budget`, `transport_mode` — Phase 9 trip-meta cleanup
  *     (Step 9.6); these are the two remaining editable scalars on the trip
  *     detail screen and the optimizer reads both, so a typed home for them
@@ -319,7 +319,6 @@ export type UpdateTripPatch = Partial<
     Trip,
     | 'title'
     | 'currency'
-    | 'cost_per_km'
     | 'daily_hours_budget'
     | 'transport_mode'
     | 'total_budget'
@@ -358,7 +357,7 @@ export type UpdateTripPatch = Partial<
  * single source of truth for authorization.
  *
  * Bound to a specific `tripId` at hook time — callers do
- * `useUpdateTrip(id).mutate({ cost_per_km: 0.35 })` rather than threading
+ * `useUpdateTrip(id).mutate({ total_budget: 500 })` rather than threading
  * the id through the variables. This matches how the UI surfaces consume
  * it (one card per trip detail screen).
  */
@@ -383,7 +382,7 @@ export function useUpdateTrip(tripId: Uuid) {
     onSuccess: () => {
       // Invalidate both list partitions (active/archived) so a renamed trip
       // shows fresh in whichever tab is mounted, plus the detail cache so
-      // the cost rollup recomputes with the new rate.
+      // the trip detail screen reflects the patched fields.
       qc.invalidateQueries({ queryKey: tripsKeys.all });
       qc.invalidateQueries({ queryKey: tripsKeys.detail(tripId) });
     },

@@ -54,16 +54,15 @@ export interface Trip {
   timezone: string | null;
   /** ISO timestamp; null means "active". Set by archive / unarchive (Phase 7). */
   archived_at: string | null;
-  /** Phase 8: unit-of-account for the per-trip cost rollup (ADR-0007). */
-  currency: TripCurrency;
   /**
-   * Phase 8: per-kilometer rate the client multiplies against trip_legs.distance_meters (ADR-0007).
-   * @deprecated 2026-04-25 (Phase 20 Step 6) — replaced by the category-based
-   * budget model (`total_budget` + `trip_expenses` table). Kept on the row
-   * for back-compat until Phase 21 Step 4 migrates the UI; future migration
-   * will drop the column.
+   * Unit-of-account for trip budgets / expenses (`total_budget`,
+   * `trip_expenses.amount`). Originally added for the Phase 8 cost rollup
+   * (ADR-0007); the per-km cost model was retired in v2 Phase 0.1 in favor
+   * of time-first planning + the category-based budget model. The legacy
+   * per-km rate column still exists on `public.trips` (drop deferred to v2
+   * Phase 15.1) but the client no longer reads or writes it.
    */
-  cost_per_km: number;
+  currency: TripCurrency;
   /**
    * Phase 20 Step 6: optional total-trip budget ceiling. Unit is `currency`.
    * Null means "no ceiling configured" — the per-category sum from

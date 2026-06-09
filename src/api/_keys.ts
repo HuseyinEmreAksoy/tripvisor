@@ -24,8 +24,8 @@
  * Each factory has:
  *   - `all`       — the prefix for blanket invalidations
  *   - `forTrip`   — the per-trip list / detail key
- *   - additional shape-specific helpers (e.g. `byTripIds` for the cost
- *     sort batch fetch on `tripLegsKeys`)
+ *   - additional shape-specific helpers (e.g. `byTripIds` for the
+ *     duration-sort batch fetch on `tripLegsKeys`)
  */
 
 import type { Uuid } from './types';
@@ -63,12 +63,19 @@ export const tripLegsKeys = {
   all: ['trip-legs'] as const,
   forTrip: (tripId: Uuid) => [...tripLegsKeys.all, tripId] as const,
   /**
-   * Cache key for the multi-trip batch fetch used by the trips list cost
-   * sort (Phase 12). The id list is sorted at key-construction time so
-   * `[a, b]` and `[b, a]` collapse to one cache entry.
+   * Cache key for the multi-trip batch fetch used by the trips list
+   * duration sort (Phase 12, repointed in v2 Phase 0.1). The id list is
+   * sorted at key-construction time so `[a, b]` and `[b, a]` collapse to
+   * one cache entry.
+   *
+   * `by-trips-v2`: the projection changed from `distance_meters` (retired
+   * per-km cost sort) to `duration_seconds` in v2 Phase 0.1. Bumping the
+   * key segment guarantees the AsyncStorage-persisted cache (24h gcTime)
+   * can never rehydrate old-shape rows into the new sort — old `by-trips`
+   * entries simply age out.
    */
   byTripIds: (tripIds: readonly Uuid[]) =>
-    [...tripLegsKeys.all, 'by-trips', [...tripIds].sort().join(',')] as const,
+    [...tripLegsKeys.all, 'by-trips-v2', [...tripIds].sort().join(',')] as const,
 };
 
 // ---------------------------------------------------------------------------
