@@ -211,3 +211,73 @@ Phase 16 through Phase 20 committed 2026-04-25:
 - .claude/settings.local.json is a local-only tool config file — never commit.
 - Sandbox may block git push to master in some sessions; in Phase 20 the push succeeded
   directly (d917771). Always attempt push; only fall back to user-manual if rejected.
+
+Phase 25 committed 2026-04-27 as 5 commits + 1 agent memory commit (6 total):
+- `704c72a` — fix(api): Phase 25 — drop owner-filter blocking editor mutations
+  (1 file: src/api/trips.ts — removed .eq('user_id', auth.uid()) from useUpdateTrip
+   and useUpdateTripBudget; these conflicted with Phase 22 RLS on editor-role collaborators)
+- `96af296` — feat(db,backend): Phase 25 — cover photo column + place-photo Edge Function + auth mutations
+  (10 files, 1049 ins: migration 0018_trips_cover_photo.sql, smoke-trips-cover-photo-rls.sql,
+   supabase/functions/place-photo/ new Edge Fn with verify_jwt=false, cors.ts GET method,
+   config.toml [functions.place-photo], src/api/place-photos.ts usePlacePhotoUrl,
+   src/api/types.ts cover_photo_google_place_id, src/api/auth.ts useChangeEmail+useChangePassword+AuthMutationError,
+   src/api/index.ts re-export)
+- `2bac652` — feat(ui): Phase 25 — cover photos + profile + notes + currency picker + duplicate kebab + dev banner
+  (7 files, 1412 ins/173 del: src/hooks/useEdgeRuntimeHealth.ts new, TripCard.tsx CoverHero,
+   AccommodationCard.tsx notes editor, trip/[id]/index.tsx CoverPickerModal+CoverPhotoSection+PlaceThumbnail+
+   currency owner-gating+notes role-gating, settings.tsx full profile screen, trips.tsx duplicate kebab+
+   EdgeRuntimeBanner, trip/new.tsx currency chip picker)
+- `9502f34` — test(fixtures): Phase 25 — add cover_photo_google_place_id to Trip fixtures
+  (2 files, 2 ins: TripCard.test.tsx + tripsFilters.test.ts one-liners for new Trip field)
+- `5c1d5c5` — docs: Phase 25 — sync plan + architecture + per-feature + smoke note
+  (9 files, 554 ins/16 del: plan.md, architecture.md, overview.md, NEW features/photos.md,
+   NEW features/profile.md, features/trip-crud.md, features/expenses.md, features/trip-lifecycle.md,
+   NEW smoke/phase-25.md)
+- `3ef49bd` — chore(docs): agent memory update — Phase 25 commit record
+Pushed to origin master (fast-forward) as f437742 (user pushed manually per earlier block note).
+
+E2E smoke restoration committed 2026-06-05 (standalone, post-Phase-25):
+- `df62f52` — test(e2e): restore web smoke suite to green; eas preview builds apk
+  (6 files, 106 ins/43 del: 5 Playwright specs + eas.json)
+  Fixes: add-place stays on /add after Phase 23.7 (dup spec); networkidle removed in
+  favour of Playwright web-first assertions (lifecycle spec); dialog-scoped selectors
+  for BottomSheet save buttons (budget + accommodation specs); InviteSheet opened via
+  button before email-input lookup (collaboration spec); Intl.NumberFormat regex fix
+  for currency amounts. eas.json: preview profile android.buildType = "apk".
+  Pushed to origin master (fast-forward) as df62f52.
+  Key pattern: scope BottomSheet interactions to [role="dialog"].last() to avoid
+  matching buttons behind the overlay; use accessibilityLabel targets for sheet CTAs;
+  replace isVisible()-with-timeout pseudo-polls with proper Playwright web-first assertions.
+
+Component test restoration committed 2026-06-05 (standalone, post-Phase-25):
+- `0452064` — test(components): restore 4 stale suites to green after Phase 20-25 UI changes
+  (4 files, 48 ins/13 del: TripCard.test.tsx, AccommodationCard.test.tsx,
+   BudgetCard.test.tsx, CategoryBreakdown.test.tsx)
+  TripCard: regex matchers for emoji-prefixed Text nodes (Phase 20 travel-product polish).
+  BudgetCard + CategoryBreakdown: loose amount matchers for Phase 22 formatCurrency locale output.
+  AccommodationCard: QueryClientProvider wrapper + jest.mock for @/api/trip-accommodations because
+  AccommodationNotesEditor (Phase 25.10) calls useUpdateTripAccommodation unconditionally.
+  Full suite after fix: 25 suites / 269 tests pass, 4 suites skipped (pre-existing).
+  Pushed to origin master (fast-forward) as 0452064.
+  Note: Co-Authored-By trailer was included in this commit per user's request in the prompt
+  (overrides the usual no-trailer policy — confirm before applying to future commits).
+
+Phase 25 introduced: supabase/migrations/0018_trips_cover_photo.sql,
+scripts/smoke-trips-cover-photo-rls.sql, supabase/functions/place-photo/,
+src/api/place-photos.ts, src/hooks/useEdgeRuntimeHealth.ts,
+docs/features/photos.md, docs/features/profile.md, docs/smoke/phase-25.md.
+supabase/functions/place-photo uses verify_jwt = false — intentional (public photo URLs
+needed pre-auth for card rendering). Safe to commit; no secrets.
+Tests and live smoke explicitly skipped per user direction — standing pattern since Phase 21.
+No Co-Authored-By trailer — user policy (do NOT add to any commit).
+
+Phase 26 verification sweep committed 2026-06-05 (docs-only, 1 commit):
+- `61ff74d` — docs: Phase 26 verification sweep — smoke log + overview/plan sync
+  (3 files, 135 ins/8 del: docs/smoke/phase-26.md NEW, docs/features/overview.md,
+   plan.md)
+  First live browser smoke of Phase 21-25: 0 failed / 21 passed / 22 skipped.
+  Jest: 25 suites / 269 tests. overview.md stamped with web-smoke-green 2026-06-05
+  for place-search, expenses, collaboration, accommodation, trip-lifecycle.
+  plan.md current phase advanced to Phase 26 in-progress.
+  .claude/agent-memory/ modified file intentionally excluded from this commit (local only).
+  Pushed to origin master (fast-forward) as 61ff74d.

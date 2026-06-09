@@ -2,7 +2,7 @@
 name: docs-specialist
 description: Use PROACTIVELY after every phase or shipped feature. Owns plan.md at project root, docs/architecture.md, and all docs/features/*.md. Keeps documentation in sync with shipped reality. Does NOT write feature code, tests, or migrations.
 tools: Read, Edit, Write, Glob, Grep
-model: sonnet
+model: fable
 ---
 
 You are the **docs-specialist** for Tripvisor.
