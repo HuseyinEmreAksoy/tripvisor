@@ -77,7 +77,8 @@ test.describe('Phase 21 — Budget UI golden path', () => {
     // ── Step 1: Set a budget ─────────────────────────────────────────────────
 
     // The Settings tab is a ScrollView; the Budget section appears below Cover photo,
-    // Daily plan time, Transport mode, Currency, and Travel cost sections.
+    // Daily plan time, and Transport mode sections (the per-km "Travel cost" section
+    // was retired in v2 Phase 0.1; Currency now lives under Budget).
     // Scroll the page down to bring the Budget section into view before interacting.
     await page.evaluate(() => { window.scrollBy(0, 600); });
     await page.waitForTimeout(500);

@@ -14,20 +14,15 @@
 //     `trip_collaborators` lets the owner see all rows for their trip
 //     and lets the invitee see their own rows.
 //
-// Constraint
-// ----------
-// Per the dispatch instructions, this file does NOT touch
-// `src/api/trips.ts`. The "Shared with me" UNION into `useTrips` is
-// deferred to Step 21.7. Instead, `useCollaboratedTrips` is exposed as a
-// standalone hook returning the trips-where-I-am-a-collaborator list, so
-// the UI can render a "Shared with me" surface without coupling to the
-// owner trips list yet.
+// History note: the "Shared with me" list originally lived in a standalone
+// `useCollaboratedTrips` hook (Phase 21). Phase 22 folded it into `useTrips()`
+// as a UNION (rows tagged `{ isOwner, collaboratorRole }`), and the dead hook
+// was deleted in v2 Phase 0.5b.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type {
-  Trip,
   TripCollaborator,
   TripCollaboratorRole,
   TripCollaboratorStatus,
@@ -187,7 +182,7 @@ async function invokeManageCollaborators<T>(
  *
  * The owner-side "manage collaborators" UI consumes this; collaborator-
  * side surfaces typically don't need this list (they care about which
- * trips they have access to, which is `useCollaboratedTrips`).
+ * trips they have access to — `useTrips()` rows with `isOwner === false`).
  */
 export function useTripCollaborators(tripId: Uuid | undefined) {
   return useQuery<TripCollaborator[]>({
@@ -212,56 +207,9 @@ export function useTripCollaborators(tripId: Uuid | undefined) {
   });
 }
 
-/**
- * Trips the current user has been invited to AND has accepted on. Joins
- * `trip_collaborators` (filtered to status='accepted', user_id=auth.uid())
- * to `trips` to return full trip rows.
- *
- * @deprecated Phase 22 Step 22.3 — use `useTrips()` and filter by
- * `isOwner === false`. `useTrips()` now returns the UNION of owned +
- * accepted-collaborator trips with each row tagged `{ isOwner,
- * collaboratorRole }`. This hook is kept so existing UI call sites keep
- * compiling; remove when callers migrate (Phase 23+).
- *
- * Implementation
- * --------------
- * Two-step query:
- *   1. SELECT trip_id FROM trip_collaborators WHERE user_id = auth.uid()
- *      AND status = 'accepted' (uses the (user_id, status) partial index).
- *   2. SELECT * FROM trips WHERE id IN (<step 1>) — RLS on `trips` was
- *      widened in `0011_trip_collaborators.sql` to permit accepted
- *      collaborators to SELECT, so this query succeeds under the user
- *      JWT.
- * We could express this as a single PostgREST `?select=trips!inner(*)`
- * embedded query, but the two-step form is easier to reason about for
- * cache invalidation and matches the pattern used by `useTripLegsByTripIds`.
- */
-export function useCollaboratedTrips() {
-  return useQuery<Trip[]>({
-    queryKey: tripCollaboratorsKeys.mine(),
-    queryFn: async () => {
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userData.user) return [];
-
-      const { data: rows, error: rowsErr } = await supabase
-        .from('trip_collaborators')
-        .select('trip_id')
-        .eq('user_id', userData.user.id)
-        .eq('status', 'accepted');
-      if (rowsErr) throw rowsErr;
-      const tripIds = (rows ?? []).map((r) => r.trip_id as Uuid);
-      if (tripIds.length === 0) return [];
-
-      const { data: trips, error: tripsErr } = await supabase
-        .from('trips')
-        .select('*')
-        .in('id', tripIds)
-        .order('created_at', { ascending: false });
-      if (tripsErr) throw tripsErr;
-      return (trips ?? []) as Trip[];
-    },
-  });
-}
+// `useCollaboratedTrips` (deprecated Phase 22 Step 22.3) was deleted in v2
+// Phase 0.5b — zero runtime callers; `useTrips()` returns the UNION of owned +
+// accepted-collaborator trips tagged `{ isOwner, collaboratorRole }`.
 
 // ===========================================================================
 // Hooks: mutations
@@ -313,9 +261,8 @@ export function useAcceptCollaboratorInvite(token?: string) {
       });
     },
     onSuccess: (res) => {
-      // The user just gained access to a new trip — their accepted-trips
-      // list and the affected trip's per-trip caches need refreshing.
-      qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.mine() });
+      // The user just gained access to a new trip — the affected trip's
+      // per-trip caches and the UNION trips list need refreshing.
       qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.forTrip(res.tripId) });
       qc.invalidateQueries({ queryKey: tripsKeys.detail(res.tripId) });
       qc.invalidateQueries({ queryKey: tripsKeys.all });
@@ -339,7 +286,6 @@ export function useDeclineCollaboratorInvite(token?: string) {
       });
     },
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.mine() });
       qc.invalidateQueries({ queryKey: tripCollaboratorsKeys.forTrip(res.tripId) });
       // Phase 22 Step 22.3: useTrips() now returns the UNION of owned +
       // accepted-collaborator trips. A decline does not change the

@@ -18,17 +18,20 @@
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useQueries } from '@tanstack/react-query';
 import { BackButton, Button, Heading, Screen } from '@/components';
 import { BarChart } from '@/components/charts/BarChart';
 import { PieChart } from '@/components/charts/PieChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { useAllUserReactions } from '@/api/trip-place-reactions';
 import { useAllUserExpenses } from '@/api/trip-expenses';
-import { useTrips, useTripPlaces } from '@/api';
+import { useTrips } from '@/api';
+import { tripPlacesKeys } from '@/api/_keys';
+import { supabase } from '@/api/supabase';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { dayColor } from '@/components/Map';
-import type { TripExpenseCategory } from '@/api/types';
+import type { TripExpenseCategory, TripPlace } from '@/api/types';
 
 // ── Category colors (visual identity for pie chart slices) ──────────────────
 const CATEGORY_COLORS: Record<TripExpenseCategory, string> = {
@@ -72,32 +75,39 @@ export default function AnalyticsScreen() {
   const { data: allExpenses = [], isLoading: expensesLoading } = useAllUserExpenses();
   const { data: allReactions = [], isLoading: reactionsLoading } = useAllUserReactions();
 
-  // Fetch places for each trip to resolve names in the liked/disliked catalog.
-  // We only need the trips that have reactions; use the first owned trip as pivot.
-  // Since we can't conditionally call hooks, we fetch places for up to the first
-  // 20 trips and use a cross-reference map. For an MVP this is acceptable.
-  const tripIds = useMemo(() => allTrips.slice(0, 20).map((t) => t.id), [allTrips]);
+  // Fetch places for EVERY trip (one cached query per trip) to resolve names
+  // in the liked/disliked catalogs. v2 Phase 0.5c: the v1 version hand-wired
+  // ten fixed useTripPlaces hooks and silently dropped data past the 10th
+  // trip (its comment claimed 20 — it was wrong). useQueries scales the hook
+  // count dynamically with the trip list, and each entry reuses
+  // tripPlacesKeys.forTrip(id) so per-trip caches stay shared with the
+  // trip-detail screen.
+  const placeQueryResults = useQueries({
+    queries: allTrips.map((trip) => ({
+      queryKey: tripPlacesKeys.forTrip(trip.id),
+      queryFn: async (): Promise<TripPlace[]> => {
+        const { data, error } = await supabase
+          .from('trip_places')
+          .select('*')
+          .eq('trip_id', trip.id)
+          .order('day_index', { ascending: true, nullsFirst: true })
+          .order('order_in_day', { ascending: true, nullsFirst: true });
+        if (error) throw error;
+        return data as TripPlace[];
+      },
+    })),
+  });
 
-  // Hook calls must be unconditional — we call for index 0-19 and select by tripId.
-  // useTripPlaces is cheap (cached) and disabled when tripId is undefined.
-  const p0 = useTripPlaces(tripIds[0]);
-  const p1 = useTripPlaces(tripIds[1]);
-  const p2 = useTripPlaces(tripIds[2]);
-  const p3 = useTripPlaces(tripIds[3]);
-  const p4 = useTripPlaces(tripIds[4]);
-  const p5 = useTripPlaces(tripIds[5]);
-  const p6 = useTripPlaces(tripIds[6]);
-  const p7 = useTripPlaces(tripIds[7]);
-  const p8 = useTripPlaces(tripIds[8]);
-  const p9 = useTripPlaces(tripIds[9]);
-
-  // Cross-reference: tripPlaceId → { title, tripTitle, dayIndex }
+  // Cross-reference: tripPlaceId → { title, tripTitle, dayIndex }.
+  // placeQueryResults gets a fresh array identity per render, so this memo
+  // recomputes on each render of this screen — acceptable: it's a cheap
+  // map-build over a few hundred rows at most, and the v1 version had the
+  // same effective behavior via ten result objects.
   const placeMeta = useMemo(() => {
     const map = new Map<string, { title: string; tripTitle: string; dayIndex: number | null }>();
-    const pQueries = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
-    for (let i = 0; i < pQueries.length; i++) {
+    for (let i = 0; i < placeQueryResults.length; i++) {
       const trip = allTrips[i];
-      const places = pQueries[i]?.data ?? [];
+      const places = placeQueryResults[i]?.data ?? [];
       for (const place of places) {
         map.set(place.id, {
           title: place.user_title ?? 'Unknown place',
@@ -107,7 +117,7 @@ export default function AnalyticsScreen() {
       }
     }
     return map;
-  }, [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, allTrips]);
+  }, [placeQueryResults, allTrips]);
 
   // ── Chart 1: Spending per trip ────────────────────────────────────────────
   const spendingPerTrip = useMemo(() => {
@@ -143,13 +153,12 @@ export default function AnalyticsScreen() {
 
   // ── Chart 3: Liked vs disliked per trip ───────────────────────────────────
   const reactionsByTrip = useMemo(() => {
-    // Map tripPlaceId → tripId using the trips' places.
+    // Map tripPlaceId → tripId using the trips' places (all trips — 0.5c).
     // We need to reverse-look up which trip a tripPlaceId belongs to.
     const placeToTrip = new Map<string, string>();
-    const pQueries = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
-    for (let i = 0; i < pQueries.length; i++) {
+    for (let i = 0; i < placeQueryResults.length; i++) {
       const trip = allTrips[i];
-      const places = pQueries[i]?.data ?? [];
+      const places = placeQueryResults[i]?.data ?? [];
       for (const place of places) {
         if (trip) placeToTrip.set(place.id, trip.id);
       }
@@ -176,7 +185,7 @@ export default function AnalyticsScreen() {
         disliked: disliked.get(trip.id) ?? 0,
         colorIndex: i,
       }));
-  }, [allReactions, allTrips, p0, p1, p2, p3, p4, p5, p6, p7, p8, p9]);
+  }, [allReactions, allTrips, placeQueryResults]);
 
   // ── Chart 4: Spending over time ───────────────────────────────────────────
   const spendingOverTime = useMemo(() => {

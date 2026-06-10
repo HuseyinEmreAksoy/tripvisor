@@ -57,9 +57,8 @@ export type UseTripsOptions = { archived?: boolean };
  *
  * To derive `collaboratorRole`, we issue a SECOND lightweight query
  * against `trip_collaborators` (filtered to status='accepted',
- * user_id=auth.uid()) and join client-side. This matches the
- * two-step pattern used by `useCollaboratedTrips` and avoids a more
- * expensive PostgREST embedded query.
+ * user_id=auth.uid()) and join client-side. The two-step form avoids a
+ * more expensive PostgREST embedded query.
  *
  * Sort order
  * ----------

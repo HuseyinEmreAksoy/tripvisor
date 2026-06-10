@@ -1,5 +1,7 @@
 # Architecture
 
+> **⚠ v1 historical record — superseded by [`docs/v2/architecture.md`](v2/architecture.md) (2026-06-10).** This doc describes the v1 system as shipped through Phase 26. Known deltas already live in v2: `cost_per_km` retired (Phase 0.1 — "Cost" sort is now "Duration"; the per-km settings input is gone), `useCollaboratedTrips` deleted (Phase 0.5b), and the v2 plan (`plan-v2.md`) supersedes the phase roadmap referenced here. Per-section rewrites happen as each v2 phase ships.
+
 ## Platforms & deploy
 
 - **Native (iOS + Android)**: Expo SDK 52+ + React Native 0.76 via **EAS Build** + **EAS Update** (OTA). Requires `expo-dev-client` — **Expo Go not supported** due to `react-native-maps`.

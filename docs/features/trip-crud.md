@@ -1,5 +1,7 @@
 # trip-crud
 
+> **⚠ v1 historical record — superseded by [`docs/v2/`](../v2/architecture.md) (2026-06-10).** The per-km "Travel cost" settings input described below was retired in v2 Phase 0.1 (currency picker moved under Budget); the trips-list "Cost" sort is now "Duration". See `plan-v2.md`.
+
 **Status**: 🚧 In progress — Phase 20 time-first copy, desktop grid, and `total_budget` column shipped 2026-04-25; web verified; native deferred. Phase 23: add-place flow rewritten (day picker + stay-on-screen + stepper); bicycling in transport picker; smoke deferred per user direction. Phase 25: cover photo, currency picker in new-trip form, search box, duplicate kebab shortcut shipped 2026-04-26; smoke deferred per user direction.
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: auth

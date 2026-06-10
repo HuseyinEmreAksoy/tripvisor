@@ -66,7 +66,7 @@ Pending invites expire after 7 days (`INVITE_TTL_MS`). On accept, the function c
 
 ## Client
 
-See `src/api/trip-collaborators.ts` — exposes `useTripCollaborators`, `useInviteCollaborator`, `useAcceptCollaboratorInvite`, `useDeclineCollaboratorInvite`, `useRevokeCollaborator`, `useUpdateCollaborator`, `useCollaboratedTrips`.
+See `src/api/trip-collaborators.ts` — exposes `useTripCollaborators`, `useInviteCollaborator`, `useAcceptCollaboratorInvite`, `useDeclineCollaboratorInvite`, `useRevokeCollaborator`, `useUpdateCollaborator`. (The deprecated `useCollaboratedTrips` was deleted in v2 Phase 0.5b — collaborated trips ride the `useTrips()` UNION.)
 
 ## Migrations
 

@@ -1,5 +1,7 @@
 # collaboration
 
+> **⚠ v1 historical record — superseded by [`docs/v2/`](../v2/architecture.md) (2026-06-10).** The deprecated `useCollaboratedTrips` hook referenced below was **deleted in v2 Phase 0.5b** — collaborated trips ride the `useTrips()` UNION (`isOwner === false`). v2 adds per-place collaborator comments (`trip_place_comments`).
+
 **Status**: 🚧 In progress — shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (in-place role change, unified `useTrips()`, editor budget editing); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer + Edge Function), ui-specialist (screens)
 **Depends on**: trip-crud, auth

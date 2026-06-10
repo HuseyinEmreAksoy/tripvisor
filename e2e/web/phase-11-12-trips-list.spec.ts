@@ -3,7 +3,7 @@
  *
  * Covers:
  *   1. Search: type into trip search → filtered list. Clear button works.
- *   2. Sort cycle: tap sort button 4× → Recent → A→Z → Start → Cost → Recent.
+ *   2. Sort cycle: tap sort button 4× → Recent → A→Z → Start → Duration → Recent.
  *   3. Date filter: open FilterSheet → pick "Upcoming" → list filters. Pick "All" to clear.
  *   4. No-results state: search for non-matching text → "No trips match your search."
  *
@@ -96,13 +96,13 @@ test.describe('Phase 11-12 — trip search', () => {
 // =============================================================================
 
 test.describe('Phase 11-12 — sort cycle', () => {
-  test('sort button cycles through Recent → A→Z → Start → Cost ↓ → Recent', async ({ page }) => {
+  test('sort button cycles through Recent → A→Z → Start → Duration ↓ → Recent', async ({ page }) => {
     skipIfEnvNotConfigured();
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
     // The sort button has an accessibilityLabel like "Sort: Recent. Tap to change sort order."
-    // The button text (face label) is the current sort key: "Recent", "A→Z", "Start", "Cost ↓".
+    // The button text (face label) is the current sort key: "Recent", "A→Z", "Start", "Duration ↓".
     // We locate it by its accessibilityLabel prefix.
     const sortBtn = page.getByRole('button', { name: /sort:/i });
     const hasSortBtn = await sortBtn.isVisible({ timeout: 5_000 }).catch(() => false);
@@ -126,13 +126,13 @@ test.describe('Phase 11-12 — sort cycle', () => {
     const label2 = await sortBtn.getAttribute('aria-label');
     expect(label2).toMatch(/sort:\s*start/i);
 
-    // Cycle 3: Start → Cost
+    // Cycle 3: Start → Duration
     await sortBtn.click();
     await page.waitForTimeout(100);
     const label3 = await sortBtn.getAttribute('aria-label');
-    expect(label3).toMatch(/sort:\s*cost/i);
+    expect(label3).toMatch(/sort:\s*duration/i);
 
-    // Cycle 4: Cost → Recent (wraps)
+    // Cycle 4: Duration → Recent (wraps)
     await sortBtn.click();
     await page.waitForTimeout(100);
     const label4 = await sortBtn.getAttribute('aria-label');

@@ -1,5 +1,7 @@
 # expenses
 
+> **⚠ v1 historical record — superseded by [`docs/v2/`](../v2/architecture.md) (2026-06-10).** Any mention of `cost_per_km` below is retired (v2 Phase 0.1); the category model described here carries forward into v2.
+
 **Status**: 🚧 In progress — data layer shipped Phase 20 (2026-04-25); UI shipped Phase 21 (2026-04-25); Phase 22 hardening shipped 2026-04-26 (currency formatting, editor budget edit); Phase 25 bug fix 2026-04-26: `useUpdateTripBudget` and `useUpdateTrip` owner-only client filters removed so editor collaborators can actually save budget changes (the Phase 22 RLS was correct; the client filter was the remaining blocker); web smoke pending (skipped per user direction).
 **Owner agents**: backend-specialist (data layer), ui-specialist (UI)
 **Depends on**: trip-crud

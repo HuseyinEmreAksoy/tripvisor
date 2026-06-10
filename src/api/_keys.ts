@@ -118,12 +118,10 @@ export const tripPlaceReactionsKeys = {
 // ---------------------------------------------------------------------------
 //
 // `forTrip(tripId)` is the owner-side list of collaborators on a single
-// trip (powers the "manage collaborators" UI). `mine` is the per-user
-// list of trips where the caller has an accepted collaborator row
-// (powers `useCollaboratedTrips` and the future "Shared with me" badge
-// in the trips list, deferred to Step 21.7).
+// trip (powers the "manage collaborators" UI). The `mine` key (which
+// powered the deprecated `useCollaboratedTrips`) was deleted in v2 Phase
+// 0.5b — "Shared with me" rides the `useTrips()` UNION under `tripsKeys`.
 export const tripCollaboratorsKeys = {
   all: ['trip-collaborators'] as const,
   forTrip: (tripId: Uuid) => [...tripCollaboratorsKeys.all, 'for-trip', tripId] as const,
-  mine: () => [...tripCollaboratorsKeys.all, 'mine'] as const,
 };

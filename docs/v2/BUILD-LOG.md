@@ -18,13 +18,13 @@
 ## Debt register (live; re-deferral must be explicit)
 | Item | Status | Lands in |
 |---|---|---|
-| Analytics 10-trip cap (comment claims 20, wires 10 — **live silent-data-loss bug**) | ☐ | **0.5** interim fix · P3 proper (MV) |
-| Stale e2e "Cost ↓" assertions (`phase-11-12-trips-list.spec.ts`, `phase-21-budget.spec.ts`) | ☐ | **0.5** |
-| `useCollaboratedTrips` + `tripCollaboratorsKeys.mine` (zero runtime callers; deferral #3) | ☐ | **0.5** |
-| Stray artifacts (`*-fresh.txt`, `e2e-final.txt`, malformed tsc-output) + `.gitignore` gaps | ☐ | **0.5** |
-| v1 docs contradict v2 (cost model, Cost sort, useCollaboratedTrips) | ☐ | **0.5** banner · full rewrite per-phase |
+| Analytics 10-trip cap (comment claims 20, wires 10 — **live silent-data-loss bug**) | ✅ interim 2026-06-10 (useQueries, all trips) | P3 proper (MV) |
+| Stale e2e "Cost ↓" assertions (`phase-11-12-trips-list.spec.ts`, `phase-21-budget.spec.ts`) | ✅ 2026-06-10 | 0.5b |
+| `useCollaboratedTrips` + `tripCollaboratorsKeys.mine` (zero runtime callers; deferral #3) | ✅ deleted 2026-06-10 | 0.5b |
+| Stray artifacts (`*-fresh.txt`, `e2e-final.txt`, malformed tsc-output) + `.gitignore` gaps | ✅ 2026-06-10 | 0.5b |
+| v1 docs contradict v2 (cost model, Cost sort, useCollaboratedTrips) | ✅ banners 2026-06-10 | full rewrite per-phase |
 | v2 doc contradictions (features B2 "CRDT", "~1000-line" vs 2442, MMKV ambiguity, planner "inherit" claim) | ✅ 2026-06-10 | fixed with the panel synthesis (0.5e) |
-| Uncommitted blueprint (ux-principles.md, planner.md→fable, this revision) | ☐ | **0.5** commit |
+| Uncommitted blueprint (ux-principles.md, planner.md→fable, this revision) | ✅ committed 2026-06-10 (`e9e0715`) | 0.5a |
 | Zero native verification (all of v1) | ☐ | spot-checks + P4 |
 | e2e/Playwright re-enablement | ⏭ | post-GA (tracked, not silent) |
 
@@ -43,13 +43,13 @@
 
 ---
 
-## Phase 0.5 — Debt sweep & hygiene  (NEXT — no decision needed, ~half day)
-- ☐ **0.5a Commit the blueprint** — this revision + `ux-principles.md` (untracked!) + `planner.md` inherit→fable; plan-v2 "planner stays inherit" contradiction fixed by the v2.1 rewrite. _(git-committer)_
-- ☐ **0.5b Hygiene commit** — delete `e2e-final.txt`/`e2e-fresh.txt`/`jest-fresh.txt`/`tsc-fresh.txt` + malformed `C…tsc-output.txt`; `.gitignore`: `*-fresh.txt`, `e2e-*.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`; fix e2e "Cost ↓"→"Duration ↓" (`phase-11-12-trips-list.spec.ts:99-135`) + dead "Travel cost" comment (`phase-21-budget.spec.ts:80`); delete `useCollaboratedTrips` (`trip-collaborators.ts:239`) + `tripCollaboratorsKeys.mine` (`_keys.ts:123`) + README ref. _(backend)_
-- ☐ **0.5c Analytics interim fix** — replace the 10 hand-rolled `useTripPlaces` hooks in `app/(app)/analytics.tsx:76-97` with one `useQueries` over ALL trip ids (~20 lines, no schema); fix the lying "first 20" comment. Proper MV fix lands P3. _(ui)_
-- ☐ **0.5d v1-docs banner pass** — 3-line "v1 historical record — superseded by docs/v2; cost_per_km/Cost-sort/useCollaboratedTrips retired" banner on `docs/architecture.md` + `docs/features/{cost-and-print,expenses,trip-crud,collaboration}.md`. Full rewrites happen per-phase. _(docs)_
+## ✅ Phase 0.5 — Debt sweep & hygiene  (DONE 2026-06-10; verified: tsc clean vs baseline, Jest 25 suites / 268 tests green)
+- ✅ **0.5a Commit the blueprint** — done earlier 2026-06-10 (`0eb41d6`, `e9e0715`, `b3530b9`).
+- ✅ **0.5b Hygiene** — deleted `e2e-final.txt`/`e2e-fresh.txt`/`jest-fresh.txt`/`tsc-fresh.txt` + malformed `C…tsc-output.txt`; `.gitignore` += `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`; e2e "Cost ↓"→"Duration ↓" fixed (`phase-11-12-trips-list.spec.ts` ×4 sites) + stale "Travel cost" comment fixed (`phase-21-budget.spec.ts`); **`useCollaboratedTrips` deleted** + `tripCollaboratorsKeys.mine` removed + 2 dead `mine()` invalidations removed (accept/decline) + comment refs fixed (`trips.ts`, `trip-collaborators.ts` header, manage-collaborators README); unused `Trip` import dropped.
+- ✅ **0.5c Analytics interim fix** — `analytics.tsx`: 10 hand-wired `useTripPlaces` hooks → one dynamic `useQueries` over **ALL** trip ids (reuses `tripPlacesKeys.forTrip` so caches stay shared); fixed `placeMeta` AND the second `p0..p9` block in `reactionsByTrip` (lines 159/189 — the verifier caught it); lying "first 20" comment corrected. Proper MV fix still lands P3.
+- ✅ **0.5d v1-docs banner pass** — superseded-by-v2 banners on `docs/architecture.md` + `docs/features/{cost-and-print,expenses,trip-crud,collaboration}.md`.
 - ✅ **0.5e v2 self-contradiction fixes** (done 2026-06-10, with the panel synthesis) — features.md B2 "CRDT" → `manual_rank` wording; "~1000-line" → 2442 everywhere; expo-sqlite pinned (MMKV removed from diagrams); plan-v2 "planner stays inherit" claim fixed by the v2.1 rewrite.
-- ☐ **0.5f CI posture** — paragraph in conventions.md: Jest = required check through S1 (jest-expo bumped per SDK step); ci.yml tsc job is `continue-on-error` (state it or make it required); align the Playwright TODO with the new phase names; amend "keep test files compiling" → "passing or explicitly `test.skip`-ed with a tracked reason". _(docs/backend)_
+- ✅ **0.5f CI posture** — conventions.md updated (with the panel synthesis) + `ci.yml` header comment now states the posture: Jest required through S1, tsc `continue-on-error` acknowledged, Playwright TODO re-pointed at the BUILD-LOG debt register (old "phase-6" was v1 numbering).
 
 ## Now-track  (SDK 52, OTA-able, starts after 0.5)
 

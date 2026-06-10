@@ -12,7 +12,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# TODO(phase-6): add Playwright job once CI Supabase fixture exists
+# CI posture (v2 Phase 0.5f): with test-specialist disabled, this workflow IS the
+# regression net. The Jest job is the required check and MUST stay green through
+# the v2 S1 SDK epic (bump jest-expo in lockstep at each SDK checkpoint).
+# The tsc job below is continue-on-error (pre-existing typing debt) — the
+# documented tsc baseline in docs/v2/conventions.md is the working gate until
+# the debt is paid and continue-on-error is removed.
+# TODO(v2 post-GA): add Playwright job once a CI Supabase fixture exists
+# (e2e re-enablement is tracked in the BUILD-LOG debt register, not phase-6 —
+# that referred to the old v1 numbering).
 
 jobs:
   test:

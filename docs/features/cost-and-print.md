@@ -1,5 +1,7 @@
 # cost-and-print
 
+> **⚠ v1 historical record — superseded by [`docs/v2/`](../v2/architecture.md) (2026-06-10).** The per-km cost model (`cost_per_km`), its rollup formula, the print "/km" line, and the trips-list "Cost" sort described below were **retired in v2 Phase 0.1** — replaced by the category `trip_expenses` model + time metrics ("Duration" sort). See `plan-v2.md`.
+
 **Status**: ✅ Done (Web). Native deferred to user smoke (read-only view only).
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: trip-crud, optimization (trip_legs must exist)
