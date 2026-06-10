@@ -15,3 +15,4 @@ export * from './account-export';
 export * from './trip-accommodations';
 export * from './trip-collaborators';
 export * from './trip-place-reactions';
+export * from './trip-place-comments';

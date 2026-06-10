@@ -114,6 +114,23 @@ export const tripPlaceReactionsKeys = {
 };
 
 // ---------------------------------------------------------------------------
+// trip-place-comments (v2 Phase N2 — BUILD-LOG 2.6)
+// ---------------------------------------------------------------------------
+//
+// `forTripPlace(tripPlaceId)` keys the per-place thread read (place card /
+// detail sheet, ascending created_at). `forTrip(tripId)` keys the per-trip
+// batch read that powers comment-count badges across the itinerary without
+// an N-per-place query fan-out. Mutations in `trip-place-comments.ts`
+// invalidate both.
+export const tripPlaceCommentsKeys = {
+  all: ['trip-place-comments'] as const,
+  forTripPlace: (tripPlaceId: Uuid) =>
+    [...tripPlaceCommentsKeys.all, 'for-trip-place', tripPlaceId] as const,
+  forTrip: (tripId: Uuid) =>
+    [...tripPlaceCommentsKeys.all, 'for-trip', tripId] as const,
+};
+
+// ---------------------------------------------------------------------------
 // trip-collaborators (Phase 21 Steps 21.5 / 21.6)
 // ---------------------------------------------------------------------------
 //

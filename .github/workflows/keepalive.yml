@@ -1,0 +1,91 @@
+# Supabase free-tier keep-alive pinger (v2 Phase N2 — BUILD-LOG 2.4, panel decision D6).
+#
+# Why this exists
+# ---------------
+# Supabase free-tier projects are PAUSED after ~7 days without API activity.
+# A pg_cron heartbeat inside the database cannot defeat this: once the
+# project pauses, its own cron stops too — the heartbeat is self-referential
+# (D6). The fix has to live OUTSIDE Supabase, so a GitHub Actions schedule
+# curls the project's API gateway every 3 days.
+#
+# Success criterion (deliberate — do NOT "fix" this to require 2xx):
+#   ANY HTTP status code proves the project is awake and counts as gateway
+#   activity — a 401 (key rejected), 404 (path moved), even a 500 all mean
+#   Supabase served the request. The step therefore succeeds on any HTTP
+#   response and fails ONLY on a network-level error (DNS failure, timeout,
+#   connection refused → curl emits no status / "000"). A blanket `|| true`
+#   would swallow exactly the network failures we need to be alerted on.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions);
+# documented here + in supabase/migrations/README-v2.md, created manually:
+#   SUPABASE_KEEPALIVE_URL  Base URL WITHOUT a query string (the job appends
+#                           `?ping=1`). Recommended: the REST gateway root
+#                           `https://<project-ref>.supabase.co/rest/v1/`
+#                           (exercises Kong + PostgREST + Postgres — the
+#                           activity the pause detector measures). An Edge
+#                           Function URL such as
+#                           `https://<project-ref>.supabase.co/functions/v1/places-autocomplete`
+#                           also works: every Tripvisor function answers
+#                           `GET ?ping` with `{ ok: true }`.
+#   SUPABASE_ANON_KEY       The project's anon (publishable) key. Safe for
+#                           this use — it is the same key shipped in the app
+#                           bundle; RLS gates everything behind it.
+#
+# Operational caveat: GitHub disables scheduled workflows after 60 days
+# without repository activity. If this repo ever goes dormant that long, the
+# pinger silently stops and the project will pause — re-enable the workflow
+# from the Actions tab (or push any commit) after a dormancy gap.
+
+name: supabase-keepalive
+
+on:
+  schedule:
+    # Every 3 days at 06:23 UTC. Odd minute on purpose: GitHub delays/drops
+    # jobs scheduled at :00 spikes far more often than off-peak minutes.
+    - cron: '23 6 */3 * *'
+  # Manual trigger for verifying the secrets are wired before trusting cron.
+  workflow_dispatch:
+
+# No GITHUB_TOKEN scopes needed — the job only curls an external URL.
+permissions: {}
+
+jobs:
+  ping:
+    name: Ping Supabase gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping (any HTTP status = awake; network error = fail)
+        env:
+          KEEPALIVE_URL: ${{ secrets.SUPABASE_KEEPALIVE_URL }}
+          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "${KEEPALIVE_URL}" ] || [ -z "${ANON_KEY}" ]; then
+            echo "::error::SUPABASE_KEEPALIVE_URL and/or SUPABASE_ANON_KEY repository secrets are not set."
+            exit 1
+          fi
+
+          # -sS .............. quiet, but still print transport errors
+          # no -f ............ HTTP error statuses (4xx/5xx) must NOT fail
+          #                    curl — any served response proves the project
+          #                    is awake (see header comment)
+          # --retry 2 ........ ride out transient blips (timeouts, 5xx);
+          #                    --retry-connrefused covers cold gateways
+          # `|| status=""` ... keep a curl transport failure from aborting
+          #                    the shell before our own check prints a
+          #                    useful error annotation
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            --retry 2 --retry-delay 5 --retry-connrefused --max-time 30 \
+            -H "apikey: ${ANON_KEY}" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            "${KEEPALIVE_URL}?ping=1") || status=""
+
+          echo "Supabase answered with HTTP ${status:-<no response>}"
+
+          # curl reports 000 when no HTTP response was received at all.
+          if [ -z "${status}" ] || [ "${status}" = "000" ]; then
+            echo "::error::No HTTP response from Supabase — network failure, DNS error, or project unreachable. Check whether the project has been paused (Supabase dashboard) and whether SUPABASE_KEEPALIVE_URL is correct."
+            exit 1
+          fi
+
+          echo "Project is awake — any HTTP status (2xx-5xx) counts as gateway activity for the free-tier pause detector."
