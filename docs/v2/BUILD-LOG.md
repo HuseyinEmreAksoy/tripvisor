@@ -53,30 +53,30 @@
 
 ## Now-track  (SDK 52, OTA-able, starts after 0.5)
 
-### N1 — Nav backbone + core-loop UX  _(ui-heavy; the user's #1 visible win)_
-- ☐ 1.1 Split `trip/[id]/index.tsx` (**2442 lines**) → route segments: map / itinerary / settings / budget / collab; **v1 parity checklist gates the split** (print, .ics, share, duplicate/archive, account export, notes, reactions, cover photos, location routing all survive)
-- ☐ 1.2 **Itinerary timeline** — editable per-day `start_time` (default 09:00) + computed arrival/departure chips per stop (cumulative legs + visit minutes; pure client math)
-- ☐ 1.3 Home/Discover surface (hosts "Plan my trip" CTA) + trip-countdown card
-- ☐ 1.4 **Ideas/wishlist** — name the `day_index=null` bucket; one-tap promote-to-day
-- ☐ 1.5 Onboarding: first-run welcome + pre-built sample trip (core-loop demo before any API key burns)
-- ☐ 1.6 Google OAuth sign-in button (config in N2) — magic-link-only rides Resend's 100/day cap
-- ☐ 1.7 **Comments UI** inline on place cards/detail (schema in N2)
-- ☐ 1.8 Desktop-web layouts per segment; explicit back affordances everywhere
+### ✅ N1 — Nav backbone + core-loop UX  (DONE 2026-06-10; commits `ada5d6d`, `cb2e9c4`)
+- ✅ 1.1 God-screen split: 2365→**312-line route shell** + 8 components in `src/components/trip-detail/` (TripHeader, MapTab, ItineraryTab, PlaceRow, NotesEditors, SettingsTab, CoverPhotoSection, CoverPickerModal). Pure refactor; parity checklist held; tsc byte-identical; jest green. *(Note: shipped as component extraction with one route shell, not separate route segments — reconciled here.)*
+- ✅ 1.2 Timeline: `DayStartTimeControl` (per-day start, default 09:00, persists via `trip_days.start_time` from migration 0020 with graceful pre-migration fallback) + arrival→departure chips per place via pure `computeDayTimeline.ts`.
+- ✅ 1.3 Home/Discover: `home/HomeHero.tsx` on trips.tsx — travel hero, trip-countdown card, "✨ Plan my trip with AI" CTA → `/trip/plan`.
+- ✅ 1.4 Ideas: Unscheduled bucket renamed + promote-to-day affordance.
+- ✅ 1.5 Sample trip: `useSampleTrip` + empty-state "Try a sample trip".
+- ✅ 1.6 Google OAuth: `GoogleSignInButton` + `useGoogleSignIn` on login/signup (friendly fallback until the provider is configured in the dashboard).
+- ✅ 1.7 Comments UI: 💬 badges (batch `useTripComments`, no fan-out) + `PlaceCommentsSheet` (attributed flat thread, add/soft-delete, optimistic).
+- ✅ 1.8 Back affordances + desktop pass on all new surfaces.
 
-### N2 — Backend adoption  _(parallel with N1)_
-- ☐ 2.1 Realtime publication on synced tables
-- ☐ 2.2 Storage buckets `trip-docs` + `user-uploads` (private, RLS via `user_can_access_trip`)
-- ☐ 2.3 pg_cron: 30-day leg-TTL purge + **analytics MV** (folded from old P13.1)
-- ☐ 2.4 **Keep-alive: GitHub Actions cron pinger** (D6 resolved) — not pg_cron
-- ☐ 2.5 Resend SMTP + Google OAuth provider config
-- ☐ 2.6 **`trip_place_comments`** migration (id, trip_id, place_id, author_id, body, created_at, deleted; RLS; append-only → conflict-free) + TanStack hooks
+### ✅ N2 — Backend adoption  (DONE 2026-06-10; commit `13f17bf`)
+- ✅ 2.1 Realtime publication on 6 tables (idempotent DO blocks) — migration 0019.
+- ⏭ 2.2 Storage buckets — deferred to P2 (documents feature is the consumer; no earlier need). *(explicit re-scope, not silent)*
+- ✅ 2.3 pg_cron: nightly 30-day leg-TTL purge + `analytics_user_trip_stats` MV refresh; MV reader `get_my_trip_stats()` (security definer; MV itself revoked from clients).
+- ✅ 2.4 Keep-alive: `.github/workflows/keepalive.yml` (every 3 days; needs repo secrets).
+- 🟡 2.5 Resend SMTP + Google OAuth — **dashboard-manual**, documented in `supabase/migrations/README-v2.md` (code-side complete).
+- ✅ 2.6 `trip_place_comments` migration (RLS hardened: trip/place cross-check on INSERT/UPDATE) + `src/api/trip-place-comments.ts` hooks + `tripPlaceCommentsKeys`.
 
-### N3 — AI core: "Plan my trip"  ⏸ D4
-- ☐ 3.1 `ai-itinerary` Edge Fn (Gemini 2.5-flash → Groq gpt-oss-20b, `responseSchema`)
-- ☐ 3.2 Grounding loop — location-biased; **partial-grounding UX** ("couldn't find N places" → user fix-up, never silent drops); LLM coords never trusted
-- ☐ 3.3 **Quota table = usage ledger from day one** (per-user AI runs + grounding + routing counters; C4) + idempotency key per run in `trip_ai_runs` (retries reuse the stored draft, never double-bill)
-- ☐ 3.4 **Draft-review screen** — DRAFT staging (not written to `trip_places`), per-place keep/remove/swap + day reassign, commit on accept, **one-tap undo after apply**; quota-exhausted state defined
-- ☐ 3.5 "Plan my trip" UI on Home
+### ✅ N3 — AI core: "Plan my trip"  (DONE 2026-06-10; D4 accepted per user direction; commits `6313d2a`, Wave 3)
+- ✅ 3.1 `ai-itinerary` Edge Fn (955 lines): Gemini 2.5-flash `responseSchema` → Groq `gpt-oss-20b` strict json_schema fallback; data-minimized (user text + place names only); `ai_misconfigured` friendly state when keys absent.
+- ✅ 3.2 Grounding loop: location-biased autocomplete→details (FieldMask `id,location,displayName` only), promise-pooled; `unresolved[]` surfaced (status `partial`), LLM coords never used.
+- ✅ 3.3 `ai_usage` ledger (C4: 10 plans/day/user) + `trip_ai_runs` audit with **idempotent replay** (same key → stored draft, zero re-billing) — migration 0020 (+ `trip_days.start_time`).
+- ✅ 3.4 Draft-review screen (`src/components/ai-plan/`, 9 files): DRAFT staging (no writes until accept), keep/remove/restore, duration + day reassign, unresolved card, editable title, "Powered by Google", commit progress, **undo beat deletes the trip**, partial-failure honesty, quota-exhausted card.
+- ✅ 3.5 `/trip/plan` flow live (form → review → commit → success/undo); commit = `useCreateTrip` → places (+ `useMoveToDay` for day persistence — `day_index` isn't in the create schema) → one `useOptimizeTrip`.
 
 ### N4 — AI editing + import  ⏸ D4
 - ☐ 4.1 `ai-edit` NL edits as **previewable diffs** (accept/reject + undo)
@@ -143,9 +143,21 @@ Realtime co-edit (presence **dots** + live changes + live comments — **no curs
 
 ---
 
+### ✅ RESUMED & COMPLETED 2026-06-10 — Phases 0.5 → N3 all shipped
+The 2026-06-10 session-limit checkpoint was resolved: Wave 2 work was inspected, gate-verified, and committed (`cb2e9c4` UI, `6313d2a` backend); Wave 3 (N3.4/3.5) then shipped the real Plan-my-trip flow.
+
+**⚠ USER ACTIONS REQUIRED before the new features run live:**
+1. Apply migrations 0019 + 0020: `npx supabase db push --linked` (or local `npx supabase db reset`).
+2. Set Edge Function secrets: `npx supabase secrets set GEMINI_API_KEY=… GROQ_API_KEY=…` (AI returns a friendly `ai_misconfigured` banner until then).
+3. Deploy the new function: `npx supabase functions deploy ai-itinerary`.
+4. Dashboard (manual, see `supabase/migrations/README-v2.md`): Resend SMTP under Auth→SMTP; Google provider under Auth→Providers (OAuth button shows a friendly fallback until configured).
+5. GitHub repo secrets for keep-alive: `SUPABASE_KEEPALIVE_URL`, `SUPABASE_ANON_KEY`; run `keepalive.yml` once via workflow_dispatch.
+6. Web smoke (manual, no key needed for most): Home hero/countdown/CTA → `/trip/plan` form → `ai_misconfigured` banner; timeline chips + day start-time; Ideas section; comments sheet; sample trip; OAuth fallback message. With keys: the full A1 golden path (8 steps listed in the Wave-3 report / `docs/smoke/` to-be).
+
 ### Change history
 - 2026-06-09 — log created; Phase 0.1 started.
 - 2026-06-09 — Phase 0.1 ✅ (cost_per_km retired, time-first; tsc + jest verified).
 - 2026-06-09 — Phase 0.2–0.4 ✅. **Phase 0 DONE**, committed. Holding before SDK upgrade.
 - 2026-06-10 — User guidance captured: real product, core loop, flexible & friendly → `ux-principles.md` + plan Constraint #6 + memory.
 - 2026-06-10 — **Fable review panel (5 lenses) + synthesis** → plan v2.1: three-track resequence (god-screen split before sync engine; ~40% un-parked from the D1 hold); WEB BETA milestone; new P0s (timeline/ETAs, place comments, AI draft-review, parity checklist); C1 refined (`manual_rank` user-order vs server-computed order); cuts (web offline tiles, cursors, meals table, 8.3); Phase 0.5 debt sweep queued; D6 resolved (GitHub Actions pinger); D2+D4 flagged now-blocking. BUILD-LOG restructured to N/S/P tracks.
+- 2026-06-10 — **Phases 0.5 + N1 + N2 + N3 SHIPPED** (commits `7572d32`, `ada5d6d`, `13f17bf`, `cb2e9c4`, `6313d2a`, +Wave 3). All gates green throughout (tsc baseline-identical; jest 25 suites / 268 tests). Session-limit interruption mid-Wave-2 recovered with zero loss. **Next:** user actions above (migrations/secrets/dashboard) + web smoke; then **N4 (AI editing + import)** ⏸ or **N5 (free maps)** ⏸ D2 or **S1 (SDK epic)** ⏸ D1.
