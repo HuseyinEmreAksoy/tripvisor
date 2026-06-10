@@ -22,9 +22,18 @@
  *    one-tap "Add to Day N" chip row per idea (reuses useMoveToDay).
  *  - 1.7 comments: one useTripComments(tripId) batch read powers the per-place
  *    💬 badges (no per-place query fan-out); tapping opens PlaceCommentsSheet.
+ *
+ * v2 N4 additions (editors only — every surface below is canEdit-gated):
+ *  - 4.1 AI edit: a compact "✨ AI edit" chip in the tab's header row opens
+ *    AiEditSheet (instruction → previewable diff → apply with undo).
+ *  - 4.2 gap-fill: when a day's computed timeline leaves ≥60 min of slack vs
+ *    trip.daily_hours_budget, a subtle "~Nh free — fill this day" footer chip
+ *    opens GapFillSheet (Ideas first, then AI suggestions).
+ *  - 4.3 import: an "Import" chip (header row + the Ideas section header)
+ *    opens ImportPlacesSheet (pasted list / Takeout CSV → Ideas bucket).
  */
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   DraggableItinerary,
@@ -51,6 +60,8 @@ import { useTripReactions, useSetTripPlaceReaction } from '@/api/trip-place-reac
 import { useSession } from '@/api/auth';
 import type { TripAccommodation } from '@/api/types';
 import { StayingAtPill } from '@/components/accommodation/StayingAtPill';
+import { AiEditSheet, GapFillSheet, ImportPlacesSheet } from '@/components/ai-edit';
+import { formatDuration } from '@/lib/formatDuration';
 import { DayNotesEditor } from './NotesEditors';
 import { PlaceRow } from './PlaceRow';
 import { DayStartTimeControl } from './DayStartTimeControl';
@@ -61,6 +72,12 @@ import {
   parseStartTime,
   type TimelineStop,
 } from './computeDayTimeline';
+
+// v2 N4 4.2: a day advertises gap-fill only when ≥1h of budget is left —
+// below that, suggestions would mostly be unusable (server floor is 30m).
+const GAP_FILL_MIN_SLACK_MINUTES = 60;
+// useAiSuggest validates slackMinutes to 30..480.
+const GAP_FILL_MAX_SLACK_MINUTES = 480;
 
 // v2 0020: `trip_days.start_time` ships with migration 0020 (backend, in
 // parallel). Local type-extension until the api TripDay type is widened —
@@ -94,6 +111,14 @@ export function ItineraryTab({
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
   // v2 N1 1.7: which place's comment thread is open (null = closed).
   const [commentsPlaceId, setCommentsPlaceId] = useState<string | null>(null);
+  // v2 N4: AI-edit / import / gap-fill sheet state. `gapFill` keeps the last
+  // opened day's params even while hidden so the sheet's in-progress AI
+  // results survive a close + same-day reopen (forgiving; the sheet resets
+  // itself when dayIndex changes).
+  const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [gapFill, setGapFill] = useState<{ dayIndex: number; slackMinutes: number } | null>(null);
+  const [gapFillVisible, setGapFillVisible] = useState(false);
 
   // Phase 24: reaction data for the whole trip + current user id.
   const { data: session } = useSession();
@@ -121,6 +146,8 @@ export function ItineraryTab({
     () => byDay.filter((d) => d.dayIndex >= 0).map((d) => d.dayIndex),
     [byDay],
   );
+  // v2 N4 4.2: the Ideas bucket feeds GapFillSheet's "Ideas first" list.
+  const ideas = useMemo(() => places.filter((p) => p.day_index === null), [places]);
 
   const legIndex = useMemo(() => {
     const m = new Map<string, TripLeg>();
@@ -159,12 +186,83 @@ export function ItineraryTab({
     return result;
   }, [byDay, dayNotesIndex, startTimeOverrides, legs]);
 
+  // ── v2 N4 4.2: spare minutes vs the daily time budget for one day ───────
+  // Uses the same computed timeline as the arrival/departure chips, so the
+  // chip and the times always agree (travel time included; unknown legs
+  // contribute zero, matching computeDayTimeline's graceful degradation).
+  const budgetMinutes = Math.round(trip.daily_hours_budget * 60);
+  const slackForDay = (section: { dayIndex: number; places: TripPlace[] }): number | null => {
+    if (section.dayIndex < 0 || section.places.length === 0) return null;
+    const timeline = timelinesByDay.get(section.dayIndex);
+    if (!timeline) return null;
+    const last = section.places[section.places.length - 1];
+    if (!last) return null;
+    const stop = timeline.stops.get(last.id);
+    if (!stop) return null;
+    return budgetMinutes - (stop.departureMinutes - timeline.startMinutes);
+  };
+
+  // v2 N4: the AI sheets render in both branches (the empty state still
+  // offers Import + AI edit — both can seed an empty trip).
+  const aiSheets = canEdit ? (
+    <>
+      <AiEditSheet
+        visible={aiEditOpen}
+        onClose={() => setAiEditOpen(false)}
+        tripId={tripId}
+        places={places}
+        routeRenderMode={trip.route_render_mode}
+      />
+      <ImportPlacesSheet
+        visible={importOpen}
+        onClose={() => setImportOpen(false)}
+        tripId={tripId}
+        places={places}
+      />
+      {gapFill ? (
+        <GapFillSheet
+          visible={gapFillVisible}
+          onClose={() => setGapFillVisible(false)}
+          tripId={tripId}
+          dayIndex={gapFill.dayIndex}
+          slackMinutes={gapFill.slackMinutes}
+          ideas={ideas}
+        />
+      ) : null}
+    </>
+  ) : null;
+
+  // v2 N4: header row — compact AI affordances, pinned above the scroll.
+  const aiToolbar = canEdit ? (
+    <View
+      style={[
+        styles.aiToolbar,
+        { paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.md, gap: t.spacing.sm },
+      ]}
+    >
+      <ToolChip
+        label="📥 Import"
+        accessibilityLabel="Import a list of places into your Ideas"
+        onPress={() => setImportOpen(true)}
+      />
+      <ToolChip
+        label="✨ AI edit"
+        accessibilityLabel="Edit this trip with AI — preview every change before it applies"
+        onPress={() => setAiEditOpen(true)}
+      />
+    </View>
+  ) : null;
+
   if (places.length === 0) {
     return (
-      <EmptyState
-        {...noPlaces}
-        onPress={() => router.push(`/trip/${tripId}/add`)}
-      />
+      <View style={{ flex: 1 }}>
+        {aiToolbar}
+        <EmptyState
+          {...noPlaces}
+          onPress={() => router.push(`/trip/${tripId}/add`)}
+        />
+        {aiSheets}
+      </View>
     );
   }
 
@@ -172,6 +270,7 @@ export function ItineraryTab({
 
   return (
     <View style={{ flex: 1 }}>
+      {aiToolbar}
       {/*
        * keyboardShouldPersistTaps="handled" is required so tapping outside a
        * focused TextInput inside the list correctly dismisses the keyboard on
@@ -181,13 +280,24 @@ export function ItineraryTab({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}
       >
-        {byDay.map((section) => (
+        {byDay.map((section) => {
+          // v2 N4 4.2: spare time vs the daily budget (scheduled days only).
+          const slack = canEdit ? slackForDay(section) : null;
+          return (
           <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
             <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex), backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md, paddingHorizontal: t.spacing.md, paddingVertical: t.spacing.sm }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' }}>
                 <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
                   {section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
                 </Text>
+                {/* v2 N4 4.3: import lands in Ideas — offer it right here */}
+                {section.dayIndex < 0 && canEdit ? (
+                  <ToolChip
+                    label="📥 Import"
+                    accessibilityLabel="Import a list of places into your Ideas"
+                    onPress={() => setImportOpen(true)}
+                  />
+                ) : null}
                 {section.dayIndex >= 0 ? (
                   <StayingAtPill
                     dayIndex={section.dayIndex}
@@ -318,8 +428,24 @@ export function ItineraryTab({
               }}
               onLongPress={(id: string) => setActivePlaceId(id)}
             />
+
+            {/* v2 N4 4.2: subtle footer chip when the day has ≥1h of slack */}
+            {slack !== null && slack >= GAP_FILL_MIN_SLACK_MINUTES ? (
+              <GapFillChip
+                slackMinutes={slack}
+                dayNumber={section.dayIndex + 1}
+                onPress={() => {
+                  setGapFill({
+                    dayIndex: section.dayIndex,
+                    slackMinutes: Math.min(GAP_FILL_MAX_SLACK_MINUTES, slack),
+                  });
+                  setGapFillVisible(true);
+                }}
+              />
+            ) : null}
           </View>
-        ))}
+          );
+        })}
       </ScrollView>
 
       <PlaceActionsSheet
@@ -337,7 +463,85 @@ export function ItineraryTab({
         tripId={tripId}
         tripOwnerId={trip.user_id}
       />
+
+      {/* v2 N4: AI edit / import / gap-fill sheets (editors only) */}
+      {aiSheets}
     </View>
+  );
+}
+
+/**
+ * ToolChip (v2 N4) — compact pill action for the itinerary header row and
+ * the Ideas section header ("📥 Import", "✨ AI edit").
+ */
+function ToolChip({
+  label,
+  accessibilityLabel,
+  onPress,
+}: {
+  label: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => [
+        styles.toolChip,
+        {
+          borderColor: t.colors.border,
+          backgroundColor: t.colors.bgElevated,
+          borderRadius: t.radius.pill,
+          opacity: pressed ? 0.6 : 1,
+        },
+        Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+      ]}
+    >
+      <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * GapFillChip (v2 N4 4.2) — subtle dashed footer chip under a day with ≥1h
+ * of slack vs the daily time budget. Opens GapFillSheet (Ideas first).
+ */
+function GapFillChip({
+  slackMinutes,
+  dayNumber,
+  onPress,
+}: {
+  slackMinutes: number;
+  dayNumber: number;
+  onPress: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`About ${formatDuration(slackMinutes)} free on Day ${dayNumber} — see ideas to fill it`}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => [
+        styles.gapChip,
+        {
+          borderColor: t.colors.borderStrong,
+          backgroundColor: t.colors.bgElevated,
+          borderRadius: t.radius.pill,
+          paddingHorizontal: t.spacing.md,
+          opacity: pressed ? 0.6 : 1,
+        },
+        Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+      ]}
+    >
+      <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
+        ✨ ~{formatDuration(slackMinutes)} free — fill this day
+      </Text>
+    </Pressable>
   );
 }
 
@@ -427,5 +631,28 @@ const styles = StyleSheet.create({
     minHeight: 26,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // v2 N4: compact AI affordances row (right-aligned, above the scroll)
+  aiToolbar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  toolChip: {
+    borderWidth: 1.5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minHeight: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // v2 N4 4.2: dashed "empty space" affordance under under-budget days
+  gapChip: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    minHeight: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
   },
 });

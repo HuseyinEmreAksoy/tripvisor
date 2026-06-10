@@ -78,10 +78,11 @@
 - ✅ 3.4 Draft-review screen (`src/components/ai-plan/`, 9 files): DRAFT staging (no writes until accept), keep/remove/restore, duration + day reassign, unresolved card, editable title, "Powered by Google", commit progress, **undo beat deletes the trip**, partial-failure honesty, quota-exhausted card.
 - ✅ 3.5 `/trip/plan` flow live (form → review → commit → success/undo); commit = `useCreateTrip` → places (+ `useMoveToDay` for day persistence — `day_index` isn't in the create schema) → one `useOptimizeTrip`.
 
-### N4 — AI editing + import  ⏸ D4
-- ☐ 4.1 `ai-edit` NL edits as **previewable diffs** (accept/reject + undo)
-- ☐ 4.2 Gap-fill suggestions — **draw from Ideas first** (saves metered grounding), Tier-2 memory-only until accepted
-- ☐ 4.3 **Import places list** — pasted names / Google Takeout CSV → grounding loop → Ideas bucket (counts against quota)
+### ✅ N4 — AI editing + import  (DONE 2026-06-10; gate-verified: jest 25/268 green, tsc clean — Deno-noise only on new Edge Fn)
+- ✅ 4.1 **`ai-edit` Edge Fn** (1571 lines, action-discriminated edit/suggest/ground) + migration `0021` (kind CHECK widened) + **shared `_shared/ai.ts`** (502 lines — ai-itinerary refactored to consume it, 955→625). LLM sees `p1..pN` aliases (never UUIDs), user-authored context only (D4); diff hygiene (no-ops pruned, dup adds skipped); idempotent replay kind-filtered. Client: `useAiEditTrip`/`useAiSuggest`/`useGroundPlaces` in `src/api/ai.ts` (408 lines). **UI:** `AiEditSheet` (instruction → grouped diff preview Adds/Removes/Moves/Durations, per-row include/exclude, apply with progress) + `useAiEditApply` (sequential apply via existing mutations, pre-delete row capture, **one-tap inverse-ops Undo**, one re-optimize).
+- ✅ 4.2 **Gap-fill**: `GapFillSheet` — day-slack chip (computeDayTimeline vs daily budget) → **Ideas first** (zero-cost one-tap add) → "Ask AI" `useAiSuggest` (0-based dayIndex in, 1-based out), Tier-2 until accepted, Powered-by-Google.
+- ✅ 4.3 **Import**: `ImportPlacesSheet` + `src/lib/importParse.ts` — paste (≤30/batch, dedup) + **web-only** Takeout CSV via platform-split `CsvImportButton.web.tsx` (no new native deps) → `useGroundPlaces` (100/day budget, 429 friendly) → resolved into Ideas, unresolved listed.
+- ⚠ Session limit hit at the very end of the UI wave (agent `a1c5bea907b51e0b5`, 95 tool calls) — work complete on disk + gate-verified; final agent report lost. Committed post-resume.
 
 ### N5 — Free maps (web) + kill switches  ⏸ D2
 - ☐ 5.1 `Map.web.tsx` → MapLibre + OpenFreeMap behind existing `MapViewProps` (dayColor, dashed transit, marker press, region fit — more than cosmetic)
