@@ -10,7 +10,7 @@
 
 ## ⏸ Decision gates (triaged 2026-06-10)
 - ⏸ **D4 Gemini posture** — **now-blocking** (N3). Recommend: accept free tier, send only user text + place names.
-- ⏸ **D2 Routing** — **now-blocking** (N5). Recommend: ORS free API + Google env-flag fallback.
+- ✅ **D2 RESOLVED 2026-06-10** — openrouteservice free API primary (user choice), Google automatic in-request fallback + kill-switch row.
 - ⏸ **D1 SDK timing** — blocks S-track only; Now-track runs on SDK 52.
 - ✅ **D6 resolved** — keep-alive = GitHub Actions cron pinger (pg_cron heartbeat is self-referential).
 - ⏸ D3 native MapLibre deferral (P4/post-GA) · ⏸ D5 PostHog (P3) — can wait.
@@ -84,13 +84,14 @@
 - ✅ 4.3 **Import**: `ImportPlacesSheet` + `src/lib/importParse.ts` — paste (≤30/batch, dedup) + **web-only** Takeout CSV via platform-split `CsvImportButton.web.tsx` (no new native deps) → `useGroundPlaces` (100/day budget, 429 friendly) → resolved into Ideas, unresolved listed.
 - ⚠ Session limit hit at the very end of the UI wave (agent `a1c5bea907b51e0b5`, 95 tool calls) — work complete on disk + gate-verified; final agent report lost. Committed post-resume.
 
-### N5 — Free maps (web) + kill switches  ⏸ D2
-- ☐ 5.1 `Map.web.tsx` → MapLibre + OpenFreeMap behind existing `MapViewProps` (dayColor, dashed transit, marker press, region fit — more than cosmetic)
-- ☐ 5.2 Re-point `distance-matrix` → ORS/OSRM `/table`, `directions-polyline` → `/route` (contracts unchanged; client untouched)
-- ☐ 5.3 Routing health-check + auto-failover; Google env-flag last resort
-- ☐ 5.4 **`app_config` runtime kill-switches** (map provider / routing provider / sync per entity) read at startup, cached; env vars become defaults only
+### ✅ N5 — Free maps (web) + kill switches  (DONE 2026-06-10; D2 RESOLVED = **ORS**; gates: jest 25/268, deno 15/15, expo web export clean)
+- ✅ 5.1 Web map → **MapLibre GL + OpenFreeMap** (no key, default provider): `Map.web.tsx` = thin dispatcher (`providerOverride` → `app_config.map_provider_web` → env → 'maplibre'); Google preserved as `GoogleMap.web.tsx`; new `MapLibreMap.web.tsx` (271 lines) — dayColor pins **+ order badges** (Google web lacked numbers), keyboard-accessible press, GeoJSON day-colored polylines, `line-dasharray` transit, fitBounds+late-fit, **ODbL attribution visible**. Deps: maplibre-gl@5 + react-map-gl@8 + @vis.gl/react-maplibre (Metro `exports` workaround). Engine = on-demand async chunk (269KB gz, only when a map mounts). Bonus fix: my-location virtual leg now renders on web.
+- ✅ 5.2 ORS adapter in `distance-matrix` + `directions-polyline` via shared `_shared/routing.ts` — **contracts byte-unchanged**, [lng,lat] handled, polyline5 verified against the actual client decoder; **transit always Google** (ORS has no transit profile).
+- ✅ 5.3 Auto-failover: any ORS failure → Google in-request (logged `provider_fallback`); 3-strikes/5-min circuit breaker; provider default **'google' until the user flips** (zero unconfigured behavior change).
+- ✅ 5.4 `app_config` (migration **0022**; SELECT anon+authenticated, **no write policies** — the dashboard row IS the kill switch) + `useAppConfig()` hook (graceful `{}` pre-migration). `routing_provider` row beats env, ~60s propagation, redeploy-free.
+- ⏭ debt: `e2e/web/phase-4-polish.spec.ts` check 2 ("Map unavailable without key") is invalid by design under maplibre default — pin `EXPO_PUBLIC_MAP_PROVIDER=google` in the Playwright env or rewrite the assertion when e2e re-enables.
 
-**🚀 WEB BETA after N5 — deploy to Cloudflare Pages.**
+**🚀 WEB BETA milestone REACHED (code-side) — Cloudflare Pages picks up master; go-live items in the user-action checklist.**
 
 ## SDK-track  ⏸ D1
 
@@ -148,9 +149,9 @@ Realtime co-edit (presence **dots** + live changes + live comments — **no curs
 The 2026-06-10 session-limit checkpoint was resolved: Wave 2 work was inspected, gate-verified, and committed (`cb2e9c4` UI, `6313d2a` backend); Wave 3 (N3.4/3.5) then shipped the real Plan-my-trip flow.
 
 **⚠ USER ACTIONS REQUIRED before the new features run live:**
-1. Apply migrations 0019 + 0020: `npx supabase db push --linked` (or local `npx supabase db reset`).
-2. Set Edge Function secrets: `npx supabase secrets set GEMINI_API_KEY=… GROQ_API_KEY=…` (AI returns a friendly `ai_misconfigured` banner until then).
-3. Deploy the new function: `npx supabase functions deploy ai-itinerary`.
+1. Apply migrations 0019 + 0020 + 0021 + 0022: `npx supabase db push --linked` (or local `npx supabase db reset`).
+2. Set Edge Function secrets: `npx supabase secrets set GEMINI_API_KEY=… GROQ_API_KEY=…` (AI shows a friendly `ai_misconfigured` banner until then). For ORS routing: `npx supabase secrets set ORS_API_KEY=…` (free key at openrouteservice.org) then insert `app_config` row `('routing_provider','ors')` — instant, redeploy-free; kill-switch back = set the row to 'google'.
+3. Deploy the functions: `npx supabase functions deploy ai-itinerary ai-edit distance-matrix directions-polyline` (the latter three changed in N4/N5).
 4. Dashboard (manual, see `supabase/migrations/README-v2.md`): Resend SMTP under Auth→SMTP; Google provider under Auth→Providers (OAuth button shows a friendly fallback until configured).
 5. GitHub repo secrets for keep-alive: `SUPABASE_KEEPALIVE_URL`, `SUPABASE_ANON_KEY`; run `keepalive.yml` once via workflow_dispatch.
 6. Web smoke (manual, no key needed for most): Home hero/countdown/CTA → `/trip/plan` form → `ai_misconfigured` banner; timeline chips + day start-time; Ideas section; comments sheet; sample trip; OAuth fallback message. With keys: the full A1 golden path (8 steps listed in the Wave-3 report / `docs/smoke/` to-be).

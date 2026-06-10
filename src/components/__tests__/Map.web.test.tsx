@@ -1,16 +1,23 @@
 /**
- * Map.web — conditional rendering test.
+ * GoogleMap.web — conditional rendering test.
+ *
+ * v2 Phase N5.1: `Map.web.tsx` became a provider dispatcher (MapLibre default,
+ * Google behind a runtime switch) and the Google implementation moved to
+ * `GoogleMap.web.tsx`. These assertions cover the Google key-gating behavior,
+ * so they now target GoogleMap.web directly — the dispatcher would also drag
+ * in useAppConfig (needs a QueryClient) and maplibre-gl (ESM) for no extra
+ * coverage. Mechanical repoint only; assertions unchanged.
  *
  * getWebKey() reads process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY on every render,
- * so we can import Map.web normally and control the key via process.env before
- * each test. No module isolation needed.
+ * so we can import GoogleMap.web normally and control the key via process.env
+ * before each test. No module isolation needed.
  *
  * @vis.gl/react-google-maps is mocked globally.
  * expo-constants is mocked so the Constants.expoConfig.extra branch always returns null.
  */
 import { render } from '@testing-library/react-native';
 import { ThemeProvider } from '@/theme';
-import { Map } from '../Map/Map.web';
+import { GoogleMap } from '../Map/GoogleMap.web';
 import type { MapViewProps } from '../Map/types';
 
 // Prevent real Google Maps loading
@@ -33,12 +40,12 @@ const DEFAULT_PROPS: MapViewProps = { markers: [], polylines: [] };
 function renderMap(props: MapViewProps = DEFAULT_PROPS) {
   return render(
     <ThemeProvider>
-      <Map {...props} />
+      <GoogleMap {...props} />
     </ThemeProvider>,
   );
 }
 
-describe('Map.web — key-gated rendering', () => {
+describe('GoogleMap.web — key-gated rendering', () => {
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY;
   });
