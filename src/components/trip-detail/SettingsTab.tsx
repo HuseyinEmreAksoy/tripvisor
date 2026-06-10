@@ -5,8 +5,9 @@
  *
  * Sections: cover photo · trip meta (daily plan time + transport mode) ·
  * budget (currency, budget card, category breakdown, expense list) ·
- * accommodation · liked/disliked catalog · collaborators link · share card ·
- * calendar (.ics) export · danger zone (delete trip).
+ * accommodation · packing-list link (v2 P2.2) · liked/disliked catalog ·
+ * collaborators link · share card · documents (v2 P2.3) · calendar (.ics)
+ * export · danger zone (delete trip).
  *
  * Data flow: trip meta + role gates come from the route shell as props.
  * The hooks v1 already had inside this block are kept here: useUpdateTrip,
@@ -53,6 +54,8 @@ import { useSession } from '@/api/auth';
 // Phase 25 Step 25.7: cover picker
 import { CoverPhotoSection } from './CoverPhotoSection';
 import { CoverPickerModal } from './CoverPickerModal';
+// v2 P2.3: trip documents (upload is web-only via platform split)
+import { DocumentsSection } from './DocumentsSection';
 
 const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
 
@@ -307,6 +310,38 @@ export function SettingsTab({
         }}
       />
 
+      {/* ── Packing list link (v2 P2.2) ─────────────────────────────────── */}
+      <SectionHeading label="Packing" t={t} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open the packing list for this trip"
+        onPress={() => router.push(`/trip/${tripId}/packing` as never)}
+        style={({ pressed }) => [
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: pressed ? t.colors.gradientSubtle : t.colors.bgElevated,
+            borderColor: t.colors.border,
+            borderRadius: t.radius.md,
+            borderWidth: 1,
+            padding: t.spacing.md,
+          },
+        ]}
+      >
+        <View style={{ gap: 2 }}>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+            🧳 Packing list
+          </Text>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            {canEdit
+              ? 'Checklist with smart suggestions for this trip'
+              : 'See what the group is packing'}
+          </Text>
+        </View>
+        <Text style={{ fontSize: 18, color: t.colors.textMuted }}>›</Text>
+      </Pressable>
+
       {/* ── Phase 24 Step 24.5: Liked / disliked catalog ────────────────── */}
       <ReactionCatalogSection
         label="You liked"
@@ -354,6 +389,10 @@ export function SettingsTab({
       {/* ── Share ───────────────────────────────────────────────────────── */}
       <SectionHeading label="Share" t={t} />
       <ShareLinkCard tripId={tripId} />
+
+      {/* ── Documents (v2 P2.3) ─────────────────────────────────────────── */}
+      <SectionHeading label="🎫 Documents" t={t} />
+      <DocumentsSection tripId={tripId} canEdit={canEdit} />
 
       {/* Budget + Accommodation edit sheets */}
       <BudgetEditSheet

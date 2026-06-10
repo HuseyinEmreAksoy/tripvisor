@@ -113,15 +113,15 @@
 
 ## Post-track
 
-### P1 — Optimizer & route-adjust  (needs N5)
-- ☐ P1.1 Time-windows: user-confirmed `arrive_after`/`leave_before` + **user-facing conflict warnings** ("arrives 18:40, closes 18:00") computed vs Tier-2 live hours (never persisted, never auto-filled into columns) + override
-- ☐ P1.2 Real multi-leg transit rendering
-- ☐ P1.3 Per-day start/end anchor UX; preserve + polish "Best route vs My order"
+### ✅ P1 — Optimizer & route-adjust  (DONE 2026-06-10/11 except P1.3; commits `1d8b565` backend, `939949b` UI)
+- ✅ P1.1 Time-windows: migration **0023** (`arrive_after`/`leave_before`, user-confirmed ONLY — never auto-filled from Google hours, ToS invariant in column comments + editor copy); `TimeWindowEditor` in PlaceActionsSheet; `computeDayTimeline` waits-push + `arrives_late`/`overruns` conflicts; non-blocking chips ("⏳ waits until 10:00", "⚠ arrives 18:40 — window ends 18:00"). **Scoping note:** warnings compare USER-SET windows (no live Google-hours fetches in lists — metered cost); optimizer hard-constraints deferred (pure optimizer untouched, by design).
+- ✅ P1.2 Real multi-leg transit: directions-polyline returns `transitSteps` (additive; FieldMask incl. line names/vehicle); optimize-trip persists `trip_legs.transit_steps` (jsonb, rides the 30-day TTL purge); MapTab renders per-step (TRANSIT solid day-color, WALK dashed gray), byte-identical fallback when steps absent; itinerary connector shows "🚇 M2 → ~25 min". Side fixes: `MapPolyline.strokeColor` + unified dashed-with-points rule across all 3 providers (also fixed the invisible my-location leg on native).
+- ⏭ **P1.3 anchors DEFERRED — concrete wiring gap found** (UI investigation): `trip_days.day_start_place_id/day_end_place_id` columns + pure-optimizer pin support EXIST, but (A) `optimize-trip` never reads `trip_days` → no `dayStartEnd` built (~line 343), and (B) `useUpdateTripDay`'s zod schema strips anchor columns (silent no-op). Follow-up = 2 small backend changes + ~1h UI. "Best route vs My order" preserved (parity).
 
-### P2 — Depth  (needs N2, N3)
-- ☐ P2.1 `weather` Edge Fn (Open-Meteo) + per-day forecast chips + rainy-day indoor swaps (via gap-fill)
-- ☐ P2.2 Packing lists (auto-seed from destination/season/weather; editable, offline)
-- ☐ P2.3 Documents: Storage upload/view for tickets/docs; RLS path-prefix guard designed (injection-safe path parse → `user_can_access_trip`)
+### ✅ P2 — Depth  (DONE 2026-06-11; commits `e02aa23` backend, UI in the P2 commit)
+- ✅ P2.1 Weather: keyless Open-Meteo `weather` Edge Fn + `useDayWeather`/`isRainy` (WMO codes documented); ONE centroid query per trip, **date-mapped** (never index); day-header chips ("☔ 18°"); rainy chip → GapFillSheet (Ideas-first indoor fix); **CC-BY attribution** "Weather data by Open-Meteo.com" whenever chips render; silently hidden out-of-horizon/on-error.
+- ✅ P2.2 Packing: migration **0024** `trip_packing_items` + hooks (bulk create, optimistic toggle); pure `packingSeed.ts` (≤30 items, season buckets, rain gear when rainy — northern-hemisphere simplification documented); new `/trip/[id]/packing` route (grouped checklist, "N of M packed", suggest-dedupe, role-gated); SettingsTab entry.
+- ✅ P2.3 Documents: `trip-docs` private bucket + **injection-safe path-parse RLS** (uuid validated before cast, fails closed; INSERT policy pins `storage_path_trip_id(path)=trip_id`); `trip_documents` metadata + hooks (object-first/row-second upload protocol, 60s signed URLs as MUTATION); SettingsTab section — view on all 3 platforms, **upload web-only** (native picker = forbidden new dep; muted note), 10MB pre-check, editor-gated delete.
 
 ### P3 — Charts + analytics  (needs S1, N2)
 - ☐ P3.1 gifted-charts (+ `react-gifted-charts` web) across analytics + budget
@@ -151,7 +151,7 @@ The 2026-06-10 session-limit checkpoint was resolved: Wave 2 work was inspected,
 **⚠ USER ACTIONS REQUIRED before the new features run live:**
 1. Apply migrations 0019 + 0020 + 0021 + 0022: `npx supabase db push --linked` (or local `npx supabase db reset`).
 2. Set Edge Function secrets: `npx supabase secrets set GEMINI_API_KEY=… GROQ_API_KEY=…` (AI shows a friendly `ai_misconfigured` banner until then). For ORS routing: `npx supabase secrets set ORS_API_KEY=…` (free key at openrouteservice.org) then insert `app_config` row `('routing_provider','ors')` — instant, redeploy-free; kill-switch back = set the row to 'google'.
-3. Deploy the functions: `npx supabase functions deploy ai-itinerary ai-edit distance-matrix directions-polyline` (the latter three changed in N4/N5).
+3. Deploy the functions: `npx supabase functions deploy ai-itinerary ai-edit distance-matrix directions-polyline optimize-trip weather` (P1/P2 added optimize-trip changes + the new weather fn). **Order: `db push` (0019–0024) BEFORE deploying optimize-trip** (its INSERT now writes `transit_steps`). Watch `db push` for storage-privilege NOTICEs on 0024 (manual Dashboard policy steps if they appear — see `supabase/migrations/README-v2.md`).
 4. Dashboard (manual, see `supabase/migrations/README-v2.md`): Resend SMTP under Auth→SMTP; Google provider under Auth→Providers (OAuth button shows a friendly fallback until configured).
 5. GitHub repo secrets for keep-alive: `SUPABASE_KEEPALIVE_URL`, `SUPABASE_ANON_KEY`; run `keepalive.yml` once via workflow_dispatch.
 6. Web smoke (manual, no key needed for most): Home hero/countdown/CTA → `/trip/plan` form → `ai_misconfigured` banner; timeline chips + day start-time; Ideas section; comments sheet; sample trip; OAuth fallback message. With keys: the full A1 golden path (8 steps listed in the Wave-3 report / `docs/smoke/` to-be).

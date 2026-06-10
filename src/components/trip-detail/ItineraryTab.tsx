@@ -31,6 +31,14 @@
  *    opens GapFillSheet (Ideas first, then AI suggestions).
  *  - 4.3 import: an "Import" chip (header row + the Ideas section header)
  *    opens ImportPlacesSheet (pasted list / Takeout CSV → Ideas bucket).
+ *
+ * v2 P2.1 weather: ONE useDayWeather call for the whole trip (centroid of all
+ * places; range clamped to the ~16-day horizon — tripWeather.ts), mapped to
+ * day headers BY DATE (never index — the forecast may have gaps). Rainy days
+ * (isRainy) make the chip tappable → GapFillSheet, Ideas-first indoor fix.
+ * Out-of-horizon trips and fetch errors hide all weather UI quietly. When any
+ * chip renders, the CC-BY line "Weather data by Open-Meteo.com" closes the
+ * list.
  */
 import { useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
@@ -47,6 +55,8 @@ import { dayColor } from '@/components/Map';
 import { useTheme } from '@/theme';
 import {
   countCommentsByPlace,
+  isRainy,
+  useDayWeather,
   useMoveToDay,
   useReorderDay,
   useTripComments,
@@ -66,6 +76,8 @@ import { DayNotesEditor } from './NotesEditors';
 import { PlaceRow } from './PlaceRow';
 import { DayStartTimeControl } from './DayStartTimeControl';
 import { PlaceCommentsSheet } from './PlaceCommentsSheet';
+import { WeatherChip } from './WeatherChip';
+import { addDaysToDateString, buildTripWeatherParams, indexWeatherByDate } from './tripWeather';
 import {
   computeDayTimeline,
   formatClockTime,
@@ -202,6 +214,38 @@ export function ItineraryTab({
     return budgetMinutes - (stop.departureMinutes - timeline.startMinutes);
   };
 
+  // ── v2 P2.1: per-day weather chips ───────────────────────────────────────
+  // ONE query for the whole trip: centroid of ALL places, dates clamped to
+  // the ~16-day horizon. buildTripWeatherParams returns undefined when the
+  // trip is undated / out of horizon / empty, which holds the query — and a
+  // fetch error simply leaves `weatherDays` unset. Either way the weather UI
+  // disappears quietly (nice-to-have, never an error banner).
+  const weatherParams = useMemo(
+    () =>
+      buildTripWeatherParams({
+        tripStartDate: trip.start_date,
+        places,
+        maxDayIndex: availableDays.length > 0 ? Math.max(...availableDays) : -1,
+      }),
+    [trip.start_date, places, availableDays],
+  );
+  const { data: weatherDays } = useDayWeather(weatherParams);
+  // Forecast rows keyed by DATE — trip days map by date, never array index.
+  const weatherByDate = useMemo(() => indexWeatherByDate(weatherDays ?? []), [weatherDays]);
+  /** This section's forecast, or undefined (no date / gap / out of horizon). */
+  const weatherForSection = (dayIndex: number) => {
+    if (dayIndex < 0 || !trip.start_date) return undefined;
+    const date = addDaysToDateString(trip.start_date, dayIndex);
+    return date ? weatherByDate.get(date) : undefined;
+  };
+  // CC-BY 4.0: the attribution line renders iff at least one chip does.
+  const showWeatherAttribution = useMemo(
+    () => byDay.some((s) => s.dayIndex >= 0 && weatherForSection(s.dayIndex) !== undefined),
+    // weatherForSection is derived from these exact inputs:
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [byDay, weatherByDate, trip.start_date],
+  );
+
   // v2 N4: the AI sheets render in both branches (the empty state still
   // offers Import + AI edit — both can seed an empty trip).
   const aiSheets = canEdit ? (
@@ -283,6 +327,8 @@ export function ItineraryTab({
         {byDay.map((section) => {
           // v2 N4 4.2: spare time vs the daily budget (scheduled days only).
           const slack = canEdit ? slackForDay(section) : null;
+          // v2 P2.1: this day's forecast (undefined hides the chip quietly).
+          const dayWeather = weatherForSection(section.dayIndex);
           return (
           <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
             <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex), backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md, paddingHorizontal: t.spacing.md, paddingVertical: t.spacing.sm }]}>
@@ -290,6 +336,31 @@ export function ItineraryTab({
                 <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
                   {section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
                 </Text>
+                {/* v2 P2.1: forecast chip; rainy days open GapFillSheet
+                    (Ideas-first indoor fix) for editors. Passing the day's
+                    real slack keeps the sheet header honest; GapFillSheet
+                    clamps to its 30..480 input bounds itself. */}
+                {dayWeather ? (
+                  <WeatherChip
+                    day={dayWeather}
+                    dayNumber={section.dayIndex + 1}
+                    onPressRainy={
+                      canEdit && isRainy(dayWeather)
+                        ? () => {
+                            const free = slackForDay(section);
+                            setGapFill({
+                              dayIndex: section.dayIndex,
+                              slackMinutes: Math.max(
+                                30,
+                                Math.min(GAP_FILL_MAX_SLACK_MINUTES, free ?? 30),
+                              ),
+                            });
+                            setGapFillVisible(true);
+                          }
+                        : null
+                    }
+                  />
+                ) : null}
                 {/* v2 N4 4.3: import lands in Ideas — offer it right here */}
                 {section.dayIndex < 0 && canEdit ? (
                   <ToolChip
@@ -453,6 +524,19 @@ export function ItineraryTab({
           </View>
           );
         })}
+
+        {/* v2 P2.1: Open-Meteo CC-BY attribution — required whenever any
+            weather chip renders; one muted line at the bottom of the list. */}
+        {showWeatherAttribution ? (
+          <Text
+            style={[
+              t.typography.small,
+              { color: t.colors.attribution, textAlign: 'center', paddingTop: t.spacing.sm },
+            ]}
+          >
+            Weather data by Open-Meteo.com
+          </Text>
+        ) : null}
       </ScrollView>
 
       <PlaceActionsSheet
