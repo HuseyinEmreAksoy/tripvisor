@@ -1,12 +1,15 @@
-# Migrations — v2 notes (Phases N2, N5)
+# Migrations — v2 notes (Phases N2, N5, P1, P2)
 
 ## New migrations
 
 - **`0019_v2_realtime_and_comments.sql`** — four sections: `trip_place_comments` table + RLS (N2.6), realtime publication wiring for the synced tables (N2.1), `analytics_user_trip_stats` materialized view + `get_my_trip_stats()` security-definer reader (N2.3), and guarded pg_cron nightly jobs — MV refresh at 04:00 UTC + `trip_legs` 30-day Google-ToS purge at 04:15 UTC (N2.3). Every environment-dependent statement (publication, extensions, cron) degrades to a `NOTICE` on local stacks instead of failing.
 - **`0022_v2_app_config.sql`** (N5.4) — `app_config` key/value table: runtime kill-switches that steer SHIPPED clients without a build/redeploy (env vars are baked at build time). Known keys: `map_provider_web` (`'maplibre' | 'google'`, client-read) and `routing_provider` (`'ors' | 'google'`, read by the `distance-matrix` / `directions-polyline` Edge Functions). SELECT is open to **anon + authenticated** (the public share page renders a map; values are non-sensitive toggles); there are **no write policies** — writes happen via the dashboard / service role, which IS the kill-switch operation. Seeds nothing: an absent row means "use the env default", so applying this migration changes no behavior by itself.
+- **`0023_…`** (P1) — optimizer & route-adjust schema changes (time-windows / anchors). Owned by the P1 work stream; see that migration's own header for contents and rollback.
+- **`0024_v2_packing_documents_storage.sql`** (P2.2 / P2.3; also lands N2.2's deferred Storage bucket) — four sections: `trip_packing_items` (per-trip checklist; viewer SELECT / editor INSERT+UPDATE+DELETE via `user_can_access_trip`; hard delete pre-offline-engine), `trip_documents` (metadata rows only — bytes live in Storage; **no UPDATE policy** — documents are immutable, replace = delete + re-upload; INSERT enforces path↔trip consistency), `storage_path_trip_id(text)` (injection-safe first-path-segment → uuid parse: strict canonical-uuid regex before the cast, NULL = fail-closed), and the **private Storage bucket `trip-docs`** (10MB/file, mime allow-list pdf/png/jpeg/webp) with `storage.objects` policies (path convention `<trip_id>/<filename>`; viewer SELECT / editor INSERT+DELETE). Every storage-schema statement is privilege-guarded: on environments where the migration role may not manage `storage.objects` policies (newer hosted projects) it degrades to a `NOTICE` containing the exact SQL to run from the Dashboard — **check the `db push` output** and apply those policies manually if you see it.
 
 Apply with `npx supabase db push` (hosted) or `npx supabase db reset` (**LOCAL ONLY**).
 If the migration prints a `NOTICE` that `pg_cron` / `pg_net` could not be created, enable them in **Dashboard → Database → Extensions** and re-run the migration — `cron.schedule` upserts by job name, so re-runs are safe.
+If `0024` prints a `NOTICE` about `storage.buckets` / `storage.objects` privileges, create the `trip-docs` bucket (private, 10MB, pdf/png/jpeg/webp) and the three policies via **Dashboard → Storage** — the NOTICE text carries the exact policy SQL.
 
 ## Manual dashboard steps (cannot be done in migrations) — BUILD-LOG N2.5
 

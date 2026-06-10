@@ -131,6 +131,29 @@ export const tripPlaceCommentsKeys = {
 };
 
 // ---------------------------------------------------------------------------
+// trip-packing (v2 Phase P2 — BUILD-LOG P2.2)
+// ---------------------------------------------------------------------------
+//
+// One key per trip: the whole checklist loads in a single query and every
+// mutation (bulk seed, toggle, delete) invalidates `forTrip`.
+export const tripPackingKeys = {
+  all: ['trip-packing'] as const,
+  forTrip: (tripId: Uuid) => [...tripPackingKeys.all, tripId] as const,
+};
+
+// ---------------------------------------------------------------------------
+// trip-documents (v2 Phase P2 — BUILD-LOG P2.3)
+// ---------------------------------------------------------------------------
+//
+// Keys the per-trip METADATA list (`trip_documents` rows). Signed URLs are
+// deliberately NOT cached under a query key — they expire in 60s, so
+// `useTripDocumentUrl` is a mutation that mints a fresh one per view click.
+export const tripDocumentsKeys = {
+  all: ['trip-documents'] as const,
+  forTrip: (tripId: Uuid) => [...tripDocumentsKeys.all, tripId] as const,
+};
+
+// ---------------------------------------------------------------------------
 // trip-collaborators (Phase 21 Steps 21.5 / 21.6)
 // ---------------------------------------------------------------------------
 //

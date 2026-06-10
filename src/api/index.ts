@@ -17,3 +17,6 @@ export * from './trip-collaborators';
 export * from './trip-place-reactions';
 export * from './trip-place-comments';
 export * from './ai';
+export * from './weather';
+export * from './trip-packing';
+export * from './trip-documents';
