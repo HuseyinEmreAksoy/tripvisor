@@ -1,1 +1,2 @@
-- [Phase 3 through Phase 20 commit conventions](project_phase3_complete.md) — Phases 3–20 on master; 6-commit split for Phase 20; bash quoting for (app)/(auth) paths; .gitignore gaps; Playwright artifacts
+- [Phase 3 through Phase 26 commit conventions](project_phase3_complete.md) — v1-era commits on master; multi-commit phase splits; bash quoting for (app)/(auth) paths; no Co-Authored-By trailer
+- [v2 commit log](project_v2_commits.md) — v2 Phase 0 + v2.1 plan-revision SHAs (…a990187/0eb41d6/e9e0715); ff-push to master pre-authorized; txt artifacts to gitignore
