@@ -136,6 +136,15 @@ export interface TripDay {
   day_end_place_id: Uuid | null;
   /** Phase 9: free-text per-day journal entry (Markdown, rendered client-side per ADR-0008). */
   notes: string | null;
+  /**
+   * v2 N3 (migration 0020 §a): per-day itinerary start. PostgREST returns
+   * Postgres `time` as `'HH:MM:SS'`. `null` (or absent, pre-migration) means
+   * the client default of 09:00 — the default deliberately lives client-side
+   * so changing it never needs a backfill. Feeds the timeline's computed
+   * per-stop arrival/departure (pure client math over visit minutes +
+   * trip_legs).
+   */
+  start_time?: string | null;
 }
 
 /**

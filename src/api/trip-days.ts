@@ -46,10 +46,18 @@ export function useTripDays(tripId: Uuid | undefined) {
 // `notes` is a Markdown blob rendered client-side per ADR-0008. The 2000-char
 // cap matches `trip_places.notes` for consistency and keeps a single per-day
 // entry comfortably below the 1MB row size threshold even with multibyte runs.
+//
+// v2 N3 (migration 0020 §a): `start_time` is the per-day itinerary start for
+// the timeline's computed arrival/departure chips. 'HH:MM' or 'HH:MM:SS'
+// (Postgres `time`); null clears it back to the client default (09:00).
 const updateTripDaySchema = z.object({
   trip_id: z.string().uuid(),
   day_index: z.number().int().min(0),
   notes: z.string().max(2000).nullish(),
+  start_time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, 'start_time must be HH:MM or HH:MM:SS')
+    .nullish(),
 });
 
 export type UpdateTripDayInput = z.infer<typeof updateTripDaySchema>;
@@ -80,6 +88,15 @@ async function getCallerId(): Promise<Uuid> {
  * in `trips.ts` — the planner spec said "return the error object" but the
  * existing pattern across `trips.ts` and `trip-places.ts` is `if (error)
  * throw error`; staying consistent with the codebase wins).
+ *
+ * Partial-update semantics (v2 N3): `notes` and `start_time` are written
+ * ONLY when present on the input — an omitted field is left untouched.
+ * This matters now that two independent editors write through this hook
+ * (the day-notes editor and the timeline start-time picker): a
+ * start-time-only write must not clobber notes to null, and vice versa.
+ * To CLEAR a field, pass `null` explicitly (the notes editor already does).
+ * PostgREST upserts only SET the columns present in the payload, so omitted
+ * columns keep their DB values on the conflict-update branch.
  */
 export function useUpdateTripDay() {
   const qc = useQueryClient();
@@ -89,16 +106,20 @@ export function useUpdateTripDay() {
       // Touch the auth session so the supabase client picks up an expired
       // JWT before the upsert hits PostgREST (mirrors `useArchiveTrip`).
       await getCallerId();
+      const payload: {
+        trip_id: string;
+        day_index: number;
+        notes?: string | null;
+        start_time?: string | null;
+      } = {
+        trip_id: parsed.trip_id,
+        day_index: parsed.day_index,
+      };
+      if (parsed.notes !== undefined) payload.notes = parsed.notes;
+      if (parsed.start_time !== undefined) payload.start_time = parsed.start_time;
       const { data, error } = await supabase
         .from('trip_days')
-        .upsert(
-          {
-            trip_id: parsed.trip_id,
-            day_index: parsed.day_index,
-            notes: parsed.notes ?? null,
-          },
-          { onConflict: 'trip_id,day_index' },
-        )
+        .upsert(payload, { onConflict: 'trip_id,day_index' })
         .select('*')
         .single();
       if (error) throw error;
