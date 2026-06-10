@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
-import { dayColor, type MapViewProps } from './types';
+import { dayColor, polylineColor, type MapViewProps } from './types';
 
 function toRegion(props: MapViewProps): Region {
   if (props.initialRegion) {
@@ -41,33 +41,32 @@ export function Map(props: MapViewProps) {
         accessibilityLabel="Trip map"
       >
         {props.polylines.map((line) => {
-          const color = dayColor(line.dayIndex);
-
-          // Phase 23 Step 23.9: transit mode — no real polyline, render a
-          // dashed straight line from start to end using lineDashPattern.
-          if (line.isDashed && line.from && line.to) {
-            return (
-              <Polyline
-                key={line.id}
-                coordinates={[
+          // v2 P1.2: geometry resolution is uniform across providers —
+          // decoded `points` win (≥2); otherwise straight from→to (the
+          // legacy transit fallback AND the "from my location" virtual leg,
+          // which previously rendered invisibly here as an empty solid
+          // path); lines with neither are skipped.
+          const isStraight = line.points.length < 2;
+          const coordinates = !isStraight
+            ? line.points.map((p) => ({ latitude: p.lat, longitude: p.lng }))
+            : line.from && line.to
+              ? [
                   { latitude: line.from.lat, longitude: line.from.lng },
                   { latitude: line.to.lat, longitude: line.to.lng },
-                ]}
-                strokeColor={color}
-                strokeWidth={3}
-                lineDashPattern={[6, 6]}
-                geodesic
-              />
-            );
-          }
+                ]
+              : null;
+          if (!coordinates) return null;
 
-          // Normal solid polyline for driving / walking / bicycling.
+          // Dashed: transit straight-line fallback (Step 23.9) or WALK
+          // connector steps of a multi-leg transit route (P1.2).
           return (
             <Polyline
               key={line.id}
-              coordinates={line.points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
-              strokeColor={color}
-              strokeWidth={4}
+              coordinates={coordinates}
+              strokeColor={polylineColor(line)}
+              strokeWidth={line.isDashed ? 3 : 4}
+              lineDashPattern={line.isDashed ? [6, 6] : undefined}
+              geodesic={isStraight}
             />
           );
         })}

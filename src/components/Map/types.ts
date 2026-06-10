@@ -13,14 +13,22 @@ export interface MapPolyline {
   points: Array<{ lat: number; lng: number }>;
   dayIndex: number;
   /**
-   * Phase 23 Step 23.9: when true the leg has no real polyline (e.g. transit
-   * mode) and must be rendered as a dashed straight line from `from` to `to`.
-   * Both `from` and `to` MUST be set when `isDashed` is true.
+   * Phase 23 Step 23.9 / v2 P1.2: dashed stroke. Geometry comes from
+   * `points` when it has ≥2 entries (e.g. decoded WALK connectors of a
+   * multi-leg transit route); otherwise both `from` and `to` MUST be set
+   * and the line renders as a straight from→to segment (the legacy
+   * "transit leg without step geometry" fallback).
    */
   isDashed?: boolean;
-  /** Start coordinate for dashed straight-line fallback. */
+  /**
+   * v2 P1.2: explicit stroke color override (e.g. muted gray for WALK
+   * connectors inside a transit route). When absent, providers fall back
+   * to `dayColor(dayIndex)` — see {@link polylineColor}.
+   */
+  strokeColor?: string;
+  /** Start coordinate for straight-line fallback (no decoded points). */
   from?: { lat: number; lng: number };
-  /** End coordinate for dashed straight-line fallback. */
+  /** End coordinate for straight-line fallback (no decoded points). */
   to?: { lat: number; lng: number };
 }
 
@@ -52,4 +60,12 @@ export const DAY_COLORS = [
 export function dayColor(dayIndex: number | null | undefined): string {
   if (dayIndex == null || dayIndex < 0) return '#8B8B93';
   return DAY_COLORS[dayIndex % DAY_COLORS.length]!;
+}
+
+/**
+ * v2 P1.2: single source of truth for a polyline's stroke color across all
+ * three providers — explicit `strokeColor` wins, else the day palette.
+ */
+export function polylineColor(line: MapPolyline): string {
+  return line.strokeColor ?? dayColor(line.dayIndex);
 }

@@ -29,6 +29,40 @@ import {
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
 
+// v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
+// in a muted gray (same neutral as dayColor()'s unscheduled fallback) so the
+// day-colored TRANSIT segments stay the visual spine of the route.
+const WALK_STEP_COLOR = '#8B8B93';
+
+/**
+ * v2 P1.2: expand a transit leg's per-step geometry (TripLeg.transit_steps,
+ * written by optimize-trip) into one MapPolyline per step:
+ *   - TRANSIT steps → solid, day color (no per-vehicle colors — simple)
+ *   - WALK steps    → dashed, muted gray
+ * Steps without usable geometry are skipped; returns [] when the leg has no
+ * steps at all so the caller can fall back to the legacy rendering
+ * (solid decoded polyline, or dashed straight line for null polylines).
+ */
+function transitStepPolylines(leg: TripLeg): MapPolyline[] {
+  const steps = leg.transit_steps;
+  if (!steps || steps.length === 0) return [];
+  const result: MapPolyline[] = [];
+  steps.forEach((step, i) => {
+    if (!step.polyline) return; // typed nullable for forward-compat
+    const points = decodePolyline(step.polyline);
+    if (points.length < 2) return;
+    const isWalk = step.travelMode === 'WALK';
+    result.push({
+      id: `${leg.id}:step-${i}`,
+      dayIndex: leg.day_index,
+      points,
+      isDashed: isWalk,
+      ...(isWalk ? { strokeColor: WALK_STEP_COLOR } : {}),
+    });
+  });
+  return result;
+}
+
 export interface MapTabProps {
   tripId: string;
   places: TripPlace[];
@@ -120,6 +154,14 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
     const result: MapPolyline[] = [];
     for (const l of legs) {
       if (l.day_index < 0) continue;
+      // v2 P1.2: multi-leg transit geometry — one polyline per step (solid
+      // day-colored TRANSIT rides, dashed gray WALK connectors). Legs
+      // without transit_steps keep the pre-P1 behavior below, exactly.
+      const stepLines = transitStepPolylines(l);
+      if (stepLines.length > 0) {
+        result.push(...stepLines);
+        continue;
+      }
       if (l.polyline) {
         result.push({
           id: l.id,

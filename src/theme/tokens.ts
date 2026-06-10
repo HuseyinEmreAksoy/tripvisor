@@ -120,6 +120,10 @@ export const lightColors = {
   successLight: '#D1FAE5',
   warning: '#F59E0B',
   warningLight: '#FEF3C7',
+  // warningText: readable amber-toned TEXT on warningLight surfaces (v2 P1.1b
+  // conflict chips). `warning` itself fails WCAG AA on warningLight (~2:1);
+  // amber-800 hits ≥4.5:1 on both warningLight and plain card backgrounds.
+  warningText: '#92400E',
   info: '#3B82F6',
   infoLight: '#DBEAFE',
 
@@ -193,6 +197,8 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   successLight: 'rgba(52, 211, 153, 0.15)',
   warning: '#FBBF24',
   warningLight: 'rgba(251, 191, 36, 0.15)',
+  // Bright amber reads fine on the translucent dark warningLight surface.
+  warningText: '#FCD34D',
   info: '#60A5FA',
   infoLight: 'rgba(96, 165, 250, 0.15)',
 

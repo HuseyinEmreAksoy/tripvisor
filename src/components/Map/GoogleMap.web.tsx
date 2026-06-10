@@ -29,7 +29,7 @@ import {
   useMap,
 } from '@vis.gl/react-google-maps';
 import Constants from 'expo-constants';
-import { dayColor, type MapViewProps, type MapPolyline } from './types';
+import { dayColor, polylineColor, type MapViewProps, type MapPolyline } from './types';
 import { MapUnavailable } from '../MapUnavailable';
 
 /**
@@ -133,11 +133,24 @@ function Polylines({ polylines }: { polylines: MapPolyline[] }) {
     if (!gmaps) return;
 
     const instances = safe.map((line) => {
-      const color = dayColor(line.dayIndex);
+      const color = polylineColor(line);
 
-      // Phase 23 Step 23.9: transit fallback — dashed straight line.
-      // We use the `icons` array with a dash symbol for the stroke pattern.
-      if (line.isDashed && line.from && line.to) {
+      // v2 P1.2: uniform geometry resolution — decoded `points` win (≥2),
+      // else straight from→to (legacy transit fallback / virtual legs).
+      const isStraight = line.points.length < 2;
+      const path: LatLngLiteral[] | null = !isStraight
+        ? line.points.map((p) => ({ lat: p.lat, lng: p.lng }))
+        : line.from && line.to
+          ? [
+              { lat: line.from.lat, lng: line.from.lng },
+              { lat: line.to.lat, lng: line.to.lng },
+            ]
+          : null;
+      if (!path) return null;
+
+      // Dashed (Step 23.9 straight fallback OR P1.2 WALK connector steps):
+      // the `icons` array with a dash symbol provides the stroke pattern.
+      if (line.isDashed) {
         const dashSymbol = {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           path: (globalThis as any).google?.maps?.SymbolPath?.CIRCLE ?? 'M 0,-1 0,1',
@@ -148,14 +161,11 @@ function Polylines({ polylines }: { polylines: MapPolyline[] }) {
           fillOpacity: 1,
         };
         return new gmaps.Polyline({
-          path: [
-            { lat: line.from.lat, lng: line.from.lng },
-            { lat: line.to.lat, lng: line.to.lng },
-          ],
+          path,
           strokeColor: color,
           strokeOpacity: 0,
           strokeWeight: 3,
-          geodesic: true,
+          geodesic: isStraight,
           icons: [
             {
               icon: dashSymbol,
@@ -169,7 +179,7 @@ function Polylines({ polylines }: { polylines: MapPolyline[] }) {
 
       // Normal solid polyline.
       return new gmaps.Polyline({
-        path: line.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+        path,
         strokeColor: color,
         strokeOpacity: 1,
         strokeWeight: 4,
@@ -178,7 +188,7 @@ function Polylines({ polylines }: { polylines: MapPolyline[] }) {
     });
 
     return () => {
-      for (const poly of instances) poly.setMap(null);
+      for (const poly of instances) poly?.setMap(null);
     };
   }, [map, safe]);
 

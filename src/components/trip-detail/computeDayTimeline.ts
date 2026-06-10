@@ -15,6 +15,21 @@
  * moved), that hop contributes ZERO travel time and the stop is flagged
  * `travelUnknown` — the timeline stays useful instead of disappearing.
  *
+ * v2 P1.1b — user-set time windows (trip_places.arrive_after /
+ * leave_before, migration 0023) overlay the same pass:
+ *
+ *   - arrival < arrive_after  → the stop WAITS: effective arrival is pushed
+ *     to the window start (`waitUntilMinutes` set), and every downstream
+ *     time shifts accordingly (the cursor advances through the wait).
+ *   - arrival  > leave_before → `conflict: 'arrives_late'`
+ *   - departure > leave_before → `conflict: 'overruns'`
+ *
+ * Windows are WARNING-ONLY (ux-principles: non-blocking, user can always
+ * override/ignore) — nothing is clamped except the wait push, and the
+ * optimizer does not consume them in P1. Window values are user-confirmed
+ * input only, never Google opening hours (ToS invariant — see
+ * src/api/types.ts TripPlace.arrive_after).
+ *
  * Pure + framework-free + no imports, so it's trivially unit-testable.
  *
  * Usage (ItineraryTab):
@@ -34,7 +49,18 @@ export const DEFAULT_DAY_START_MINUTES = 9 * 60;
 export interface TimelinePlaceInput {
   id: string;
   visit_duration_minutes: number;
+  /**
+   * v2 P1.1b: optional user-set window bounds, in the Postgres `time` wire
+   * shape ('HH:MM:SS' / 'HH:MM'). Field names intentionally match TripPlace
+   * so callers can pass rows straight through. Absent/null/unparseable
+   * values mean "no constraint".
+   */
+  arrive_after?: string | null;
+  leave_before?: string | null;
 }
+
+/** v2 P1.1b: why a stop violates its user-set time window. */
+export type TimelineConflict = 'arrives_late' | 'overruns';
 
 /** Minimal shape needed from a TripLeg. */
 export interface TimelineLegInput {
@@ -54,6 +80,27 @@ export interface TimelineStop {
    * counted as 0. The first stop of a day is never marked (no inbound hop).
    */
   travelUnknown: boolean;
+  /**
+   * v2 P1.1b: when the raw arrival fell before the place's `arrive_after`
+   * window, the effective arrival was pushed to the window start and this
+   * holds that start (minutes since midnight). Null = no wait. UI renders
+   * an info chip ("waits until 10:00"); downstream stops already include
+   * the wait because the cursor advanced through it.
+   */
+  waitUntilMinutes: number | null;
+  /**
+   * v2 P1.1b: non-null when the stop violates its `leave_before` window —
+   * 'arrives_late' (arrival is already past the window end) or 'overruns'
+   * (arrives in time but the visit runs past the end). Warning-only; times
+   * are NOT clamped.
+   */
+  conflict: TimelineConflict | null;
+  /**
+   * v2 P1.1b: parsed `leave_before` (minutes since midnight) so warning copy
+   * ("window ends 18:00") needs no re-parse at render time. Null when the
+   * place has no leave_before window.
+   */
+  windowEndMinutes: number | null;
 }
 
 /**
@@ -72,6 +119,19 @@ export function parseStartTime(
   const minutes = Number(match[2]);
   if (hours > 23 || minutes > 59) return fallback;
   return hours * 60 + minutes;
+}
+
+/**
+ * v2 P1.1b: strict variant of {@link parseStartTime} — parses a Postgres
+ * `time` value ('HH:MM:SS', 'HH:MM:SS.ffffff') or bare 'HH:MM' into
+ * minutes-since-midnight, returning NULL (instead of a fallback) for
+ * null/undefined/malformed input. Used wherever "no value" must stay
+ * distinguishable from "09:00" (time-window bounds, window chips).
+ */
+export function parseTimeOfDay(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = parseStartTime(value, -1);
+  return parsed < 0 ? null : parsed;
 }
 
 /**
@@ -141,15 +201,39 @@ export function computeDayTimeline(input: {
         cursor += travel;
       }
     }
+
+    // ── v2 P1.1b: user-set time window overlay ───────────────────────────
+    const arriveAfter = parseTimeOfDay(place.arrive_after);
+    const leaveBefore = parseTimeOfDay(place.leave_before);
+
+    // Wait: arriving before the window opens pushes the effective arrival
+    // to the window start; downstream stops shift via the advanced cursor.
+    let waitUntilMinutes: number | null = null;
+    if (arriveAfter !== null && cursor < arriveAfter) {
+      waitUntilMinutes = arriveAfter;
+      cursor = arriveAfter;
+    }
+
     const arrivalMinutes = Math.round(cursor);
     const departureMinutes = Math.round(
       cursor + Math.max(0, place.visit_duration_minutes),
     );
+
+    // Conflict: warning-only, nothing clamped (user can always ignore).
+    let conflict: TimelineConflict | null = null;
+    if (leaveBefore !== null) {
+      if (arrivalMinutes > leaveBefore) conflict = 'arrives_late';
+      else if (departureMinutes > leaveBefore) conflict = 'overruns';
+    }
+
     stops.set(place.id, {
       placeId: place.id,
       arrivalMinutes,
       departureMinutes,
       travelUnknown,
+      waitUntilMinutes,
+      conflict,
+      windowEndMinutes: leaveBefore,
     });
     cursor = departureMinutes;
     previousId = place.id;

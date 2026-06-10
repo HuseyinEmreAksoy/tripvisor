@@ -392,6 +392,13 @@ export function ItineraryTab({
                               ? {
                                   arrival: formatClockTime(stop.arrivalMinutes),
                                   departure: formatClockTime(stop.departureMinutes),
+                                  // v2 P1.1b: window wait + conflict (prebuilt
+                                  // strings — PlaceRow stays math-free).
+                                  waitUntil:
+                                    stop.waitUntilMinutes !== null
+                                      ? formatClockTime(stop.waitUntilMinutes)
+                                      : null,
+                                  warning: buildConflictMessage(stop),
                                 }
                               : null
                           }
@@ -597,6 +604,19 @@ function IdeasAddToDayRow({
       })}
     </View>
   );
+}
+
+/**
+ * v2 P1.1b: human copy for a stop's time-window conflict. Non-blocking by
+ * design (ux-principles) — the chip informs; the user decides whether to
+ * shorten the visit, reorder the day, or simply ignore it.
+ */
+function buildConflictMessage(stop: TimelineStop): string | null {
+  if (!stop.conflict || stop.windowEndMinutes === null) return null;
+  const windowEnd = formatClockTime(stop.windowEndMinutes);
+  return stop.conflict === 'arrives_late'
+    ? `arrives ${formatClockTime(stop.arrivalMinutes)} — window ends ${windowEnd}`
+    : `leaves ${formatClockTime(stop.departureMinutes)} — window ends ${windowEnd}`;
 }
 
 function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: TripPlace[] }> {

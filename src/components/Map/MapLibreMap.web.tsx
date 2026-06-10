@@ -40,7 +40,14 @@ import {
   type LayerProps,
   type MapRef,
 } from '@vis.gl/react-maplibre';
-import { dayColor, type MapMarker, type MapPolyline, type MapRegion, type MapViewProps } from './types';
+import {
+  dayColor,
+  polylineColor,
+  type MapMarker,
+  type MapPolyline,
+  type MapRegion,
+  type MapViewProps,
+} from './types';
 
 const DEFAULT_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 
@@ -55,20 +62,15 @@ function getStyleUrl(): string {
 type Bounds = [[number, number], [number, number]];
 
 /**
- * Resolves the line geometry for a leg, mirroring the provider semantics:
- *   - dashed transit legs have no decoded points → straight from→to segment
- *   - normal legs use the decoded `points`
- *   - solid legs with empty `points` but from/to set (the "from my location"
- *     virtual leg built in MapTab) → straight segment as well
+ * Resolves the line geometry for a leg, mirroring the provider semantics
+ * (v2 P1.2 — uniform across all three providers):
+ *   - decoded `points` win when there are ≥2 (real route geometry,
+ *     including dashed WALK connector steps of a multi-leg transit route)
+ *   - otherwise straight from→to segment (legacy transit fallback and the
+ *     "from my location" virtual leg built in MapTab)
  */
 function lineCoordinates(line: MapPolyline): Array<[number, number]> {
-  if (line.isDashed && line.from && line.to) {
-    return [
-      [line.from.lng, line.from.lat],
-      [line.to.lng, line.to.lat],
-    ];
-  }
-  if (line.points.length > 0) {
+  if (line.points.length >= 2) {
     return line.points.map((p) => [p.lng, p.lat] as [number, number]);
   }
   if (line.from && line.to) {
@@ -179,7 +181,7 @@ export function MapLibreMap(props: MapViewProps) {
         return {
           type: 'Feature' as const,
           geometry: { type: 'LineString' as const, coordinates },
-          properties: { color: dayColor(line.dayIndex), dashed: line.isDashed === true },
+          properties: { color: polylineColor(line), dashed: line.isDashed === true },
         };
       })
       .filter((f): f is NonNullable<typeof f> => f !== null);
