@@ -14,15 +14,40 @@ POST /functions/v1/directions-polyline
   "intermediates": [{ "lat": number, "lng": number }],   // 0..23 (25 waypoints total)
   "mode": "driving" | "walking" | "transit" | "bicycling"
 }
--> 200 { "polyline": string | null, "durationSeconds": number, "distanceMeters": number }
+-> 200 {
+  "polyline": string | null,
+  "durationSeconds": number,
+  "distanceMeters": number,
+  // v2 P1.2 — OPTIONAL, transit only, omitted when empty:
+  "transitSteps": [{
+    "polyline": string | null,            // polyline5; never null today (geometry-less steps are skipped)
+    "travelMode": "WALK" | "TRANSIT",
+    "lineName": string | null,            // nameShort ("M2") preferred over name; null for WALK
+    "vehicleType": string | null          // Google enum verbatim (SUBWAY, BUS, TRAM, ...); null for WALK
+  }]
+}
 ```
 
 - `polyline` is **polyline5** (Google encoding, precision 1e5) — decoded
   client-side by `src/components/Map/polyline.ts`. Both providers return this
   exact encoding (ORS JSON `routes[0].geometry` is the same algorithm; we
   never send `elevation: true`, which would switch ORS to a 3D encoding).
-- `mode: "transit"` returns `polyline: null` (UI draws dashed straight
-  segments + a Google Maps deep link); duration/distance still populated.
+- `mode: "transit"` returns top-level `polyline: null` (back-compat: clients
+  not reading `transitSteps` keep drawing dashed straight segments + a Google
+  Maps deep link); duration/distance still populated.
+- **v2 P1.2 — `transitSteps` (ADDITIVE):** for `mode: "transit"`, the Google
+  FieldMask is extended to `routes.legs.steps.polyline.encodedPolyline,
+  routes.legs.steps.travelMode, routes.legs.steps.transitDetails.transitLine.
+  {nameShort,name,vehicle.type}` (and drops `routes.polyline.encodedPolyline`
+  — it would be wasted: the top-level polyline is null by contract). The
+  response then carries one `transitSteps` entry per step with geometry, in
+  route order. Steps without a polyline are skipped; any non-`TRANSIT`
+  travelMode collapses to `WALK`. The field is **omitted** (never `[]`) when
+  there is nothing to render — including the transit-no-route fallback.
+  `optimize-trip` persists this array verbatim into `trip_legs.transit_steps`
+  (jsonb, migration 0023), which the nightly 30-day TTL purge covers because
+  it deletes whole rows. Non-transit modes never include the field and their
+  FieldMask is unchanged.
 
 `GET ?ping=1` -> `{ ok: true, fn: "directions-polyline" }` (warmup / health).
 
@@ -83,7 +108,9 @@ curl -s -X POST "$SUPABASE_URL/functions/v1/directions-polyline" \
   -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" \
   -d '{"origin":{"lat":38.7,"lng":-9.14},"destination":{"lat":38.72,"lng":-9.13},"intermediates":[{"lat":38.71,"lng":-9.14}],"mode":"walking"}'
 
-# Transit — ALWAYS Google; polyline is null by contract
+# Transit — ALWAYS Google; top-level polyline is null by contract.
+# v2 P1.2: response additionally carries "transitSteps" (per-step polylines +
+# line metadata) when the route has renderable steps.
 curl -s -X POST "$SUPABASE_URL/functions/v1/directions-polyline" \
   -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" \
   -d '{"origin":{"lat":38.7,"lng":-9.14},"destination":{"lat":38.72,"lng":-9.13},"mode":"transit"}'

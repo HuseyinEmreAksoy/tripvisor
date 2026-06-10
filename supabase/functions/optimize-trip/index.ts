@@ -99,6 +99,35 @@ interface TripLegRow {
   polyline: string | null;
 }
 
+/**
+ * v2 P1.2: wire shape of one entry in directions-polyline's OPTIONAL
+ * `transitSteps` response field — mirrors `TransitStep` in
+ * src/api/types.ts and the canonical definition in
+ * supabase/functions/directions-polyline/index.ts (keep all three in
+ * lockstep). Persisted VERBATIM into trip_legs.transit_steps (jsonb,
+ * migration 0023) so the client can render per-step transit geometry
+ * without re-calling Google. The 30-day ToS TTL is honored automatically:
+ * the nightly purge (0019 §4b) deletes whole trip_legs rows.
+ */
+interface TransitStepWire {
+  polyline: string | null;
+  travelMode: 'WALK' | 'TRANSIT';
+  lineName: string | null;
+  vehicleType: string | null;
+}
+
+/**
+ * v2 P1.2: response shape of a directions-polyline call as consumed here.
+ * `transitSteps` is present only for transit routes with renderable steps
+ * (the function omits it otherwise — never `[]`).
+ */
+interface PolylineResponse {
+  polyline: string | null;
+  durationSeconds: number;
+  distanceMeters: number;
+  transitSteps?: TransitStepWire[];
+}
+
 export async function handler(req: Request): Promise<Response> {
   const origin = req.headers.get('origin');
   const requestId = newRequestId();
@@ -277,6 +306,7 @@ export async function handler(req: Request): Promise<Response> {
       duration_seconds: number;
       distance_meters: number;
       polyline: string | null;
+      transit_steps: TransitStepWire[] | null;
     }> = [];
 
     if (!cacheHit) {
@@ -363,10 +393,13 @@ export async function handler(req: Request): Promise<Response> {
       });
       if (!polyRes.ok) continue;
       polylineDays++;
-      const poly = polyRes.body as { polyline: string; durationSeconds: number; distanceMeters: number };
+      const poly = polyRes.body as PolylineResponse;
 
       // Persist per-leg polyline on the first leg of the day (lightweight). A richer
       // implementation would split the polyline per-leg; MVP stores one polyline per day.
+      // v2 P1.2: for transit trips, the per-step geometry arrives in
+      // transitSteps instead of the (null) top-level polyline — store it
+      // verbatim; null for non-transit modes / step-less transit responses.
       const firstLeg = {
         trip_id: body.tripId,
         from_place_id: first!.id,
@@ -376,6 +409,7 @@ export async function handler(req: Request): Promise<Response> {
         duration_seconds: poly.durationSeconds,
         distance_meters: poly.distanceMeters,
         polyline: poly.polyline,
+        transit_steps: poly.transitSteps ?? null,
       };
       legsToUpsert.push(firstLeg);
     }
@@ -391,6 +425,9 @@ export async function handler(req: Request): Promise<Response> {
         duration_seconds: leg.durationSeconds,
         distance_meters: 0,
         polyline: null,
+        // Pairwise cache rows come from distance-matrix, which carries no
+        // step geometry — transit_steps is a render artifact, not a cache key.
+        transit_steps: null,
       });
     }
 
@@ -569,6 +606,7 @@ async function runManualMode(args: {
     duration_seconds: number;
     distance_meters: number;
     polyline: string | null;
+    transit_steps: TransitStepWire[] | null;
   }> = [];
   let polylineDays = 0;
 
@@ -585,11 +623,7 @@ async function runManualMode(args: {
       mode: trip.transport_mode,
     });
     if (!polyRes.ok) continue;
-    const poly = polyRes.body as {
-      polyline: string | null;
-      durationSeconds: number;
-      distanceMeters: number;
-    };
+    const poly = polyRes.body as PolylineResponse;
     if (poly.polyline) polylineDays++;
 
     legsToInsert.push({
@@ -601,6 +635,9 @@ async function runManualMode(args: {
       duration_seconds: poly.durationSeconds,
       distance_meters: poly.distanceMeters,
       polyline: poly.polyline,
+      // v2 P1.2: transit trips carry per-step geometry here (top-level
+      // polyline stays null for transit); null for every other mode.
+      transit_steps: poly.transitSteps ?? null,
     });
   }
 

@@ -77,6 +77,14 @@ export function useDeleteTripPlace() {
   });
 }
 
+/**
+ * v2 P1.1: time-of-day string accepted by Postgres `time` columns via
+ * PostgREST — 'HH:MM' or 'HH:MM:SS', 24h. Reads come back as 'HH:MM:SS'.
+ */
+const timeOfDaySchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, 'Expected HH:MM or HH:MM:SS (24h)');
+
 const updateTripPlaceSchema = z.object({
   id: z.string().uuid(),
   trip_id: z.string().uuid(),
@@ -84,6 +92,17 @@ const updateTripPlaceSchema = z.object({
   category: z.string().max(80).nullish(),
   visit_duration_minutes: z.number().int().positive().max(24 * 60).optional(),
   notes: z.string().max(2000).nullish(),
+  // v2 P1.1 (migration 0023): user-confirmed visiting window. `null`
+  // clears the bound (nullish + the undefined-filter below = omitted keys
+  // stay untouched, explicit nulls clear). ToS invariant: these are USER
+  // input only — never programmatically copy Google opening hours into
+  // them (live hours are Tier-2 memory-only; see docs/v2/risks-and-
+  // decisions.md). The cross-field rule `leave_before > arrive_after`
+  // (when both set) is enforced by the DB CHECK — a partial update can't
+  // see the other column's current value here, so the constraint error
+  // surfaces through the mutation's onError instead.
+  arrive_after: timeOfDaySchema.nullish(),
+  leave_before: timeOfDaySchema.nullish(),
 });
 
 type UpdateTripPlaceInput = z.infer<typeof updateTripPlaceSchema>;

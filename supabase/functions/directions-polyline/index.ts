@@ -11,7 +11,15 @@
 //     intermediates?: [{ lat, lng }],
 //     mode: 'driving' | 'walking' | 'transit' | 'bicycling'
 //   }
-//   -> { polyline: string | null, durationSeconds: number, distanceMeters: number }
+//   -> {
+//        polyline: string | null,
+//        durationSeconds: number,
+//        distanceMeters: number,
+//        transitSteps?: [{ polyline: string | null,
+//                          travelMode: 'WALK' | 'TRANSIT',
+//                          lineName: string | null,
+//                          vehicleType: string | null }],
+//      }
 //
 // Phase 23: 'bicycling' joins the enum (Routes API exposes BICYCLE as a
 // first-class travelMode). 'transit' returns polyline = null because the
@@ -20,6 +28,19 @@
 // falls back to dashed straight-line segments + a "Open in Google Maps"
 // deep link (UI step 23.9). Duration / distance for transit are still
 // returned normally so the per-leg time label is realistic.
+//
+// v2 Phase P1.2 (ADDITIVE contract change): real multi-leg transit. When
+// mode === 'transit' the Google FieldMask is extended to request
+// routes.legs.steps (per-step polyline + travelMode + transit line
+// metadata) and the response carries an OPTIONAL `transitSteps` array —
+// one entry per step that has geometry, in route order. The top-level
+// `polyline` stays null for transit, so clients that don't read
+// transitSteps behave exactly as before P1 (dashed segments + deep link).
+// Steps with no polyline are skipped; WALK/TRANSIT is collapsed from the
+// step's travelMode (anything non-TRANSIT renders as a walking connector);
+// lineName prefers transitLine.nameShort ("M2") over .name. ORS note:
+// transit ALWAYS routes to Google (N5), so this lives only in the Google
+// branch.
 //
 // v2 Phase N5 (D2 RESOLVED): openrouteservice (ORS) free API is the
 // switchable PRIMARY for non-transit modes; Google stays the hard default
@@ -73,12 +94,91 @@ const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
   bicycling: 'BICYCLE',
 };
 
+// ---- v2 P1.2: per-mode field masks ------------------------------------------
+// Field masks are mandatory (project rule #3) and per-caller minimal. The
+// transit mask drops routes.polyline.encodedPolyline — the contract returns
+// top-level polyline = null for transit, so requesting it would be waste —
+// and instead asks for the per-step geometry + transit line metadata that
+// feeds `transitSteps`. Non-transit modes keep the pre-P1 mask verbatim.
+const BASE_FIELD_MASK =
+  'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline';
+const TRANSIT_FIELD_MASK = [
+  'routes.duration',
+  'routes.distanceMeters',
+  'routes.legs.steps.polyline.encodedPolyline',
+  'routes.legs.steps.travelMode',
+  'routes.legs.steps.transitDetails.transitLine.nameShort',
+  'routes.legs.steps.transitDetails.transitLine.name',
+  'routes.legs.steps.transitDetails.transitLine.vehicle.type',
+].join(',');
+
+interface GoogleRouteStep {
+  polyline?: { encodedPolyline?: string };
+  travelMode?: string;
+  transitDetails?: {
+    transitLine?: {
+      nameShort?: string;
+      name?: string;
+      vehicle?: { type?: string };
+    };
+  };
+}
+
+interface GoogleRoute {
+  duration?: string;
+  distanceMeters?: number;
+  polyline?: { encodedPolyline?: string };
+  legs?: Array<{ steps?: GoogleRouteStep[] }>;
+}
+
 interface GoogleRoutesResponse {
-  routes?: Array<{
-    duration?: string;
-    distanceMeters?: number;
-    polyline?: { encodedPolyline?: string };
-  }>;
+  routes?: GoogleRoute[];
+}
+
+/**
+ * v2 P1.2: wire shape of one rendered transit step. Mirrors `TransitStep`
+ * in src/api/types.ts and the jsonb stored in trip_legs.transit_steps —
+ * keep all three in lockstep.
+ *
+ * `polyline` is typed nullable for forward-compat, but the current
+ * implementation never emits null — steps without geometry are skipped
+ * (there is nothing to draw for them).
+ */
+interface TransitStep {
+  polyline: string | null;
+  travelMode: 'WALK' | 'TRANSIT';
+  lineName: string | null;
+  vehicleType: string | null;
+}
+
+/**
+ * Flatten routes.legs[].steps[] into the transitSteps wire array, in route
+ * order. Rules (P1.2):
+ *   - steps with no encodedPolyline are skipped — no geometry, nothing to
+ *     render (Google occasionally emits zero-length connector steps);
+ *   - travelMode collapses to the 'WALK' | 'TRANSIT' binary: only TRANSIT
+ *     steps carry line metadata, everything else is a walking connector;
+ *   - lineName prefers transitLine.nameShort ("M2") over .name
+ *     ("Metro Linea 2"), null when neither is present (WALK steps);
+ *   - vehicleType is Google's vehicle.type enum string (SUBWAY, BUS,
+ *     TRAM, HEAVY_RAIL, ...) passed through verbatim, null for WALK steps.
+ */
+function extractTransitSteps(route: GoogleRoute): TransitStep[] {
+  const steps: TransitStep[] = [];
+  for (const leg of route.legs ?? []) {
+    for (const step of leg.steps ?? []) {
+      const polyline = step.polyline?.encodedPolyline;
+      if (!polyline) continue;
+      const line = step.transitDetails?.transitLine;
+      steps.push({
+        polyline,
+        travelMode: step.travelMode === 'TRANSIT' ? 'TRANSIT' : 'WALK',
+        lineName: line?.nameShort ?? line?.name ?? null,
+        vehicleType: line?.vehicle?.type ?? null,
+      });
+    }
+  }
+  return steps;
 }
 
 export async function handler(req: Request): Promise<Response> {
@@ -177,7 +277,7 @@ export async function handler(req: Request): Promise<Response> {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask':
-            'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+            body.mode === 'transit' ? TRANSIT_FIELD_MASK : BASE_FIELD_MASK,
         },
         body: JSON.stringify({
           origin: latLngWaypoint(body.origin),
@@ -235,10 +335,18 @@ export async function handler(req: Request): Promise<Response> {
       return errorResponse('no_route', 'No route found', 404, origin);
     }
 
+    // v2 P1.2: per-step transit geometry. Only computed for transit (the
+    // field mask only requests legs.steps for transit). The field is
+    // OMITTED (not []) when there is nothing to render so optimize-trip's
+    // `poly.transitSteps ?? null` persists NULL instead of an empty array,
+    // and pre-P1 clients see a byte-identical response.
+    const transitSteps = body.mode === 'transit' ? extractTransitSteps(route) : [];
+
     const result: {
       polyline: string | null;
       durationSeconds: number;
       distanceMeters: number;
+      transitSteps?: TransitStep[];
     } = {
       polyline:
         body.mode === 'transit'
@@ -246,6 +354,7 @@ export async function handler(req: Request): Promise<Response> {
           : route.polyline?.encodedPolyline ?? null,
       durationSeconds: parseDuration(route.duration ?? '0s'),
       distanceMeters: route.distanceMeters ?? 0,
+      ...(transitSteps.length > 0 ? { transitSteps } : {}),
     };
 
     // Drivable / walkable / bikeable mode without a polyline string is a
@@ -263,6 +372,7 @@ export async function handler(req: Request): Promise<Response> {
       provider_source: providerSource,
       mode: body.mode,
       polyline: result.polyline === null ? 'null' : 'present',
+      transitSteps: transitSteps.length,
       intermediates: body.intermediates?.length ?? 0,
       durationSeconds: result.durationSeconds,
       distanceMeters: result.distanceMeters,

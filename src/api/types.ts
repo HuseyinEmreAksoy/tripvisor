@@ -124,6 +124,30 @@ export interface TripPlace {
   order_in_day: number | null;
   notes: string | null;
   details_refreshed_at: string | null;
+  /**
+   * v2 P1.1 (migration 0023): earliest time-of-day the user wants to
+   * arrive at this place. PostgREST returns Postgres `time` as
+   * `'HH:MM:SS'`. NULL = no constraint.
+   *
+   * ToS invariant: user-confirmed values only — NEVER auto-filled from
+   * Google opening hours (live hours are Tier-2 memory-only; persisting
+   * them violates the project's Google ToS posture; see
+   * docs/v2/risks-and-decisions.md). The itinerary conflict warnings
+   * compare these columns against live hours CLIENT-SIDE, in memory.
+   *
+   * P1 scoping: warning layer only — the optimizer does not consume time
+   * windows (hard solver constraints deferred to S2/post-GA).
+   */
+  arrive_after: string | null;
+  /**
+   * v2 P1.1 (migration 0023): latest time-of-day the user wants to leave
+   * this place (`'HH:MM:SS'`). NULL = no constraint. When both ends are
+   * set the DB enforces `leave_before > arrive_after`
+   * (trip_places_time_window_check). Same ToS invariant as
+   * {@link TripPlace.arrive_after}: user-confirmed values only — never
+   * auto-filled from Google opening hours.
+   */
+  leave_before: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -214,6 +238,31 @@ export interface TripAccommodation {
   updated_at: string;
 }
 
+/**
+ * v2 P1.2: one rendered step of a multi-leg transit route, as returned by
+ * the `directions-polyline` Edge Function's OPTIONAL `transitSteps` field
+ * and persisted verbatim into `trip_legs.transit_steps` (jsonb, migration
+ * 0023). Canonical definition lives in
+ * `supabase/functions/directions-polyline/index.ts` — keep in lockstep.
+ *
+ * - `polyline` — polyline5 (Google encoding, precision 1e5), decoded by
+ *   `src/components/Map/polyline.ts`. Typed nullable for forward-compat,
+ *   but the server currently never emits null (geometry-less steps are
+ *   skipped) — render code should still null-check.
+ * - `travelMode` — collapsed binary: `'TRANSIT'` rides a vehicle and
+ *   carries line metadata; everything else is a `'WALK'` connector.
+ * - `lineName` — short line name preferred ("M2" over "Metro Linea 2");
+ *   null for WALK steps.
+ * - `vehicleType` — Google's vehicle.type enum verbatim (`'SUBWAY'`,
+ *   `'BUS'`, `'TRAM'`, `'HEAVY_RAIL'`, ...); null for WALK steps.
+ */
+export interface TransitStep {
+  polyline: string | null;
+  travelMode: 'WALK' | 'TRANSIT';
+  lineName: string | null;
+  vehicleType: string | null;
+}
+
 export interface TripLeg {
   id: Uuid;
   trip_id: Uuid;
@@ -224,6 +273,15 @@ export interface TripLeg {
   duration_seconds: number;
   distance_meters: number;
   polyline: string | null;
+  /**
+   * v2 P1.2 (migration 0023): per-step transit geometry/metadata for
+   * `transport_mode = 'transit'` legs; null for every other mode and for
+   * pre-P1 rows. Written only by the `optimize-trip` Edge Function.
+   * Google-derived → covered by the nightly 30-day TTL purge (it deletes
+   * whole `trip_legs` rows), so never re-add a purged value from a
+   * client-side cache.
+   */
+  transit_steps: TransitStep[] | null;
   computed_at: string;
 }
 

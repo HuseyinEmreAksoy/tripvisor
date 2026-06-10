@@ -65,6 +65,13 @@ export function useTripLegs(tripId: Uuid | undefined) {
     enabled: Boolean(tripId),
     queryFn: async () => {
       if (!tripId) return [];
+      // SELECT * is deliberate here (single-trip detail read): it carries
+      // `polyline` AND — since v2 P1.2 / migration 0023 — `transit_steps`
+      // (jsonb → PostgREST returns it pre-parsed as TransitStep[] | null),
+      // which the map renders for transit trips. Do NOT narrow this to a
+      // projection without including transit_steps. The trips-list
+      // aggregate path below (useAllTripLegs) stays projected — it never
+      // needs geometry.
       const { data, error } = await supabase
         .from('trip_legs')
         .select('*')
