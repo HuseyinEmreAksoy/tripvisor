@@ -1,10 +1,16 @@
 /**
- * HomeHero — travel-feel hero band for the Home surface (v2 Phase N1 step 1.3).
+ * HomeHero — travel-feel hero band for the Home surface (v2 Phase N1 step 1.3,
+ * restyled in the v2 "Tide & Terracotta" redesign).
  *
  * Rendered at the top of app/(app)/trips.tsx (active tab only): destination
  * imagery + headline, the primary "✨ Plan my trip with AI" CTA (routes to
- * /trip/plan — Wave 3 / N3.5 fills that screen), and a trip-countdown chip
- * ("✈️ 5 days to Lisbon") for the nearest future trip, hidden when none.
+ * /trip/plan), and a trip-countdown chip ("✈️ 5 days to Lisbon") for the
+ * nearest future trip, hidden when none.
+ *
+ * Visual language: tall rounded card (radius.xl), photo with a layered
+ * two-step scrim (soft wash + darker bottom band) for text legibility, muted
+ * uppercase overline, big display headline, and a white pill CTA that reads
+ * as the floating primary action over imagery in both themes.
  *
  * Imagery follows the auth screens' pattern: Unsplash CDN photo, decorative
  * (hidden from the a11y tree), color placeholder while loading.
@@ -72,7 +78,11 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
     <View
       style={[
         styles.card,
-        { borderRadius: t.radius.xl, minHeight: isDesktop ? 220 : 172 },
+        {
+          borderRadius: t.radius.xl,
+          minHeight: isDesktop ? 260 : 208,
+          ...t.shadows.lg(t.colors.shadowColorStrong),
+        },
       ]}
     >
       <Image
@@ -83,29 +93,48 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
         importantForAccessibility="no"
         aria-hidden
         transition={400}
-        placeholder={{ color: '#2A2438' }}
+        placeholder={{ color: '#16332E' }}
+      />
+      {/* Layered scrim: a soft full wash + a heavier bottom band — fakes a
+          vertical gradient with plain Views (no new deps). Decorative. */}
+      <View
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(12, 10, 8, 0.22)' }]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        aria-hidden
       />
       <View
-        style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
+        style={[styles.scrimBottom, { backgroundColor: t.colors.heroOverlay }]}
         accessibilityElementsHidden
         importantForAccessibility="no"
         aria-hidden
       />
 
       <View style={[styles.copy, { padding: isDesktop ? t.spacing.xl : t.spacing.lg, gap: t.spacing.sm }]}>
+        <Text style={[t.typography.overline, { color: 'rgba(255,255,255,0.85)' }]}>
+          Tripvisor
+        </Text>
         <Text
-          style={[styles.headline, { color: '#FFFFFF', fontSize: isDesktop ? 30 : 24, lineHeight: isDesktop ? 36 : 30 }]}
+          style={[
+            styles.headline,
+            {
+              color: '#FFFFFF',
+              fontSize: isDesktop ? 34 : 27,
+              lineHeight: isDesktop ? 40 : 33,
+            },
+          ]}
           accessibilityRole="header"
           aria-level={2}
         >
           Plan your next adventure
         </Text>
-        <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.88)' }]}>
+        <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.92)', maxWidth: 460 }]}>
           Describe your dream trip and let AI draft the plan.
         </Text>
 
         {/* CTA + countdown — row on desktop, stacked on mobile */}
         <View style={[styles.actionsRow, { gap: t.spacing.sm, flexDirection: isDesktop ? 'row' : 'column', alignItems: isDesktop ? 'center' : 'stretch' }]}>
+          {/* White pill: the floating primary action over imagery, both themes. */}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Plan my trip with AI"
@@ -113,15 +142,14 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
             style={({ pressed }) => [
               styles.cta,
               {
-                backgroundColor: t.colors.primary,
-                borderRadius: t.radius.lg,
+                backgroundColor: pressed ? '#EDE7DC' : '#FFFFFF',
+                borderRadius: t.radius.pill,
                 paddingHorizontal: t.spacing.xl,
-                opacity: pressed ? 0.85 : 1,
-                ...t.shadows.md(t.colors.glowPrimary),
+                ...t.shadows.md('rgba(0, 0, 0, 0.35)'),
               },
             ]}
           >
-            <Text style={[t.typography.bodyStrong, { color: t.colors.primaryText, letterSpacing: 0.3 }]}>
+            <Text style={[t.typography.bodyStrong, { color: '#221E18', letterSpacing: 0.2 }]}>
               ✨ Plan my trip with AI
             </Text>
           </Pressable>
@@ -135,6 +163,7 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
                 styles.countdownChip,
                 {
                   backgroundColor: t.colors.heroChipBg,
+                  borderColor: 'rgba(255,255,255,0.35)',
                   borderRadius: t.radius.pill,
                   paddingHorizontal: t.spacing.lg,
                   opacity: pressed ? 0.7 : 1,
@@ -142,7 +171,7 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
               ]}
             >
               <Text
-                style={[t.typography.bodyStrong, { color: t.colors.heroChipText, fontSize: 14 }]}
+                style={[t.typography.bodyStrong, { color: '#FFFFFF', fontSize: 14 }]}
                 numberOfLines={1}
               >
                 {countdownLabel(next)}
@@ -160,24 +189,32 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'flex-end',
   },
+  scrimBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '72%',
+  },
   copy: {
     justifyContent: 'flex-end',
   },
   headline: {
     fontWeight: '800',
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   actionsRow: {
-    marginTop: 4,
+    marginTop: 6,
   },
   cta: {
-    minHeight: 48,
+    minHeight: 50,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'flex-start',
   },
   countdownChip: {
     minHeight: 40,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'flex-start',

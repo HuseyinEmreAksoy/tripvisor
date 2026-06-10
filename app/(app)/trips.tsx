@@ -286,13 +286,17 @@ export default function TripsList() {
     settingsBtn: {
       paddingHorizontal: t.spacing.md,
       paddingVertical: t.spacing.sm,
-      backgroundColor: t.colors.gradientSubtle,
-      borderRadius: t.radius.lg,
+      backgroundColor: t.colors.bgElevated,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderRadius: t.radius.pill,
+      ...t.shadows.sm(t.colors.shadowColor),
     },
     settingsBtnText: {
-      ...(t.typography.bodyStrong as object),
-      color: t.colors.primary,
-      fontSize: 14,
+      ...(t.typography.caption as object),
+      color: t.colors.text,
+      fontWeight: '600',
+      fontSize: 13,
     },
     searchRow: {
       flexDirection: 'row',
@@ -304,11 +308,11 @@ export default function TripsList() {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: t.colors.bgElevated,
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderColor: t.colors.border,
       borderRadius: t.radius.pill,
       paddingHorizontal: t.spacing.lg,
-      height: 44,
+      height: 46,
       ...t.shadows.sm(t.colors.shadowColor),
     },
     searchIcon: {
@@ -334,12 +338,12 @@ export default function TripsList() {
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: t.colors.bgElevated,
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderColor: t.colors.border,
       borderRadius: t.radius.pill,
       paddingHorizontal: t.spacing.md,
-      height: 44,
-      minWidth: 44,
+      height: 46,
+      minWidth: 46,
       ...t.shadows.sm(t.colors.shadowColor),
     },
     sortBtnText: {
@@ -352,11 +356,11 @@ export default function TripsList() {
     filterBtn: {
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 1.5,
+      borderWidth: 1,
       borderRadius: t.radius.pill,
       paddingHorizontal: t.spacing.md,
-      height: 44,
-      minWidth: 44,
+      height: 46,
+      minWidth: 46,
     },
     noResultsWrap: {
       padding: t.spacing.lg,
@@ -682,7 +686,7 @@ export default function TripsList() {
           )}
           contentContainerStyle={{
             padding: t.spacing.lg,
-            gap: t.spacing.md,
+            gap: t.spacing.lg,
           }}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
           ListFooterComponent={

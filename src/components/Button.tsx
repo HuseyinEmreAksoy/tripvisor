@@ -1,4 +1,15 @@
-import { useRef, useEffect } from 'react';
+/**
+ * Button — v2 "Tide & Terracotta" primitive.
+ *
+ * Pill silhouette (a v2 visual signature), soft layered shadow on the primary
+ * variant, quiet bordered secondary, tinted ghost. Press feedback is a small
+ * native-driven spring scale, disabled when the user prefers reduced motion.
+ *
+ * Usage:
+ *   <Button label="New trip" onPress={...} />
+ *   <Button variant="secondary" label="Retry" fullWidth={false} onPress={...} />
+ */
+import { useRef } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -11,6 +22,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useTheme } from '@/theme';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -32,13 +44,15 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const t = useTheme();
+  const reducedMotion = useReducedMotion();
   const { container, textColor, pressedStyle } = getStyles(t, variant);
   const isDisabled = disabled || loading;
 
-  // Animated scale for press feedback
+  // Animated scale for press feedback (skipped under reduced motion).
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
+    if (reducedMotion) return;
     Animated.spring(scaleAnim, {
       toValue: 0.97,
       useNativeDriver: true,
@@ -48,6 +62,7 @@ export function Button({
   };
 
   const handlePressOut = () => {
+    if (reducedMotion) return;
     Animated.spring(scaleAnim, {
       toValue: 1,
       useNativeDriver: true,
@@ -56,22 +71,9 @@ export function Button({
     }).start();
   };
 
-  // Fade in on mount
-  const opacityAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(opacityAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [opacityAnim]);
-
   return (
     <Animated.View
-      style={[
-        { transform: [{ scale: scaleAnim }], opacity: opacityAnim },
-        fullWidth && styles.fullWidth,
-      ]}
+      style={[{ transform: [{ scale: scaleAnim }] }, fullWidth && styles.fullWidth]}
     >
       <Pressable
         accessibilityRole="button"
@@ -84,14 +86,15 @@ export function Button({
         style={({ pressed }) => [
           styles.base,
           {
-            borderRadius: t.radius.lg,
+            // Pill buttons — the v2 silhouette.
+            borderRadius: t.radius.pill,
             paddingHorizontal: t.spacing.xl,
           },
           container,
           fullWidth && styles.fullWidth,
           isDisabled && styles.disabled,
           pressed && pressedStyle,
-          // Web hover effect
+          // Web hover/press transition
           Platform.OS === 'web' && ({
             // @ts-expect-error — web-only CSS transition
             transition: 'all 0.2s ease',
@@ -109,7 +112,7 @@ export function Button({
                   t.typography.bodyStrong,
                   {
                     color: textColor,
-                    letterSpacing: 0.3,
+                    letterSpacing: 0.2,
                   },
                 ]}
                 numberOfLines={1}
@@ -141,7 +144,7 @@ function getStyles(t: ReturnType<typeof useTheme>, variant: Variant) {
     case 'secondary':
       return {
         container: {
-          backgroundColor: t.colors.cardBg,
+          backgroundColor: t.colors.bgElevated,
           borderWidth: 1.5,
           borderColor: t.colors.border,
           ...t.shadows.sm(t.colors.shadowColor),
@@ -156,7 +159,7 @@ function getStyles(t: ReturnType<typeof useTheme>, variant: Variant) {
       return {
         container: {
           backgroundColor: t.colors.danger,
-          ...t.shadows.md(t.colors.danger),
+          ...t.shadows.md(t.colors.shadowColor),
         } as ViewStyle,
         textColor: '#FFFFFF',
         pressedStyle: {

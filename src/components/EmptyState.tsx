@@ -1,9 +1,16 @@
 /**
- * EmptyState — Redesigned with animated icons, gradient CTA, refined layout.
+ * EmptyState — v2 "Tide & Terracotta" primitive.
+ *
+ * The icon sits in a soft circular tile on a muted surface, the title uses
+ * the bold display voice, and the CTA is the signature pill button. The
+ * gentle float loop on the icon is skipped when the user prefers reduced
+ * motion (web `prefers-reduced-motion` + native OS setting via
+ * useReducedMotion).
  */
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View, type TextStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface EmptyStateProps {
   title: string;
@@ -29,11 +36,16 @@ export function EmptyState({
   const t = useTheme();
   const titleRef = useRef<Text>(null);
   const bodyText = body ?? description;
+  const reducedMotion = useReducedMotion();
 
-  // Float animation for the icon
+  // Gentle float loop for the icon — decorative, so reduced motion disables it.
   const floatAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
+    if (reducedMotion) {
+      floatAnim.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(floatAnim, {
           toValue: -8,
@@ -48,18 +60,10 @@ export function EmptyState({
           useNativeDriver: true,
         }),
       ]),
-    ).start();
-  }, [floatAnim]);
-
-  // Fade in
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [floatAnim, reducedMotion]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -74,11 +78,8 @@ export function EmptyState({
   }, []);
 
   return (
-    <Animated.View
-      style={[
-        styles.root,
-        { padding: t.spacing.xl, gap: t.spacing.lg, opacity: fadeAnim },
-      ]}
+    <View
+      style={[styles.root, { padding: t.spacing.xl, gap: t.spacing.lg }]}
       accessible
       accessibilityRole="summary"
       accessibilityLabel={bodyText ? `${title}. ${bodyText}` : title}
@@ -86,8 +87,11 @@ export function EmptyState({
       {icon ? (
         <Animated.View
           style={[
-            styles.iconWrapper,
-            { transform: [{ translateY: floatAnim }] },
+            styles.iconTile,
+            {
+              backgroundColor: t.colors.bgMuted,
+              transform: [{ translateY: floatAnim }],
+            },
           ]}
         >
           {icon}
@@ -112,8 +116,7 @@ export function EmptyState({
             {
               color: t.colors.textMuted,
               textAlign: 'center',
-              maxWidth: 320,
-              lineHeight: 24,
+              maxWidth: 340,
             },
           ]}
         >
@@ -121,7 +124,7 @@ export function EmptyState({
         </Text>
       ) : null}
 
-      {/* New-style CTA */}
+      {/* New-style CTA — signature pill */}
       {ctaLabel && onPress ? (
         <Pressable
           onPress={onPress}
@@ -130,17 +133,15 @@ export function EmptyState({
           style={({ pressed }) => [
             styles.cta,
             {
-              backgroundColor: t.colors.primary,
-              borderRadius: t.radius.lg,
+              backgroundColor: pressed ? t.colors.primaryDark : t.colors.primary,
+              borderRadius: t.radius.pill,
               paddingHorizontal: t.spacing.xl,
               paddingVertical: t.spacing.md,
               ...t.shadows.md(t.colors.glowPrimary),
-              opacity: pressed ? 0.85 : 1,
-              transform: [{ scale: pressed ? 0.97 : 1 }],
             },
           ]}
         >
-          <Text style={[t.typography.bodyStrong, { color: t.colors.primaryText, letterSpacing: 0.3 }]}>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.primaryText, letterSpacing: 0.2 }]}>
             {ctaLabel}
           </Text>
         </Pressable>
@@ -148,12 +149,19 @@ export function EmptyState({
 
       {/* Legacy action node */}
       {action ?? null}
-    </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  iconWrapper: { alignItems: 'center', marginBottom: 4 },
+  iconTile: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
   cta: { alignItems: 'center', justifyContent: 'center', minHeight: 48 },
 });

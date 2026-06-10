@@ -331,8 +331,15 @@ export function ItineraryTab({
           const dayWeather = weatherForSection(section.dayIndex);
           return (
           <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
-            <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex), backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md, paddingHorizontal: t.spacing.md, paddingVertical: t.spacing.sm }]}>
+            {/* v2 redesign: day header is a strong typographic group — colored
+                day dot + bold heading + chips on whitespace (dividers out). */}
+            <View style={[styles.dayHeader, { paddingTop: t.spacing.sm }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' }}>
+                <View
+                  style={[styles.dayDot, { backgroundColor: dayColor(section.dayIndex) }]}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
                 <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
                   {section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
                 </Text>
@@ -720,7 +727,9 @@ function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: Trip
 }
 
 const styles = StyleSheet.create({
-  dayHeader: { borderLeftWidth: 4, paddingLeft: 12, gap: 2 },
+  dayHeader: { gap: 2 },
+  // Colored day marker — matches the map's per-day palette (dayColor).
+  dayDot: { width: 10, height: 10, borderRadius: 5 },
   // v2 N1 1.4: "Add to Day N" chip row under Ideas cards
   ideasAddRow: {
     flexDirection: 'row',
@@ -743,10 +752,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   toolChip: {
-    borderWidth: 1.5,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    minHeight: 28,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minHeight: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },

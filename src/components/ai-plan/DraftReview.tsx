@@ -128,14 +128,17 @@ export function DraftReview({
       {/* ── Header: expectation-setting — this is a draft, nothing saved ── */}
       <View
         style={{
-          backgroundColor: t.colors.gradientSubtle,
+          backgroundColor: t.colors.bgElevated,
           borderRadius: t.radius.xl,
           padding: t.spacing.xl,
           gap: t.spacing.sm,
-          ...t.shadows.sm(t.colors.shadowColor),
+          ...t.shadows.md(t.colors.shadowColor),
         }}
       >
         <StatusPill tone="info" label="Draft — nothing is saved yet" />
+        <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+          AI trip planner
+        </Text>
         <Heading level={2}>Your draft</Heading>
         {hasPlaces ? (
           <Text style={[t.typography.body, { color: t.colors.textMuted, lineHeight: 24 }]}>

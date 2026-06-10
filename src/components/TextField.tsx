@@ -1,5 +1,9 @@
 /**
- * TextField — Redesigned with animated focus ring, refined border, improved typography.
+ * TextField — v2 "Tide & Terracotta" primitive.
+ *
+ * Muted uppercase overline label (the v2 section-kicker language), soft
+ * rounded field on an elevated surface, teal focus ring, inline error/hint
+ * slot announced politely to screen readers.
  */
 import { forwardRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
@@ -28,12 +32,10 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
     <View style={styles.wrapper}>
       <Text
         style={[
-          t.typography.caption,
+          t.typography.overline,
           {
             color: focused ? t.colors.primary : t.colors.textMuted,
-            marginBottom: 6,
-            fontWeight: '600',
-            letterSpacing: 0.3,
+            marginBottom: 8,
           },
         ]}
       >
@@ -104,6 +106,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   input: {
-    height: 50,
+    height: 52,
   },
 });

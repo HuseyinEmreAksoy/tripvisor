@@ -39,10 +39,15 @@ export function TripHeader({
 
   return (
     <View style={{ backgroundColor: t.colors.gradientSubtle }}>
-      <View style={{ padding: t.spacing.lg, gap: t.spacing.sm }}>
+      <View style={{ padding: t.spacing.lg, gap: t.spacing.md }}>
         <BackButton onPress={onBack} label="Trips" />
         <View style={styles.titleRow}>
-          <Heading level={1}>{trip.title}</Heading>
+          <View style={{ flex: 1, minWidth: 200, gap: 2 }}>
+            <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+              Itinerary
+            </Text>
+            <Heading level={1}>{trip.title}</Heading>
+          </View>
           <Button
             label="🖨️ Print"
             variant="secondary"
@@ -53,13 +58,15 @@ export function TripHeader({
         </View>
         <View style={styles.metaRow}>
           <View style={{
-            backgroundColor: t.colors.cardBgSolid,
+            backgroundColor: t.colors.bgElevated,
+            borderWidth: 1,
+            borderColor: t.colors.border,
             borderRadius: t.radius.pill,
             paddingHorizontal: t.spacing.md,
-            paddingVertical: t.spacing.xs,
+            paddingVertical: 5,
             ...t.shadows.sm(t.colors.shadowColor),
           }}>
-            <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '500' }]}>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
               📅 {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day · {trip.transport_mode}
             </Text>
           </View>

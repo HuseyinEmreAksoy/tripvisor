@@ -44,14 +44,14 @@ export function CommitSuccess({
       style={[styles.root, { gap: t.spacing.lg, padding: t.spacing.xl }]}
       accessibilityLiveRegion="polite"
     >
-      <Text
-        style={styles.icon}
+      <View
+        style={[styles.iconTile, { backgroundColor: t.colors.successLight }]}
         accessibilityElementsHidden
         importantForAccessibility="no"
         aria-hidden
       >
-        🎉
-      </Text>
+        <Text style={styles.icon}>🎉</Text>
+      </View>
       <Heading level={1}>Trip created</Heading>
       <Text
         style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center', lineHeight: 24 }]}
@@ -116,7 +116,14 @@ export function CommitSuccess({
 
 const styles = StyleSheet.create({
   root: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  icon: { fontSize: 56, lineHeight: 64 },
+  iconTile: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  icon: { fontSize: 52, lineHeight: 60 },
   failureCard: { alignSelf: 'stretch' },
   actions: { alignSelf: 'stretch' },
 });

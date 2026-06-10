@@ -122,7 +122,7 @@ export default function Login() {
             importantForAccessibility="no"
             aria-hidden
             transition={400}
-            placeholder={{ color: '#1A3A5C' }}
+            placeholder={{ color: '#16332E' }}
           />
           <View
             style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
@@ -239,7 +239,7 @@ export default function Login() {
           aria-hidden
           // Fade in from placeholder.
           transition={400}
-          placeholder={{ color: '#1A3A5C' }}
+          placeholder={{ color: '#16332E' }}
         />
         {/* Dark scrim over the photo for text legibility */}
         <View
@@ -377,15 +377,15 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   heroTitle: {
-    fontSize: 32,
-    lineHeight: 38,
+    fontSize: 34,
+    lineHeight: 40,
     fontWeight: '800',
-    letterSpacing: -0.5,
+    letterSpacing: -0.8,
   },
   formCard: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    marginTop: -24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    marginTop: -28,
     flexGrow: 1,
   },
   confirmCard: {

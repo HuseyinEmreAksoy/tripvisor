@@ -163,7 +163,9 @@ export const DraftPlaceCard = memo(function DraftPlaceCard({
 });
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1 },
+  // v2 card language: borderless, soft elevation (shadow comes from the
+  // theme-aware style at the call site).
+  card: {},
   removedCard: {
     flexDirection: 'row',
     alignItems: 'center',

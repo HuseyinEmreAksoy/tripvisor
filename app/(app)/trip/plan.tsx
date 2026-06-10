@@ -292,27 +292,34 @@ export default function PlanMyTrip() {
         {/* ── Stage 1: prompt form ─────────────────────────────────────────── */}
         {stage === 'form' ? (
           <>
+            {/* v2 redesign: premium hero card — elevated surface, sparkle tile,
+                muted overline above the bold display heading. */}
             <View
               style={{
-                backgroundColor: t.colors.gradientSubtle,
+                backgroundColor: t.colors.bgElevated,
                 borderRadius: t.radius.xl,
                 padding: t.spacing.xl,
                 gap: t.spacing.sm,
-                ...t.shadows.sm(t.colors.shadowColor),
+                ...t.shadows.md(t.colors.shadowColor),
               }}
             >
               <View style={styles.bannerRow}>
-                <Text
-                  style={{ fontSize: 32 }}
+                <View
+                  style={[styles.sparkleTile, { backgroundColor: t.colors.gradientSubtle }]}
                   accessibilityElementsHidden
                   importantForAccessibility="no"
                   aria-hidden
                 >
-                  ✨
-                </Text>
-                <Heading level={1}>Plan my trip with AI</Heading>
+                  <Text style={{ fontSize: 26 }}>✨</Text>
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+                    AI trip planner
+                  </Text>
+                  <Heading level={1}>Plan my trip with AI</Heading>
+                </View>
               </View>
-              <Text style={[t.typography.body, { color: t.colors.textMuted, lineHeight: 24 }]}>
+              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
                 Describe the trip you want. AI drafts a day-by-day plan with real places — you
                 review and edit every stop before anything is saved.
               </Text>
@@ -459,6 +466,13 @@ export default function PlanMyTrip() {
 
 const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1 },
-  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sparkleTile: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   centerRow: { alignItems: 'center' },
 });

@@ -181,12 +181,13 @@ export function PlaceRow({
         style={[
           styles.placeCard,
           {
-            borderColor: t.colors.border,
             borderRadius: t.radius.lg,
             backgroundColor: t.colors.cardBgSolid,
             padding: t.spacing.md,
             opacity: dragging ? 0.85 : 1,
-            borderLeftWidth: 4,
+            // Slim day-color rail keeps the map↔list color link without a
+            // full border — v2 cards are borderless + soft elevation.
+            borderLeftWidth: 3,
             borderLeftColor: dayColor(place.day_index ?? -1),
             ...t.shadows.sm(t.colors.shadowColor),
           },
@@ -238,16 +239,15 @@ export function PlaceRow({
                     </View>
                   ) : null}
 
-                  {/* v2 P1.1a: user-set window ("⏰ 10:00–17:00") */}
+                  {/* v2 P1.1a: user-set window ("⏰ 10:00–17:00") — same chip
+                      language as the timeline pill, muted tint. */}
                   {windowLabel ? (
                     <View
                       style={[
                         styles.timelineChip,
                         {
-                          backgroundColor: t.colors.bgElevated,
+                          backgroundColor: t.colors.bgMuted,
                           borderRadius: t.radius.pill,
-                          borderWidth: 1,
-                          borderColor: t.colors.border,
                         },
                       ]}
                       accessible
@@ -265,16 +265,14 @@ export function PlaceRow({
                       style={[
                         styles.timelineChip,
                         {
-                          backgroundColor: t.colors.bgElevated,
+                          backgroundColor: t.colors.bgMuted,
                           borderRadius: t.radius.pill,
-                          borderWidth: 1,
-                          borderColor: t.colors.border,
                         },
                       ]}
                       accessible
                       accessibilityLabel={`Arrives before the time window opens — waits until ${timeline.waitUntil}`}
                     >
-                      <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+                      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
                         {'⏳ waits until '}{timeline.waitUntil}
                       </Text>
                     </View>
@@ -317,8 +315,7 @@ export function PlaceRow({
                   style={({ pressed }) => [
                     styles.commentChip,
                     {
-                      backgroundColor: t.colors.bgElevated,
-                      borderColor: t.colors.border,
+                      backgroundColor: t.colors.bgMuted,
                       borderRadius: t.radius.pill,
                       opacity: pressed ? 0.6 : 1,
                     },
@@ -405,19 +402,20 @@ export function PlaceRow({
 }
 
 const styles = StyleSheet.create({
-  placeCard: { borderWidth: 1 },
+  placeCard: {},
   // v2 N1 1.2 / P1.1: wrapping row of time chips (timeline, window, wait, warning)
   timeChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 6,
-    marginTop: 4,
+    marginTop: 6,
   },
-  // v2 N1 1.2: arrival → departure pill (shared base for all time chips)
+  // v2 N1 1.2: arrival → departure pill (shared base for ALL time chips —
+  // one chip language: pill, tinted surface, w600 caption text)
   timelineChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
   },
   // v2 N1 1.7: right-side chip rail (comments + reaction)
   chipRail: {
@@ -426,18 +424,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   commentChip: {
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    minHeight: 26,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
   // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
+    width: 52,
+    height: 52,
+    borderRadius: 12,
     flexShrink: 0,
   },
   // Travel connector between place cards (Step 23.8)

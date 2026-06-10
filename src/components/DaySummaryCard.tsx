@@ -98,12 +98,11 @@ export function DaySummaryCard({ dayIndex, places, legs }: DaySummaryCardProps) 
       style={[
         styles.card,
         {
-          backgroundColor: t.colors.cardBgSolid,
+          // v2 chip language: quiet muted band, borderless — the chips carry
+          // the information, whitespace carries the structure.
+          backgroundColor: t.colors.bgMuted,
           borderRadius: t.radius.lg,
           padding: t.spacing.md,
-          borderWidth: 1,
-          borderColor: t.colors.border,
-          ...t.shadows.sm(t.colors.shadowColor),
         },
       ]}
       accessible
@@ -149,17 +148,20 @@ function Chip({
       style={[
         styles.chip,
         {
-          backgroundColor: highlight ? t.colors.primary : t.colors.bgElevated,
+          backgroundColor: highlight ? t.colors.primary : t.colors.cardBgSolid,
           borderRadius: t.radius.pill,
-          paddingHorizontal: t.spacing.sm,
-          paddingVertical: 3,
+          paddingHorizontal: t.spacing.md,
+          paddingVertical: 4,
         },
       ]}
     >
       <Text
         style={[
           t.typography.small,
-          { color: highlight ? t.colors.primaryText : t.colors.textMuted },
+          {
+            color: highlight ? t.colors.primaryText : t.colors.textMuted,
+            fontWeight: highlight ? '700' : '600',
+          },
         ]}
         numberOfLines={1}
       >

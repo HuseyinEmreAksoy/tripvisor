@@ -1,5 +1,9 @@
 /**
- * BackButton — Redesigned with styled arrow, hover/press animation.
+ * BackButton — v2 "Tide & Terracotta" primitive.
+ *
+ * Explicit navigation is a binding UX principle, so the back affordance is a
+ * visible soft pill (elevated surface + quiet border) instead of a bare text
+ * link. Accessible name stays "Go back[ to X]".
  */
 import { Platform, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
@@ -27,9 +31,11 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
       style={({ pressed }) => [
         styles.btn,
         {
-          backgroundColor: pressed ? t.colors.gradientSubtle : 'transparent',
-          borderRadius: t.radius.sm,
-          paddingHorizontal: t.spacing.sm,
+          backgroundColor: pressed ? t.colors.bgMuted : t.colors.bgElevated,
+          borderColor: t.colors.border,
+          borderRadius: t.radius.pill,
+          paddingHorizontal: t.spacing.md,
+          ...t.shadows.sm(t.colors.shadowColor),
         },
         Platform.OS === 'web' && ({
           transition: 'all 0.15s ease',
@@ -39,17 +45,16 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
       {...printProps}
     >
       <Text
-        style={[
-          styles.arrow,
-          { color: t.colors.primary },
-        ]}
+        style={[styles.arrow, { color: t.colors.primary }]}
         accessibilityElementsHidden
         importantForAccessibility="no"
         aria-hidden
       >
         ←
       </Text>
-      <Text style={[t.typography.body, { color: t.colors.primary, fontWeight: '600' }]}>{label}</Text>
+      <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600', fontSize: 14 }]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -58,13 +63,15 @@ const styles = StyleSheet.create({
   btn: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 44,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    minHeight: 38,
     minWidth: 44,
     gap: 6,
   },
   arrow: {
-    fontSize: 20,
-    lineHeight: 22,
+    fontSize: 17,
+    lineHeight: 20,
     fontWeight: '600',
   },
 });

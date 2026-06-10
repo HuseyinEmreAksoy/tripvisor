@@ -1,5 +1,9 @@
 /**
- * SegmentedControl — Redesigned with glassmorphism track, gradient active segment, smooth transition.
+ * SegmentedControl — v2 "Tide & Terracotta" primitive.
+ *
+ * Pill-shaped muted track; the active option is an elevated floating pill
+ * with bold ink text (iOS-style), inactive options are quiet muted text.
+ * Roles: radiogroup / radio with selected state — unchanged.
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
@@ -16,16 +20,14 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
   return (
     <View style={{ gap: t.spacing.xs }}>
       {label ? (
-        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>{label}</Text>
+        <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>{label}</Text>
       ) : null}
       <View
         style={[
           styles.row,
           {
-            borderColor: t.colors.border,
-            borderRadius: t.radius.lg,
+            borderRadius: t.radius.pill,
             backgroundColor: t.colors.bgMuted,
-            ...t.shadows.sm(t.colors.shadowColor),
           },
         ]}
         accessibilityRole="radiogroup"
@@ -42,9 +44,9 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
               style={({ pressed }) => [
                 styles.opt,
                 {
-                  backgroundColor: active ? t.colors.primary : 'transparent',
-                  borderRadius: t.radius.md,
-                  ...(active ? t.shadows.sm(t.colors.glowPrimary) : {}),
+                  backgroundColor: active ? t.colors.cardBgSolid : 'transparent',
+                  borderRadius: t.radius.pill,
+                  ...(active ? t.shadows.sm(t.colors.shadowColorStrong) : {}),
                 },
                 pressed && !active && { backgroundColor: t.colors.gradientSubtle },
                 Platform.OS === 'web' && ({
@@ -57,8 +59,9 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
                 style={[
                   t.typography.bodyStrong,
                   {
-                    color: active ? t.colors.primaryText : t.colors.text,
+                    color: active ? t.colors.text : t.colors.textMuted,
                     fontSize: 14,
+                    fontWeight: active ? '700' : '600',
                   },
                 ]}
               >
@@ -75,7 +78,6 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    borderWidth: 1,
     padding: 4,
     gap: 4,
   },

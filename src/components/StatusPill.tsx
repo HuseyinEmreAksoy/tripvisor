@@ -1,5 +1,7 @@
 /**
- * StatusPill — Redesigned with gradient backgrounds and refined shadow.
+ * StatusPill — v2 "Tide & Terracotta" chip language: tinted surface + bold
+ * matching-tone text, always pill-shaped. Info tone uses the semantic info
+ * color (≥4.5:1 on infoLight in both modes).
  */
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
@@ -27,7 +29,7 @@ export function StatusPill({ tone = 'info', label, loading }: Props) {
       ? t.colors.danger
       : tone === 'success'
         ? t.colors.success
-        : t.colors.primary;
+        : t.colors.info;
 
   return (
     <View
@@ -43,7 +45,7 @@ export function StatusPill({ tone = 'info', label, loading }: Props) {
       ]}
     >
       {loading ? <ActivityIndicator size="small" color={textColor} /> : null}
-      <Text style={[t.typography.small, { color: textColor, fontWeight: '600' }]}>{label}</Text>
+      <Text style={[t.typography.small, { color: textColor, fontWeight: '700' }]}>{label}</Text>
     </View>
   );
 }
@@ -54,5 +56,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
+    minHeight: 24,
   },
 });
