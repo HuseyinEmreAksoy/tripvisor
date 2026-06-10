@@ -34,7 +34,7 @@
 //   1. Idempotency — SELECT trip_ai_runs by (user_id, idempotencyKey); a hit
 //      with status ok/partial replays the stored draft with ZERO LLM/grounding
 //      spend (client retries and timeouts never double-bill — risk C4).
-//   2. Quota — ai_usage row for today (UTC); >= DAILY_PLAN_LIMIT -> 429.
+//   2. Quota — ai_usage row for today (UTC); >= DAILY_RUN_LIMIT -> 429.
 //   3. LLM — Gemini 2.5 Flash (responseSchema structured JSON) with Groq
 //      gpt-oss-20b (strict json_schema) as fallback on 4xx/5xx/timeout/garbage.
 //      D4 data-minimization: the payload carries ONLY the user's prompt +
@@ -50,28 +50,32 @@
 //
 // Secrets (Supabase Edge secrets — never bundled):
 //   GEMINI_API_KEY, GROQ_API_KEY (>=1 required), GOOGLE_MAPS_SERVER_KEY (required).
+//
+// N4 refactor: the LLM provider callers (Gemini->Groq fallback), the
+// grounding loop, and the ai_usage ledger helpers moved to _shared/ai.ts —
+// shared with ai-edit. Behavior is unchanged; this file keeps only its own
+// contract (schemas, preamble, draft shaping, handler).
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { handlePreflight } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
-import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
 import { log, newRequestId } from '../_shared/logger.ts';
 import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
+import {
+  DAILY_RUN_LIMIT,
+  extractBearer,
+  groundNames,
+  incrementAiUsage,
+  readUsageToday,
+  runLlmWithFallback,
+  sha256Hex,
+  type LlmAttempt,
+} from '../_shared/ai.ts';
 
 const FN = 'ai-itinerary';
 
-const LLM_TIMEOUT_MS = 20_000;
-const GROUNDING_TIMEOUT_MS = 8_000;
-/** Daily plan quota per user (migration 0020 §d: constant lives here, not in the DB). */
-const DAILY_PLAN_LIMIT = 10;
 /** Mirrors optimize-trip's MAX_PLACES — drafts beyond this can't be optimized anyway. */
 const MAX_DRAFT_PLACES = 25;
-/** Grounding politeness: batches of 5 names, at most 2 batches in flight. */
-const GROUNDING_BATCH_SIZE = 5;
-const GROUNDING_BATCH_CONCURRENCY = 2;
-
-const GEMINI_MODEL = 'gemini-2.5-flash';
-const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // ----- Request validation ---------------------------------------------------
 
@@ -214,33 +218,7 @@ interface AiDraft {
   dayCount: number;
 }
 
-interface LlmAttempt {
-  output: LlmOutput;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-}
-
-// ----- Small helpers ---------------------------------------------------------
-
-async function sha256Hex(input: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  const bytes = new Uint8Array(buf);
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) out += bytes[i]!.toString(16).padStart(2, '0');
-  return out;
-}
-
-/** UTC calendar day — matches Postgres current_date on Supabase (UTC). */
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function extractBearer(req: Request): string | null {
-  const header = req.headers.get('Authorization') ?? '';
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? (match[1] ?? null) : null;
-}
+// ----- LLM output parsing ------------------------------------------------------
 
 /** Parse + validate an LLM JSON string. Null on any failure (caller falls back). */
 function parseLlmJson(text: string): LlmOutput | null {
@@ -256,281 +234,6 @@ function parseLlmJson(text: string): LlmOutput | null {
   const totalPlaces = parsed.data.days.reduce((n, d) => n + d.places.length, 0);
   if (totalPlaces === 0) return null; // an empty itinerary is a provider failure
   return parsed.data;
-}
-
-// ----- LLM providers ---------------------------------------------------------
-
-async function callGemini(
-  apiKey: string,
-  userPayload: string,
-  requestId: string,
-): Promise<LlmAttempt | null> {
-  const start = Date.now();
-  try {
-    const res = await fetchWithTimeout(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PREAMBLE }] },
-          contents: [{ role: 'user', parts: [{ text: userPayload }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: GEMINI_RESPONSE_SCHEMA,
-          },
-        }),
-      },
-      LLM_TIMEOUT_MS,
-    );
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'llm_gemini',
-        status: res.status,
-        body: text.slice(0, 300),
-        durationMs: Date.now() - start,
-      });
-      return null;
-    }
-    const json = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
-    };
-    const text = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('');
-    const output = parseLlmJson(text);
-    if (!output) {
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'llm_gemini',
-        err: 'unparseable_or_invalid_json',
-        durationMs: Date.now() - start,
-      });
-      return null;
-    }
-    return {
-      output,
-      model: GEMINI_MODEL,
-      tokensIn: json.usageMetadata?.promptTokenCount ?? null,
-      tokensOut: json.usageMetadata?.candidatesTokenCount ?? null,
-    };
-  } catch (err) {
-    const isAbort = err instanceof DOMException && err.name === 'AbortError';
-    log({
-      requestId,
-      fn: FN,
-      level: 'warn',
-      stage: 'llm_gemini',
-      err: isAbort ? 'timeout' : String(err),
-      durationMs: Date.now() - start,
-    });
-    return null;
-  }
-}
-
-async function callGroq(
-  apiKey: string,
-  userPayload: string,
-  requestId: string,
-): Promise<LlmAttempt | null> {
-  const start = Date.now();
-  try {
-    const res = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: SYSTEM_PREAMBLE },
-            { role: 'user', content: userPayload },
-          ],
-          response_format: { type: 'json_schema', json_schema: GROQ_JSON_SCHEMA },
-        }),
-      },
-      LLM_TIMEOUT_MS,
-    );
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'llm_groq',
-        status: res.status,
-        body: text.slice(0, 300),
-        durationMs: Date.now() - start,
-      });
-      return null;
-    }
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    const output = parseLlmJson(json.choices?.[0]?.message?.content ?? '');
-    if (!output) {
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'llm_groq',
-        err: 'unparseable_or_invalid_json',
-        durationMs: Date.now() - start,
-      });
-      return null;
-    }
-    return {
-      output,
-      model: GROQ_MODEL,
-      tokensIn: json.usage?.prompt_tokens ?? null,
-      tokensOut: json.usage?.completion_tokens ?? null,
-    };
-  } catch (err) {
-    const isAbort = err instanceof DOMException && err.name === 'AbortError';
-    log({
-      requestId,
-      fn: FN,
-      level: 'warn',
-      stage: 'llm_groq',
-      err: isAbort ? 'timeout' : String(err),
-      durationMs: Date.now() - start,
-    });
-    return null;
-  }
-}
-
-// ----- Grounding -------------------------------------------------------------
-//
-// Each unique LLM name is grounded through the same Places (New) chain the
-// interactive add-place flow uses: :autocomplete (top prediction) -> :get.
-// One session token per name ties the pair into a single billed Details
-// session. Field mask is `id,location,displayName` ONLY — no ToS-restricted
-// content (ratings/reviews/photos/hours) is requested, so nothing restricted
-// can leak into the persisted draft.
-//
-// Outcomes are tri-state so the handler can tell "Google looked and found
-// nothing" (no_match -> unresolved[], user fixes up) apart from "Google was
-// unreachable / errored" (error). If EVERY name errors and nothing resolved,
-// the run is transient-failed (504) and deliberately NOT persisted — caching
-// an all-miss draft would poison the idempotent replay for that key.
-
-type GroundOutcome =
-  | { kind: 'resolved'; googlePlaceId: string; lat: number; lng: number; canonicalName: string; detailsCalls: number }
-  | { kind: 'no_match'; detailsCalls: number }
-  | { kind: 'error'; detailsCalls: number };
-
-async function groundPlaceName(
-  llmName: string,
-  destination: string | undefined,
-  apiKey: string,
-  requestId: string,
-): Promise<GroundOutcome> {
-  // Location bias: the destination is appended to the search input ("Louvre,
-  // Lisbon" finds nothing; "Louvre, Paris" pins the right city). No
-  // coordinates are available pre-grounding, so text bias is the lever.
-  const input = destination ? `${llmName}, ${destination}` : llmName;
-  const sessionToken = crypto.randomUUID();
-  let detailsCalls = 0;
-  try {
-    const acRes = await fetchWithTimeout(
-      'https://places.googleapis.com/v1/places:autocomplete',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
-          'X-Goog-FieldMask': 'suggestions.placePrediction.placeId',
-        },
-        body: JSON.stringify({ input, sessionToken }),
-      },
-      GROUNDING_TIMEOUT_MS,
-    );
-    if (!acRes.ok) {
-      const text = await acRes.text().catch(() => '');
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'ground_autocomplete',
-        status: acRes.status,
-        body: text.slice(0, 200),
-      });
-      return { kind: 'error', detailsCalls };
-    }
-    const acJson = (await acRes.json()) as {
-      suggestions?: Array<{ placePrediction?: { placeId?: string } }>;
-    };
-    const placeId = acJson.suggestions?.[0]?.placePrediction?.placeId;
-    if (!placeId) return { kind: 'no_match', detailsCalls };
-
-    const detailsUrl = new URL(
-      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
-    );
-    // Session token propagation — closes the autocomplete session so the
-    // pair bills as one Details session instead of two ad-hoc calls.
-    detailsUrl.searchParams.set('sessionToken', sessionToken);
-    detailsCalls = 1;
-    const detRes = await fetchWithTimeout(
-      detailsUrl.toString(),
-      {
-        method: 'GET',
-        headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'id,location,displayName' },
-      },
-      GROUNDING_TIMEOUT_MS,
-    );
-    if (!detRes.ok) {
-      const text = await detRes.text().catch(() => '');
-      log({
-        requestId,
-        fn: FN,
-        level: 'warn',
-        stage: 'ground_details',
-        status: detRes.status,
-        body: text.slice(0, 200),
-      });
-      return { kind: 'error', detailsCalls };
-    }
-    const det = (await detRes.json()) as {
-      id?: string;
-      location?: { latitude?: number; longitude?: number };
-      displayName?: { text?: string };
-    };
-    if (!det.id || det.location?.latitude === undefined || det.location?.longitude === undefined) {
-      return { kind: 'error', detailsCalls };
-    }
-    return {
-      kind: 'resolved',
-      googlePlaceId: det.id,
-      lat: det.location.latitude,
-      lng: det.location.longitude,
-      // Surface the CANONICAL Google name in the draft so the review screen
-      // exposes wrong groundings ("Joe's Pizza" resolving in the wrong city).
-      canonicalName: det.displayName?.text?.trim() || llmName,
-      detailsCalls,
-    };
-  } catch (err) {
-    const isAbort = err instanceof DOMException && err.name === 'AbortError';
-    log({
-      requestId,
-      fn: FN,
-      level: 'warn',
-      stage: 'ground',
-      err: isAbort ? 'timeout' : String(err),
-    });
-    return { kind: 'error', detailsCalls };
-  }
-}
-
-function chunk<T>(items: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
 }
 
 // ----- Handler ---------------------------------------------------------------
@@ -592,7 +295,7 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('db_error', replayErr.message, 500, origin);
   }
   if (existing?.draft) {
-    const usage = await readUsage(user, userId);
+    const usage = (await readUsageToday(user, userId, FN)).aiRuns;
     log({
       requestId,
       fn: FN,
@@ -607,7 +310,7 @@ export async function handler(req: Request): Promise<Response> {
         runId: existing.id,
         status: existing.status,
         draft: existing.draft,
-        usage: { runsToday: usage, dailyLimit: DAILY_PLAN_LIMIT },
+        usage: { runsToday: usage, dailyLimit: DAILY_RUN_LIMIT },
       },
       { origin },
     );
@@ -617,12 +320,12 @@ export async function handler(req: Request): Promise<Response> {
   // Read-then-spend (not atomic): two perfectly concurrent requests at 9/10
   // can both pass and land at 11. Accepted for a soft free-tier guard — the
   // ledger still records true spend, and the next request is blocked.
-  const runsToday = await readUsage(user, userId);
-  if (runsToday >= DAILY_PLAN_LIMIT) {
+  const runsToday = (await readUsageToday(user, userId, FN)).aiRuns;
+  if (runsToday >= DAILY_RUN_LIMIT) {
     log({ requestId, fn: FN, level: 'info', stage: 'quota', runsToday });
     return errorResponse(
       'quota_exceeded',
-      `Daily AI planning limit reached (${DAILY_PLAN_LIMIT}/day). Try again tomorrow.`,
+      `Daily AI planning limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
       429,
       origin,
     );
@@ -679,9 +382,18 @@ export async function handler(req: Request): Promise<Response> {
   ].join('\n');
 
   const llmStart = Date.now();
-  let attempt: LlmAttempt | null = null;
-  if (geminiKey) attempt = await callGemini(geminiKey, userPayload, requestId);
-  if (!attempt && groqKey) attempt = await callGroq(groqKey, userPayload, requestId);
+  const attempt: LlmAttempt<LlmOutput> | null = await runLlmWithFallback(
+    { geminiKey, groqKey },
+    {
+      system: SYSTEM_PREAMBLE,
+      user: userPayload,
+      geminiResponseSchema: GEMINI_RESPONSE_SCHEMA,
+      groqJsonSchema: GROQ_JSON_SCHEMA,
+      parse: parseLlmJson,
+    },
+    requestId,
+    FN,
+  );
   const llmMs = Date.now() - llmStart;
 
   const admin = makeAdminClient();
@@ -692,7 +404,7 @@ export async function handler(req: Request): Promise<Response> {
     // the run in the ledger even though it failed, so a failure loop can't
     // burn unmetered Gemini RPD / Groq quota. No trip_ai_runs row is written
     // (migration 0020 §b: the idempotency key must stay free for the retry).
-    await incrementUsage(admin, userId, 1, 0, requestId);
+    await incrementAiUsage(admin, userId, 1, 0, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -749,43 +461,39 @@ export async function handler(req: Request): Promise<Response> {
   let detailsCalls = 0;
   let groundErrors = 0;
 
-  const batches = chunk(proposed, GROUNDING_BATCH_SIZE);
-  for (let i = 0; i < batches.length; i += GROUNDING_BATCH_CONCURRENCY) {
-    const wave = batches.slice(i, i + GROUNDING_BATCH_CONCURRENCY);
-    const waveResults = await Promise.all(
-      wave.map((batch) =>
-        Promise.all(
-          batch.map(async (p) => ({
-            proposed: p,
-            outcome: await groundPlaceName(p.name, body.destination, googleKey, requestId),
-          })),
-        ),
-      ),
-    );
-    for (const batchResults of waveResults) {
-      for (const { proposed: p, outcome } of batchResults) {
-        detailsCalls += outcome.detailsCalls;
-        if (outcome.kind === 'resolved') {
-          // Two LLM names can resolve to one real place ("The Louvre" /
-          // "Louvre Museum") — keep the first; the place IS in the draft.
-          if (seenPlaceIds.has(outcome.googlePlaceId)) continue;
-          seenPlaceIds.add(outcome.googlePlaceId);
-          places.push({
-            name: outcome.canonicalName,
-            googlePlaceId: outcome.googlePlaceId,
-            lat: outcome.lat,
-            lng: outcome.lng,
-            visitMinutes: p.visitMinutes,
-            category: p.category,
-            dayHint: p.dayHint,
-          });
-        } else {
-          if (outcome.kind === 'error') groundErrors++;
-          // Partial-grounding UX: NEVER silently drop — the client renders
-          // "couldn't find these N places" for user fix-up.
-          unresolved.push(p.name);
-        }
-      }
+  // Shared batched loop (_shared/ai.ts; 5 per batch, 2 batches in flight).
+  // Text bias only — no coordinates exist before grounding, so the
+  // destination string is the lever.
+  const outcomes = await groundNames(
+    proposed.map((p) => p.name),
+    { destination: body.destination },
+    googleKey,
+    requestId,
+    FN,
+  );
+  for (let i = 0; i < proposed.length; i++) {
+    const p = proposed[i]!;
+    const outcome = outcomes[i]!;
+    detailsCalls += outcome.detailsCalls;
+    if (outcome.kind === 'resolved') {
+      // Two LLM names can resolve to one real place ("The Louvre" /
+      // "Louvre Museum") — keep the first; the place IS in the draft.
+      if (seenPlaceIds.has(outcome.googlePlaceId)) continue;
+      seenPlaceIds.add(outcome.googlePlaceId);
+      places.push({
+        name: outcome.canonicalName,
+        googlePlaceId: outcome.googlePlaceId,
+        lat: outcome.lat,
+        lng: outcome.lng,
+        visitMinutes: p.visitMinutes,
+        category: p.category,
+        dayHint: p.dayHint,
+      });
+    } else {
+      if (outcome.kind === 'error') groundErrors++;
+      // Partial-grounding UX: NEVER silently drop — the client renders
+      // "couldn't find these N places" for user fix-up.
+      unresolved.push(p.name);
     }
   }
   const groundMs = Date.now() - groundStart;
@@ -795,7 +503,7 @@ export async function handler(req: Request): Promise<Response> {
   // and persist NOTHING — a stored all-miss draft would poison the
   // idempotent replay for this key. Spend still hits the ledger.
   if (places.length === 0 && groundErrors > 0) {
-    await incrementUsage(admin, userId, 1, detailsCalls, requestId);
+    await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -829,7 +537,7 @@ export async function handler(req: Request): Promise<Response> {
   // Increment BEFORE the insert so the ledger reflects real upstream spend
   // even if the insert fails. Ledger failures are logged but never fail the
   // run (fail-open bookkeeping; at 10/day the worst case is one uncounted run).
-  await incrementUsage(admin, userId, 1, detailsCalls, requestId);
+  await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
 
   // Written with the USER client so trip_ai_runs RLS (own-rows insert,
   // append-only) is enforced on the function itself.
@@ -867,7 +575,7 @@ export async function handler(req: Request): Promise<Response> {
             runId: winner.id,
             status: winner.status,
             draft: winner.draft,
-            usage: { runsToday: runsToday + 1, dailyLimit: DAILY_PLAN_LIMIT },
+            usage: { runsToday: runsToday + 1, dailyLimit: DAILY_RUN_LIMIT },
           },
           { origin },
         );
@@ -908,48 +616,10 @@ export async function handler(req: Request): Promise<Response> {
       runId,
       status,
       draft,
-      usage: { runsToday: runsToday + 1, dailyLimit: DAILY_PLAN_LIMIT },
+      usage: { runsToday: runsToday + 1, dailyLimit: DAILY_RUN_LIMIT },
     },
     { origin },
   );
-}
-
-// Today's ai_runs count for the caller (0 when no row yet). Best-effort: a
-// read failure logs and returns 0 rather than failing the run — the ledger
-// is a soft guard, not a billing system.
-async function readUsage(user: ReturnType<typeof makeUserClient>, userId: string): Promise<number> {
-  const { data, error } = await user
-    .from('ai_usage')
-    .select('ai_runs')
-    .eq('user_id', userId)
-    .eq('day', todayUtc())
-    .maybeSingle<{ ai_runs: number }>();
-  if (error) {
-    log({ fn: FN, level: 'warn', stage: 'usage_read', err: error.message });
-    return 0;
-  }
-  return data?.ai_runs ?? 0;
-}
-
-// Ledger write via the SECURITY DEFINER RPC (migration 0020 §c) under the
-// service-role client — auth.uid() is NULL for service role, which is what
-// lets the function stamp the caller's row. Never throws.
-async function incrementUsage(
-  admin: ReturnType<typeof makeAdminClient>,
-  userId: string,
-  runs: number,
-  grounding: number,
-  requestId: string,
-): Promise<void> {
-  const { error } = await admin.rpc('increment_ai_usage', {
-    p_user_id: userId,
-    p_runs: runs,
-    p_grounding: grounding,
-    p_routing: 0,
-  });
-  if (error) {
-    log({ requestId, fn: FN, level: 'warn', stage: 'usage_increment', err: error.message });
-  }
 }
 
 Deno.serve(handler);

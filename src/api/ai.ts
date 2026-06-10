@@ -90,11 +90,15 @@ export interface GenerateItineraryResult {
 }
 
 /**
- * Typed error thrown by `useGenerateItinerary` when the `ai-itinerary` Edge
- * Function returns the structured `{ error: { code, message } }` envelope.
- * Mirrors `OptimizeError` / `PlacesError` (Phase 20 Step 6 hierarchy).
+ * Typed error thrown by the AI hooks (`useGenerateItinerary` and the N4
+ * `useAiEditTrip` / `useAiSuggest` / `useGroundPlaces`) when the
+ * `ai-itinerary` / `ai-edit` Edge Functions return the structured
+ * `{ error: { code, message } }` envelope. Mirrors `OptimizeError` /
+ * `PlacesError` (Phase 20 Step 6 hierarchy). Both functions share one
+ * deliberately-closed code set.
  *
- * Known codes (mirrors `supabase/functions/ai-itinerary/index.ts`):
+ * Known codes (mirrors `supabase/functions/ai-itinerary/index.ts` and
+ * `supabase/functions/ai-edit/index.ts`):
  *   - `invalid_input`      — 400 — body failed validation, or tripId not visible
  *   - `not_authenticated`  — 401 — missing / invalid JWT
  *   - `method_not_allowed` — 405 — non-POST request
@@ -162,6 +166,242 @@ export function useGenerateItinerary() {
         throw error;
       }
       if (!data) throw new Error('ai-itinerary returned no data');
+      return data;
+    },
+  });
+}
+
+// ============================================================
+// AI editing / suggestions / import grounding (v2 Phase N4)
+// ============================================================
+//
+// Client wrappers for the `ai-edit` Edge Function (action-discriminated
+// body: 'edit' | 'suggest' | 'ground'). Every action is PREVIEW-ONLY on the
+// server — no trip data is written — so none of these mutations invalidate
+// any query key: the preview UI owns the result and commits accepted
+// changes through the normal trip-places hooks (which invalidate
+// themselves).
+//
+// Day-number conventions (mirrors supabase/functions/ai-edit/README.md):
+//   - INPUT  `AiSuggestInput.dayIndex` is the 0-based `trip_places.day_index`
+//     (what the itinerary screen has in hand).
+//   - OUTPUT `dayHint` / `toDay` are 1-BASED — the same convention as
+//     `AiDraftPlace.dayHint` from `ai-itinerary`; the commit layer converts
+//     to 0-based `day_index` (exactly like the N3 draft review does).
+
+/** One reviewable removal inside an AI edit diff (name echoed server-side). */
+export interface AiEditDiffRemove {
+  tripPlaceId: Uuid;
+  name: string;
+}
+
+/** One reviewable day-move inside an AI edit diff. `toDay` is 1-based. */
+export interface AiEditDiffMove {
+  tripPlaceId: Uuid;
+  name: string;
+  toDay: number;
+}
+
+/** One reviewable visit-duration change inside an AI edit diff. */
+export interface AiEditDiffDurationChange {
+  tripPlaceId: Uuid;
+  name: string;
+  /** New visit duration, validated server-side to 15..480 minutes. */
+  visitMinutes: number;
+}
+
+/**
+ * The previewable diff returned by `ai-edit` action 'edit'. Server-side
+ * guarantees: every `tripPlaceId` referenced an existing place of the trip
+ * at preview time (unknown LLM ids are dropped, never invented); no-op
+ * moves/duration changes are pruned; `adds` are grounded `AiDraftPlace`s
+ * (max 10, never duplicating a place already in the trip). An all-empty
+ * diff is a VALID result ("nothing to change") — render `notes` and offer
+ * retry, don't treat it as an error.
+ */
+export interface AiEditDiff {
+  adds: AiDraftPlace[];
+  removes: AiEditDiffRemove[];
+  moves: AiEditDiffMove[];
+  durationChanges: AiEditDiffDurationChange[];
+  /** Optional one-line LLM summary of the change (or null). */
+  notes: string | null;
+}
+
+export interface AiEditTripInput {
+  /** Trip to edit; must be visible to the caller (RLS-checked server-side). */
+  tripId: Uuid;
+  /** Natural-language edit instruction, 5..1000 chars (the only free text sent to the LLM). */
+  instruction: string;
+  /**
+   * Idempotency key (8..64 chars). Auto-generated per `mutate()` call when
+   * omitted. "Try again" UX should generate ONE key per edit intent and pass
+   * it on every retry: if the previous attempt completed server-side, the
+   * retry replays the stored diff for free (zero LLM/grounding re-billing).
+   */
+  idempotencyKey?: string;
+}
+
+export interface AiEditResult {
+  /** `trip_ai_runs.id` of this run (kind 'edit'; stable across replays). */
+  runId: Uuid;
+  /** `'partial'` = some proposed adds couldn't be grounded (`unresolved`). */
+  status: AiRunStatus;
+  diff: AiEditDiff;
+  /** Add-names Google couldn't ground — surface for user fix-up, never drop. */
+  unresolved: string[];
+  usage: AiUsage;
+}
+
+/**
+ * Mutation hook for `ai-edit` action `'edit'` — a natural-language edit
+ * returned as a PREVIEWABLE DIFF (accept/reject in the UI; nothing is
+ * written server-side). Counts against the shared 10-runs/day AI quota
+ * (`quota_exceeded`, 429). Transient failures (`llm_failed` 502 /
+ * `upstream_timeout` 504) persist nothing — retrying with the SAME
+ * idempotency key is always safe and replays for free once a run has
+ * succeeded. Deliberately NO query invalidation (preview only).
+ */
+export function useAiEditTrip() {
+  return useMutation<AiEditResult, AiError | Error, AiEditTripInput>({
+    mutationFn: async (input) => {
+      const body = {
+        action: 'edit' as const,
+        tripId: input.tripId,
+        instruction: input.instruction,
+        idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+      };
+      const { data, error } = await supabase.functions.invoke<AiEditResult>('ai-edit', { body });
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, AiError);
+        if (typed) throw typed;
+        throw error;
+      }
+      if (!data) throw new Error('ai-edit returned no data');
+      return data;
+    },
+  });
+}
+
+export interface AiSuggestInput {
+  /** Trip to suggest for; must be visible to the caller. */
+  tripId: Uuid;
+  /** 0-based `trip_places.day_index` of the day to fill. */
+  dayIndex: number;
+  /** Spare minutes to fill, 30..480 (suggestions never exceed this). */
+  slackMinutes: number;
+  /** Same semantics as {@link AiEditTripInput.idempotencyKey}. */
+  idempotencyKey?: string;
+}
+
+export interface AiSuggestResult {
+  /** `trip_ai_runs.id` of this run (kind 'suggest'; stable across replays). */
+  runId: Uuid;
+  status: AiRunStatus;
+  /**
+   * 0–4 grounded fill-in places with `dayHint = dayIndex + 1` (1-based).
+   * An EMPTY array is a valid honest result ("nothing fits the slack").
+   */
+  suggestions: AiDraftPlace[];
+  /** Proposed names Google couldn't ground. */
+  unresolved: string[];
+  usage: AiUsage;
+}
+
+/**
+ * Mutation hook for `ai-edit` action `'suggest'` — 2–4 grounded gap-fill
+ * places for one day's spare minutes. Counts as a run against the shared
+ * 10-runs/day quota. Same idempotency/retry semantics as `useAiEditTrip`
+ * (hold one key per intent for "try again" UX; transient 502/504 persist
+ * nothing, success replays free). NO query invalidation — the suggestions
+ * are a preview; adding one goes through the normal add-place mutation.
+ */
+export function useAiSuggest() {
+  return useMutation<AiSuggestResult, AiError | Error, AiSuggestInput>({
+    mutationFn: async (input) => {
+      const body = {
+        action: 'suggest' as const,
+        tripId: input.tripId,
+        dayIndex: input.dayIndex,
+        slackMinutes: input.slackMinutes,
+        idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+      };
+      const { data, error } = await supabase.functions.invoke<AiSuggestResult>('ai-edit', { body });
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, AiError);
+        if (typed) throw typed;
+        throw error;
+      }
+      if (!data) throw new Error('ai-edit returned no data');
+      return data;
+    },
+  });
+}
+
+/** One import name resolved to a real place (ToS-durable fields only). */
+export interface GroundedPlace {
+  /** Canonical Google displayName — may differ from the pasted input name. */
+  name: string;
+  googlePlaceId: string;
+  lat: number;
+  lng: number;
+}
+
+/** Per-user daily grounding budget echoed by the `ground` action. */
+export interface GroundingUsage {
+  /** Google-metered grounding calls so far today (shared across AI features). */
+  groundingToday: number;
+  /** 100/day — the import grounding budget (NOT the 10-runs AI quota). */
+  dailyLimit: number;
+}
+
+export interface GroundPlacesInput {
+  /** 1..30 place names to ground, each 2..120 chars (pasted list / Takeout-extracted). */
+  names: string[];
+  /** Optional location bias, e.g. the trip destination ("Louvre, Paris" beats "Louvre"). */
+  destination?: string;
+  /** Same semantics as {@link AiEditTripInput.idempotencyKey}. */
+  idempotencyKey?: string;
+}
+
+export interface GroundPlacesResult {
+  /** `trip_ai_runs.id` of this run (kind 'ground'; stable across replays). */
+  runId: Uuid;
+  /** Grounded places, deduped by place id (two inputs can hit one place). */
+  resolved: GroundedPlace[];
+  /** Input names that couldn't be grounded — surface for user fix-up. */
+  unresolved: string[];
+  usage: GroundingUsage;
+}
+
+/**
+ * Mutation hook for `ai-edit` action `'ground'` — LLM-FREE grounding of a
+ * pasted/imported names list (import feature; results feed the Ideas
+ * bucket via the normal add-place mutations). Does NOT consume an AI run;
+ * it is budgeted against a separate 100-grounded-names/day allowance
+ * (`quota_exceeded` 429 when the whole batch wouldn't fit — the message
+ * says how much is used). Same idempotency/retry semantics as the other
+ * AI hooks: transient `upstream_timeout` (504) persists nothing, a
+ * successful run replays free on the same key. NO query invalidation.
+ */
+export function useGroundPlaces() {
+  return useMutation<GroundPlacesResult, AiError | Error, GroundPlacesInput>({
+    mutationFn: async (input) => {
+      const body = {
+        action: 'ground' as const,
+        names: input.names,
+        ...(input.destination ? { destination: input.destination } : {}),
+        idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+      };
+      const { data, error } = await supabase.functions.invoke<GroundPlacesResult>('ai-edit', {
+        body,
+      });
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, AiError);
+        if (typed) throw typed;
+        throw error;
+      }
+      if (!data) throw new Error('ai-edit returned no data');
       return data;
     },
   });
