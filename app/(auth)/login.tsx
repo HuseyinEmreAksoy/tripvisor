@@ -33,7 +33,7 @@ import {
 import { Image } from 'expo-image';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
-import { Button, Heading, TextField } from '@/components';
+import { Button, GoogleSignInButton, Heading, TextField } from '@/components';
 import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -164,6 +164,10 @@ export default function Login() {
             showsVerticalScrollIndicator={false}
           >
             <Heading level={2}>Sign in</Heading>
+
+            {/* v2 N1 1.6: Google OAuth above the magic-link form */}
+            <GoogleSignInButton />
+
             <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
               Enter your email — we'll send a magic link. No password required.
             </Text>
@@ -278,6 +282,10 @@ export default function Login() {
         showsVerticalScrollIndicator={false}
       >
         <Heading level={2}>Sign in</Heading>
+
+        {/* v2 N1 1.6: Google OAuth above the magic-link form */}
+        <GoogleSignInButton />
+
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
           Enter your email — we'll send a magic link. No password required.
         </Text>

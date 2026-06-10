@@ -8,11 +8,12 @@
  * external browser.
  * Phase 25 Step 25.8: small thumbnail image prepended to the row.
  *
- * N1 extension points (not yet implemented):
- *  - 1.2 timeline: computed arrival/departure chips mount in the title row /
- *    under the visit-duration label (PlaceRow already receives `legAfter`;
- *    cumulative arrival time will arrive as a new prop from ItineraryTab).
- *  - 1.7 comments: per-place comment entry point mounts below PlaceNotesEditor.
+ * v2 N1 step 1.2: arrival→departure chip ("10:00 → 12:30") under the visit-
+ * duration label. Computed in ItineraryTab (computeDayTimeline) and passed in
+ * as a presentational `timeline` prop — this row does zero time math.
+ * v2 N1 step 1.7: 💬 comment chip next to the reaction chip; always visible
+ * when `onOpenComments` is provided (count badge appears at ≥1) so the
+ * feature is discoverable even on quiet places.
  */
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
@@ -62,6 +63,16 @@ export interface PlaceRowProps {
   canEdit?: boolean;
   reaction?: TripPlaceReactionType | null;
   onReactionChange?: (next: TripPlaceReactionType | null) => void;
+  /**
+   * v2 N1 1.2: computed arrival/departure clock labels for this stop
+   * (e.g. { arrival: "10:00", departure: "12:30" }). Null/undefined hides
+   * the chip (unscheduled "Ideas" rows have no timeline).
+   */
+  timeline?: { arrival: string; departure: string } | null;
+  /** v2 N1 1.7: comment count for the badge (0 shows the bare 💬 affordance). */
+  commentCount?: number;
+  /** v2 N1 1.7: opens the comment thread sheet. Chip hidden when absent. */
+  onOpenComments?: () => void;
 }
 
 export function PlaceRow({
@@ -74,6 +85,9 @@ export function PlaceRow({
   canEdit = true,
   reaction,
   onReactionChange,
+  timeline,
+  commentCount = 0,
+  onOpenComments,
 }: PlaceRowProps) {
   const t = useTheme();
 
@@ -157,16 +171,63 @@ export function PlaceRow({
               >
                 {'⏱ Visit ~'}{visitLabel}
               </Text>
+              {/* v2 N1 1.2: arrival → departure chip (computed in ItineraryTab) */}
+              {timeline ? (
+                <View
+                  style={[
+                    styles.timelineChip,
+                    {
+                      backgroundColor: t.colors.gradientSubtle,
+                      borderRadius: t.radius.pill,
+                    },
+                  ]}
+                  accessible
+                  accessibilityLabel={`Arrives ${timeline.arrival}, departs ${timeline.departure}`}
+                >
+                  <Text
+                    style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}
+                  >
+                    {timeline.arrival}{' → '}{timeline.departure}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            {/* Phase 24 Step 24.3: Reaction chip — right side of row */}
-            {onReactionChange ? (
-              <ReactionChip
-                reaction={reaction ?? null}
-                onChange={onReactionChange}
-                accentColor={dayColor(place.day_index ?? -1)}
-                size="sm"
-              />
-            ) : null}
+            {/* Right rail: comment chip (v2 N1 1.7) + reaction chip (Phase 24) */}
+            <View style={styles.chipRail}>
+              {onOpenComments ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    commentCount > 0
+                      ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${place.user_title ?? 'place'}. Open the thread.`
+                      : `No comments yet on ${place.user_title ?? 'place'}. Start the discussion.`
+                  }
+                  onPress={onOpenComments}
+                  hitSlop={6}
+                  style={({ pressed }) => [
+                    styles.commentChip,
+                    {
+                      backgroundColor: t.colors.bgElevated,
+                      borderColor: t.colors.border,
+                      borderRadius: t.radius.pill,
+                      opacity: pressed ? 0.6 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                    {commentCount > 0 ? `💬 ${commentCount}` : '💬'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {onReactionChange ? (
+                <ReactionChip
+                  reaction={reaction ?? null}
+                  onChange={onReactionChange}
+                  accentColor={dayColor(place.day_index ?? -1)}
+                  size="sm"
+                />
+              ) : null}
+            </View>
           </View>
         </View>
       </Pressable>
@@ -221,6 +282,27 @@ export function PlaceRow({
 
 const styles = StyleSheet.create({
   placeCard: { borderWidth: 1 },
+  // v2 N1 1.2: arrival → departure pill
+  timelineChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginTop: 4,
+  },
+  // v2 N1 1.7: right-side chip rail (comments + reaction)
+  chipRail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  commentChip: {
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minHeight: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {
     width: 44,

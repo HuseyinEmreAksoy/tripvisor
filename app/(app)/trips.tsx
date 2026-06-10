@@ -1,5 +1,14 @@
 /**
- * Trips list screen — desktop layout pass (Phase 20, Step 4).
+ * Trips list screen → HOME surface (v2 Phase N1 step 1.3).
+ *
+ * v2 additions on top of the Phase 20 list:
+ *   - HomeHero band (active tab only): destination imagery, trip-countdown
+ *     chip (nearest future trip), and the primary "✨ Plan my trip with AI"
+ *     CTA → /trip/plan (placeholder now; Wave 3 / N3.5 fills it).
+ *   - Empty state gains a "Try a sample trip" secondary action (step 1.5)
+ *     that seeds a real 2-day Lisbon trip via useSampleTrip.
+ *
+ * Original list behavior below is unchanged:
  *
  * Filter / sort pipeline (applied in order, all client-side):
  *   1. archive filter  — driven by `useTrips({ archived })`, server-side
@@ -53,8 +62,10 @@ import {
   useAllTripLegs,
 } from '@/api';
 import { useTheme } from '@/theme';
+import { HomeHero } from '@/components/home/HomeHero';
 import { BREAKPOINTS, useBreakpoint } from '@/hooks/useBreakpoint';
 import { useEdgeRuntimeHealth } from '@/hooks/useEdgeRuntimeHealth';
+import { useSampleTrip } from '@/hooks/useSampleTrip';
 import { confirmDestructive } from '@/lib/confirm';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
@@ -179,6 +190,17 @@ export default function TripsList() {
   const duplicateMutation = useDuplicateTrip();
   const deleteMutation = useDeleteTrip();
 
+  // ── v2 N1 1.5: onboarding sample trip ──────────────────────────────────────
+  const sampleTrip = useSampleTrip();
+  const handleSampleTrip = async () => {
+    try {
+      const newTripId = await sampleTrip.create();
+      router.push(`/trip/${newTripId}`);
+    } catch {
+      // sampleTrip.error renders inline below the empty-state buttons.
+    }
+  };
+
   const handleDelete = async (id: string) => {
     const confirmed = await confirmDestructive({
       title: 'Delete trip?',
@@ -224,6 +246,30 @@ export default function TripsList() {
   const serverIsEmpty = ownedTrips.length === 0;
   const noResults = !serverIsEmpty && displayedTrips.length === 0;
   const filterActive = dateFilter !== 'all';
+
+  // ── v2 N1 1.5: secondary empty-state action — sample trip ─────────────────
+  // Passed via EmptyState's `action` slot so it renders under the primary CTA
+  // on both the desktop and mobile empty states.
+  const sampleTripAction = (
+    <View style={{ gap: t.spacing.sm, alignItems: 'center' }}>
+      <Button
+        variant="secondary"
+        label="🧳 Try a sample trip"
+        fullWidth={false}
+        loading={sampleTrip.isCreating}
+        onPress={handleSampleTrip}
+        accessibilityLabel="Try a sample trip. Creates a two-day Lisbon example you can edit or delete."
+      />
+      {sampleTrip.error ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
+        >
+          {"Couldn't create the sample trip — please try again."}
+        </Text>
+      ) : null}
+    </View>
+  );
 
   // ── Styles (theme-dependent, recreated inline) ──────────────────────────────
   const s = StyleSheet.create({
@@ -329,6 +375,15 @@ export default function TripsList() {
       {/* ─── Dev-only Edge Functions health banner (Phase 25 Step 25.12) ── */}
       {edgeStatus === 'unreachable' ? (
         <EdgeRuntimeBanner onDismiss={dismissEdgeBanner} />
+      ) : null}
+
+      {/* ─── v2 N1 1.3: Home hero — imagery + AI CTA + trip countdown ──── */}
+      {tab === 'active' ? (
+        <HomeHero
+          trips={trips ?? []}
+          onPlanWithAI={() => router.push('/trip/plan')}
+          onOpenTrip={(id) => router.push(`/trip/${id}`)}
+        />
       ) : null}
 
       {/* ─── Header row: title + analytics + settings links ─────────── */}
@@ -466,6 +521,7 @@ export default function TripsList() {
                   </Text>
                 }
                 onPress={() => router.push('/trip/new')}
+                action={sampleTripAction}
               />
             </View>
           ) : (
@@ -598,6 +654,7 @@ export default function TripsList() {
               </Text>
             }
             onPress={() => router.push('/trip/new')}
+            action={sampleTripAction}
           />
         ) : (
           <EmptyState
