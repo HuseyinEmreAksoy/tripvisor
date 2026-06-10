@@ -26,7 +26,7 @@ maps, and cost model are the things that actually change.
 - Introduce a Legend-State store persisted to expo-sqlite/MMKV as the UI's source of truth.
 - Wrap each existing `src/api/` entity behind the store + Supabase sync plugin **one entity at a time** (trips → places → days → legs → expenses → accommodations → notes → reactions).
 - Keep TanStack Query permanently for ToS-restricted Google/optimizer reads (the two-tier split); remove it only for the durable user tables now owned by Legend-State.
-- Conflict policy: **per-field LWW** on server-stamped `updated_at` + soft-delete `deleted`. **Order columns (`day_index`/`order_in_day`/`trip_legs`) are server-authoritative — NOT client-LWW-synced** (decision C1); client optimistic order is display-only until `optimize-trip` confirms.
+- Conflict policy: **per-field LWW** on server-stamped `updated_at` + soft-delete `deleted`. **Order (C1, refined):** user-intent order = `manual_rank` (client-writable, LWW, offline-safe); optimizer-computed `day_index`/`order_in_day`/`trip_legs` are server-only — reconnect runs optimize-trip's manual branch over `manual_rank`; offline drag is never reverted.
 
 ### 2. Cost model: remove `cost_per_km`
 - Replace every live use first (so the column becomes dead before it's dropped):
@@ -38,7 +38,7 @@ maps, and cost model are the things that actually change.
 - Then a migration drops `trips.cost_per_km` and the type field in `src/api/types.ts`.
 
 ### 3. Navigation/IA: split the god-screen
-- `app/(app)/trip/[id]/index.tsx` (~1000 lines) → route segments/components (map / itinerary / settings / budget / collaborators).
+- `app/(app)/trip/[id]/index.tsx` (**2442 lines**) → route segments/components (map / itinerary / settings / budget / collaborators) — sequenced **before** the Legend-State migration (N1 before S2).
 - Add a Home/Discover surface hosting "Plan my trip".
 - Desktop-aware layouts per key screen.
 

@@ -82,7 +82,7 @@
 1. **EAS native build minutes — the #1 risk.** 30 builds/mo total across iOS+Android; native config changes (expo-sqlite, expo-notifications, SDK bumps, Reanimated v4) **cannot** ship via free OTA. The two-step SDK upgrade + native parity phases are build-heavy. Mitigate: native builds only on tagged releases; OTA for JS-only; run TS/lint/jest/Playwright in GitHub Actions.
 2. **OSRM availability** (see above) — self-host on free compute is fragile; the fallback re-introduces Google billing.
 3. **AI grounding is Google-metered** — itinerary generation bills places-autocomplete + place-details against the $200 credit.
-4. **Supabase 7-day pause + 2-project cap** — pg_cron heartbeat; one prod + one staging only.
+4. **Supabase 7-day pause + 2-project cap** — keep-alive via **GitHub Actions cron pinger** hitting an Edge Function (a pg_cron heartbeat inside the paused database is self-referential and may not count as API activity); one prod + one staging only.
 5. **Supabase egress / Storage** — polyline-heavy `trip_legs` syncing to multiple devices + per-trip PMTiles slices can move real bytes; keep tiles in `expo-file-system`, not Storage.
 6. **LLM free-tier quotas** can shrink (Gemini cut 50–80% Dec 2025) — keep the provider-abstraction layer (swap Gemini↔Groq).
 

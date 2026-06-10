@@ -24,8 +24,8 @@ genuine **offline-first** experience, and **depth** (weather, packing, documents
 | Reuse (the gold) | Rebuild / redesign |
 |---|---|
 | `src/lib/optimizer` — pure k-means + 2-opt | State layer: TanStack Query → **local-first** (Legend-State) |
-| RLS model + `user_can_access_trip()` helper | Offline coverage: 3 entity roots → **all entities + map tiles** |
-| Edge Function proxies (places, routes, optimize-trip) | Navigation/IA: split the ~1000-line `trip/[id]/index.tsx` god-screen |
+| RLS model + `user_can_access_trip()` helper | Offline coverage: 3 entity roots → **all entities** (map tiles deferred — native-first, post-GA) |
+| Edge Function proxies (places, routes, optimize-trip) | Navigation/IA: split the **2442-line** `trip/[id]/index.tsx` god-screen |
 | Supabase schema core (`trips` + child tables) | Cost model: remove `cost_per_km` → category `trip_expenses` + time metrics |
 | Design tokens (`src/theme`) | Charts: hand-rolled SVG → Skia/victory-native (React 19) |
 | Magic-link auth | New AI surfaces + offline sync engine |
@@ -51,7 +51,7 @@ graph TD
   subgraph Client["📱 Expo Universal App — iOS · Android · Web"]
     UI["Screens / Expo Router"]
     Store["Legend-State store<br/>(local-first source of truth)"]
-    DB["expo-sqlite / MMKV<br/>(persisted, offline)"]
+    DB["expo-sqlite<br/>(persisted, offline)"]
     Tiles["MapLibre + Protomaps<br/>(offline .pmtiles)"]
     UI <--> Store
     Store --> DB
@@ -82,7 +82,7 @@ graph TD
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │        EXPO UNIVERSAL APP   (iOS · Android · Web)            │
-│   Screens ⇄ Legend-State store ──► expo-sqlite/MMKV (offline)│
+│   Screens ⇄ Legend-State store ──► expo-sqlite (offline)    │
 │      │            (local-first source of truth)             │
 │      └──► MapLibre + Protomaps tiles (offline .pmtiles)     │
 └───────────────┬──────────────────────────────────────────────┘
@@ -105,22 +105,33 @@ graph TD
 
 ```mermaid
 graph LR
-  P["🗣️ Prompt:<br/>'3 days Lisbon, food + history'"] --> EF["ai-plan Edge Function"]
+  P["🗣️ Prompt:<br/>'3 days Lisbon, food + history'"] --> EF["ai-itinerary Edge Function"]
   EF --> LLM["Gemini (free)<br/>structured JSON"]
   LLM --> D["Draft place NAMES + visit minutes"]
-  D --> GR["Ground each name via<br/>places-autocomplete→place-details<br/>(real google_place_id + lat/lng)"]
+  D --> GR["Ground each name via<br/>places-autocomplete→place-details<br/>(real google_place_id + lat/lng;<br/>partial-grounding UX for misses)"]
   GR --> OPT["Optimizer<br/>day-split + order"]
-  OPT --> T["Trip saved (Supabase + local)"]
+  OPT --> DR["📝 DRAFT review<br/>keep/remove/swap, reassign days<br/>(no trip_places write yet)"]
+  DR -->|"user accepts"| T["Trip saved (Supabase + local)<br/>+ one-tap undo"]
   T --> M["🗺️ Map + itinerary"]
-  M -.->|"NL edit: 'swap museum'"| EF
+  M -.->|"NL edit as a previewable DIFF:<br/>'swap museum' → accept/reject"| EF
 ```
 
-Principle: **the LLM proposes, Google Places grounds, the optimizer disposes.** The LLM returns
-structured place **names** + estimated visit minutes; the server **grounds** each name through the
-existing `places-autocomplete → place-details` chain to obtain a real `google_place_id` + lat/lng
-(**LLM coordinates are never trusted or persisted**); then the existing pure optimizer day-splits and
-orders. Google place data stays **cache-only** per ToS. Note the grounding calls are **Google-metered**
-(see [risks](risks-and-decisions.md)).
+Principle: **the LLM proposes, Google Places grounds, the optimizer disposes — and the user decides.**
+The LLM returns structured place **names** + estimated visit minutes; the server **grounds** each name
+through the existing `places-autocomplete → place-details` chain to obtain a real `google_place_id` +
+lat/lng (**LLM coordinates are never trusted or persisted**); the pure optimizer day-splits and orders;
+the result lands as a **DRAFT** (staged, not written to `trip_places`) that the user reviews —
+keep/remove/swap, reassign days — and commits on accept, with one-tap undo after apply. NL edits are
+**previewable diffs**, never auto-applied. Google place data stays **cache-only** per ToS.
+
+**AI run lifecycle (failure paths are the normal case at free-tier limits):**
+- **Partial grounding** — grounding is location-biased to the destination; unresolvable names return a
+  partial draft with "couldn't find these N places" for user fix-up, never silent drops.
+- **Idempotency** — each run gets an idempotency key stored in `trip_ai_runs`; client retries/timeouts
+  reuse the stored LLM draft instead of double-billing Gemini RPD + Google grounding credit.
+- **Quota** — the C4 per-user quota table doubles as the **usage ledger from day one** (AI runs,
+  grounding calls, routing calls); the quota-exhausted state has defined UX. Grounding calls are
+  **Google-metered** (see [risks](risks-and-decisions.md)) — a 3-day trip ≈ 20–30 metered calls.
 
 ## Sync & conflict model
 
@@ -128,19 +139,23 @@ orders. Google place data stays **cache-only** per ToS. Note the grounding calls
 - **Sync plugin** mirrors local ⇄ Supabase using Supabase Realtime for push and a write-queue for offline mutations.
 - **Two-tier split:** Legend-State owns durable user tables (Tier-1); TanStack Query keeps ToS-restricted Google/optimizer reads memory-only (Tier-2). Tier-1 has its **own write-allowlist + lint guard** so Google-restricted fields can't leak into SQLite — see [ToS condition C3](risks-and-decisions.md).
 - **Conflict policy:** **per-field last-write-wins** on server-stamped `updated_at` + soft-delete `deleted` boolean (via a `handle_times()` trigger). **NOT CRDT** — records are structured and route order is a recompute.
-- **Optimizer authority (C1):** `day_index` / `order_in_day` / `trip_legs` are **server-authoritative** — written only by the `optimize-trip` mutex path, never client-LWW-synced. Client optimistic order is display-only until the server confirms.
+- **Order authority (C1, refined 2026-06-10):** order is **two fields, two owners**. *User-intent order* = **`manual_rank`** (fractional index on `trip_places`) — client-writable, LWW-synced, works offline; v1's manual mode (`apply_manual_day_order` RPC, `route_render_mode='manual'`) already establishes user-owned ordering, so C1-as-originally-written would have outlawed a shipped feature. *Optimizer-computed order* = `day_index` / `order_in_day` / `trip_legs` — **server-computed only** (the `optimize-trip` mutex path, incl. its manual branch recomputing legs from `manual_rank`), never client-LWW-merged. `route_render_mode` picks which renders. **Offline drag** writes `manual_rank`, shows "pending route recompute", and is **never reverted** on reconnect.
 - **Map tiles** (web) for a trip's region are downloadable for offline MapLibre rendering. Google ToS forbids caching Google tiles — offline maps require the MapLibre path, else the map is honestly scoped online-only.
 - **Sync status** is surfaced per entity: *synced / pending / conflict*.
 
 ## Data model additions (on top of the reused schema)
 
-- `trip_documents` (Supabase Storage refs: tickets, reservations, passport scans; RLS via `user_can_access_trip`).
+- **`trip_place_comments`** (id, trip_id, place_id, author_id, body, created_at, deleted; RLS via `user_can_access_trip`) — the core loop's "comments" leg. Append-only per-author rows → conflict-free under LWW by construction; Tier-1-safe (pure user content). *(Panel addition — v1's single shared `notes` field would let collaborators silently overwrite each other under LWW.)*
+- **`trip_days.start_time`** (default 09:00) — feeds the itinerary timeline's computed per-stop arrival/departure (pure client math over `trip_legs`). *(Panel addition — "time-first" finally shows times.)*
+- **`trip_places.manual_rank`** (fractional index) — user-intent order; see the C1 refinement above.
+- **`app_config`** (key/value, read at startup, cached) — runtime kill-switches for the risky cutovers: web map provider, routing provider, sync-engine-per-entity. `EXPO_PUBLIC_*` vars become defaults only — build-time flags can't steer shipped native clients without burning an EAS build.
+- `trip_documents` (Supabase Storage refs: tickets, reservations, passport scans; RLS via `user_can_access_trip`; injection-safe path-prefix → `user_can_access_trip` guard for `storage.objects`).
 - `trip_packing_items` (auto-seeded + user-edited; offline).
-- `trip_meals` (breakfast/lunch/dinner slots linked to places/days).
-- `trip_ai_runs` (audit of AI plan/edit calls — prompt hash, model, tokens; no PII).
-- `trip_places.time_window` / opening-hours awareness fields for the optimizer.
-- Drop `trips.cost_per_km` (after UI migration); keep category `trip_expenses`.
-- All new child tables follow the RLS pattern: SELECT via `user_can_access_trip(...,'viewer')`, write via `...'editor'`.
+- `trip_ai_runs` (audit of AI runs — prompt hash, model, tokens, **idempotency key**; no PII) + the C4 **quota/usage-ledger** table (per-user AI + grounding + routing counters, live from N3).
+- `trip_places.arrive_after` / `leave_before` (user-confirmed time-windows — never auto-filled from Google hours).
+- ~~`trip_meals` table~~ → reduced to a `meal_slot` tag on `trip_places`, post-GA (panel cut: schema overreach).
+- Drop `trips.cost_per_km` (P5, grep-gated); keep category `trip_expenses`.
+- All new child tables follow the RLS pattern: SELECT via `user_can_access_trip(...,'viewer')`, write via `...'editor'` (comments: author-only write).
 
 ## Security & Google ToS posture
 

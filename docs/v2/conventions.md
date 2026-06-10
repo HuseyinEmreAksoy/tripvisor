@@ -45,7 +45,8 @@ docs/v2/                  this blueprint + BUILD-LOG (the step tracker)
 - **No Google HTTP key in the client** — proxy through Edge Functions.
 - **Never persist** Google reviews/photos/ratings/hours/phone/website — only `google_place_id` + lat/lng are durable.
 - **RLS on every trip-scoped table** via `user_can_access_trip()`.
-- **Order columns are server-authoritative** — `day_index`/`order_in_day`/`trip_legs` written only by `optimize-trip`, never client-LWW-synced (decision C1).
+- **Order authority (C1, refined)** — *user-intent order* lives in `trip_places.manual_rank` (client-writable, LWW-synced, offline-safe); *optimizer-computed order* (`day_index`/`order_in_day`/`trip_legs`) is written **only via server paths** (`optimize-trip` incl. its manual branch, `apply_manual_day_order` RPC), never client-LWW-merged. `route_render_mode` picks the renderer.
+- **Edge Function contract versioning** — responses carry `meta.contractVersion`; the fast-iterating `ai-*` functions bump it and clients guard on it; breaking changes get a parallel version, never in-place mutation (OTA'd JS + weeks-old native binaries guarantee skew).
 - **TypeScript strict**; no `any` without a one-line reason.
 - **All three platforms** verified before a feature is "Done".
 
@@ -54,8 +55,8 @@ docs/v2/                  this blueprint + BUILD-LOG (the step tracker)
 - Trips-list sort keys: `recent | az | start_date | duration` (the legacy `cost` key was removed in 0.1; **time-first** wins).
 - Money is **category-based** (`trip_expenses`: estimated vs actual), never per-km.
 
-## Tester note
+## Tester note + CI posture
 
-`test-specialist` is disabled for this build (token-saving). Author tests later by restoring `test-specialist.md.disabled`; until then, TS-compile + manual smoke are the gates. Don't delete existing test files — keep them compiling.
+`test-specialist` is disabled for this build (token-saving). Author tests later by restoring `test-specialist.md.disabled`. **The actual regression net is `.github/workflows/ci.yml`:** Jest is the required check and **must stay green through the SDK upgrade** (bump `jest-expo` in lockstep at each S1 checkpoint); the tsc job is `continue-on-error` today — treat the documented tsc baseline as the gate until it's made required. Per-phase verification gate: tsc baseline-identical · Jest green · scripted web smoke → `docs/smoke/` · Sentry clean · device smoke for native-touching phases. Existing test files must be **passing or explicitly `test.skip`-ed with a tracked reason** — compiling-but-known-red specs poison the smoke signal.
 
 See also: [`architecture.md`](architecture.md) · [`BUILD-LOG.md`](BUILD-LOG.md)

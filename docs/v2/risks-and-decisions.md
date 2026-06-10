@@ -1,6 +1,6 @@
 # Tripvisor v2 — Risks & Resolved Decisions
 
-> **Status:** v2 (2026-06-09). Captures the design critic's **"approve with conditions"** verdict and the resolutions baked into the v2 plan. Read this before committing the plan.
+> **Status:** v2.1 (2026-06-10). Captures the design critic's **"approve with conditions"** verdict, the resolutions baked into the plan, and the **Fable 5-lens panel revision** (C1 refined; D6 resolved → GitHub Actions pinger, since a pg_cron heartbeat can't defeat the pause it is subject to; decisions triaged — D2 + D4 are now-blocking; observability moved from launch to N3 via the quota-as-ledger table).
 
 ## Verdict (critic)
 
@@ -10,7 +10,7 @@
 
 ### C1 — Optimizer authority conflict *(biggest coherence gap)*
 Both the **server** `optimize-trip` Edge Function (row-mutex, migration 0008) and the **client** Legend-State LWW path can write `trip_places.day_index / order_in_day` and `trip_legs`. With LWW on `updated_at`, a stale client optimize could overwrite a fresher server optimize.
-- **Decision:** **order columns (`day_index`, `order_in_day`, `trip_legs`) are SERVER-AUTHORITATIVE and are NOT client-LWW-synced.** Client optimistic order is **display-only** until the server `optimize-trip` confirms. Legend-State syncs user-authored fields (visit minutes, titles, expenses, notes); the optimizer's outputs flow one way: server → client.
+- **Decision (refined 2026-06-10 by the Fable panel):** split *user-intent order* from *optimizer-computed order*. A new **`manual_rank`** (fractional index on `trip_places`) is **client-writable and LWW-synced** — offline drag writes it, survives reconnect, never reverted (v1's `apply_manual_day_order` + `route_render_mode='manual'` already made user order a product feature; the original "server-only order" wording would have outlawed it). `day_index`/`order_in_day`/`trip_legs` remain **server-computed only** (optimize-trip mutex path, whose manual branch recomputes legs *from* `manual_rank`), never client-LWW-merged. `route_render_mode` picks which renders. The core insight stands: **optimizer outputs flow one way, server → client.**
 
 ### C2 — OSRM "free" is a HIGH availability/cost risk *(mislabeled $0)*
 Oracle Cloud Always-Free ARM is hard to obtain and **reclaims idle VMs**; a holiday planner is idle for months. If the VM dies, routing silently falls back to **Google (metered)**.
