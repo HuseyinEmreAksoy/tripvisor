@@ -81,6 +81,12 @@ Realtime co-edit upgrade (presence **dots** + live `postgres_changes` + live com
 | D3 | Native MapLibre deferral | P4/post-GA | recommend: accept deferral |
 | D5 | PostHog opt-in | P3 | can wait |
 
+## Addendum (2026-06-11) — new tracks per user direction
+
+- **T1 Editable timeline** — users edit the schedule directly via **pinned arrival times** (`trip_places.pinned_start`, migration 0025) on top of the already-editable visit durations, day start times, time windows, and move-to-day. Lands in the first UI wave after the visual redesign. Spec: features.md §L5; steps: BUILD-LOG §T1.
+- **M-track Monetization (post-GA)** — decision locked: **subscriptions-first freemium** (RevenueCat free-tier native IAP + Stripe web), the C4 AI quota is the pricing lever, enforcement stays server-side, core loop free forever; ads only as an optional free-tier experiment later. Full plan: [`docs/v2/monetization.md`](docs/v2/monetization.md); phases M1–M3 in BUILD-LOG.
+- **GO-LIVE track** — the $0 cloud deployment runbook (Supabase Cloud free + Cloudflare Pages + auth config + keep-alive + live smoke): [`docs/v2/deployment.md`](docs/v2/deployment.md); steps G1–G5 in BUILD-LOG. Output: a public, shareable web beta URL.
+
 ## Done so far
 
 - ✅ Phase 0 (2026-06-09): `cost_per_km` retired (time-first), env v2 vars, conventions, gold untouched — committed & pushed (`714eea8`, `5411607`, `a990187`).

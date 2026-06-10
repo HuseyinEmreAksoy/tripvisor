@@ -156,6 +156,52 @@ The 2026-06-10 session-limit checkpoint was resolved: Wave 2 work was inspected,
 5. GitHub repo secrets for keep-alive: `SUPABASE_KEEPALIVE_URL`, `SUPABASE_ANON_KEY`; run `keepalive.yml` once via workflow_dispatch.
 6. Web smoke (manual, no key needed for most): Home hero/countdown/CTA → `/trip/plan` form → `ai_misconfigured` banner; timeline chips + day start-time; Ideas section; comments sheet; sample trip; OAuth fallback message. With keys: the full A1 golden path (8 steps listed in the Wave-3 report / `docs/smoke/` to-be).
 
+## 🧪 HOW TO TEST THE USABLE VERSION (verified 2026-06-11 — app boots & renders; screenshots taken)
+The web app runs NOW via `npm run web` → http://localhost:8081 (login renders incl. Google OAuth button + travel hero; desktop + mobile layouts verified live). Sign-in/data need Supabase:
+- **Option A — local (~10 min):** Start Docker Desktop → `npx supabase start` → `npx supabase db reset` (applies all 24 migrations) → restart expo. Magic-link emails land in Mailpit (http://localhost:54324). For AI + place search locally: put `GOOGLE_MAPS_SERVER_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` in `supabase/functions/.env` and run `npx supabase functions serve`.
+- **Option B — cloud (the real beta):** point `.env` at a Supabase cloud project (currently it points at 127.0.0.1:54321!), then run the user-action checklist above (db push 0019–0024 → secrets → deploy 6 functions → dashboard Resend/OAuth). Cloudflare Pages then serves every push to master.
+- **Key requirements honesty:** map RENDERING is keyless now (MapLibre/OpenFreeMap ✓), weather is keyless ✓, but the add-place flow needs `GOOGLE_MAPS_SERVER_KEY` (free credit) and AI needs the free Gemini/Groq keys — without them those surfaces show friendly setup banners.
+- **First-smoke golden path:** sign up → "Try a sample trip" → timeline chips → Plan-my-trip (AI) → draft review → adjust route on map → comments/packing/weather.
+
+## ✅ RUNTIME VERIFICATION (2026-06-11 — user's 503 diagnosed & fixed; every API live-tested)
+**User-reported 503 on places-autocomplete — root causes found & fixed:** (1) the local edge-runtime container was stopped (vector log-shipper crash-loop is benign Docker-on-Windows noise; runtime restarted); (2) the containers predated the new functions → `supabase stop && start` recreated them (volumes preserved); (3) **the v2 migrations 0019–0024 had never been applied locally** (old April volumes — only 18/24) → `npx supabase migration up` applied them non-destructively.
+**Live results (curl, local stack):** all 12 functions ping 200 · `places-autocomplete` returns real Google suggestions ✓ (503 gone) · `weather` returns a real 3-day Izmir forecast ✓ · `ai-edit action:ground` grounded "Kemeraltı Bazaar"/"Konak Pier" to real place IDs + ledger ticked + run audited ✓ (the grounding pipeline works end-to-end) · `ai-itinerary` correctly requires a real user JWT and, keyless, returns the designed `ai_misconfigured` envelope ✓.
+**Remaining for full AI locally:** add `GEMINI_API_KEY` + `GROQ_API_KEY` to `supabase/functions/.env` (free keys) → AI planning/editing goes live. Test user seeded: `smoke-verify@test.local`.
+**Lesson institutionalized:** container/migration drift between sessions is the local-dev failure mode — `npx supabase migration up` + a stack recreate is the standard fix; added to the test instructions above.
+
+## ✅ VISUAL REDESIGN — "Tide & Terracotta" (DONE 2026-06-11; user-authorized full reskin)
+22 files, 665+/473−. New design language: warm paper light / deep ink dark, Aegean-teal accent + terracotta secondary, bolder display typography + overline kickers, pill chips/buttons, borderless radius-18–24 cards with soft layered shadows, image heroes with scrims. Surfaces rebuilt: tokens foundation, Home/trips (hero + countdown + cards), trip detail (header/day groups/place cards/one-chip-language), AI plan flow (staged progress rail), primitives (Button/TextField/SegmentedControl/TabBar/EmptyState/StatusPill/BackButton), auth light-touch. **A11y upgrades**: WCAG AA re-verified both modes; `useReducedMotion` hook added and press/float animations now gate on it (previously unconditional). **Gates:** tsc identical vs pristine-HEAD worktree diff; jest 25/268. **Live-verified with authed screenshots** (Home hero + trip detail with working MapLibre route) — sent to user. Deferred: no real gradients (zero-dep scrims), map DAY_COLORS untouched, secondary surfaces (budget/accommodation/settings sheets) inherit via tokens — polish pass queued.
+
+## 📋 NEW TRACKS (added 2026-06-11 per user direction)
+
+### T1 — Editable timeline (pinned times)  _(next UI wave after the redesign lands — collision: ItineraryTab/PlaceRow)_
+- ☐ T1.1 Migration `0025`: `trip_places.pinned_start time null` (user-authored; COMMENT: ToS-safe, Tier-1-syncable) + allow through `useUpdateTripPlace` _(backend)_
+- ☐ T1.2 `computeDayTimeline`: pins as anchors — cursor jumps to pin; early = wait chip; pin earlier than computed arrival = conflict chip ("tight") _(ui)_
+- ☐ T1.3 Arrival chip → tap → set/clear pinned time (editor-gated); pinned state visually distinct _(ui)_
+- Already shipped & counted toward "users plan their days": visit-duration stepper ✓ · day `start_time` ✓ · time windows ✓ · move-to-day/Ideas promote ✓ · drag reorder ✓
+
+### M-track — Monetization (post-GA; plan: [`monetization.md`](monetization.md))
+- ☐ M1 Entitlements foundation: `user_entitlements` migration + `useEntitlements()` + plan-aware quota constants in ai-* fns + Pro badge/paywall shell (admin-granted Pro for testing)
+- ☐ M2 Payments: RevenueCat (native IAP, pairs with P4/native GA) + Stripe Checkout (web) + 2 webhook Edge Fns + restore-purchases
+- ☐ M3 (optional) Free-tier AdMob experiment: trips-list banner only, consent flow, `app_config` kill-switch, measure before keeping
+- **Decision locked:** subs-first freemium; the AI quota (C4) is the pricing lever; enforcement stays server-side; core loop free forever.
+
+### GO-LIVE — free cloud deployment (runbook: [`deployment.md`](deployment.md))
+- ☐ G1 Supabase Cloud project: link → `db push` (24 migrations; watch 0024 storage NOTICEs) → secrets → deploy all 12 functions → `routing_provider=ors` row
+- ☐ G2 Auth config: Site URL + redirect URLs (login breaks silently without!), Resend SMTP, Google provider
+- ☐ G3 Cloudflare Pages: connect repo, `npx expo export --platform web` → `dist`, EXPO_PUBLIC_* env (cloud URL/anon, maplibre)
+- ☐ G4 Keep-alive repo secrets + one `workflow_dispatch` run; optional Sentry DSN
+- ☐ G5 Post-deploy smoke → `docs/smoke/v2-live.md` (checklist in the runbook) → **public URL shareable**
+
+## 🗺 FURTHER STEPS (planned 2026-06-11)
+1. **You:** pick Option A/B above → first real user smoke of the golden path → report anything broken.
+2. **Bug-fix wave** from your smoke findings + the small **anchors follow-up** (P1.3 wiring gap — 2 backend changes + ~1h UI).
+3. **S1** SDK epic 52→53→54 (⏸ D1 + your devices for checkpoints) → **S2** offline engine (Legend-State, undo stack, manual_rank).
+4. **P3** charts (gifted-charts — unblocked by S1) + analytics MV wiring.
+5. **P4** native parity + push + Sign-in-with-Apple → EAS preview APK on your phone → **NATIVE GA**.
+6. **P5** launch hardening (DROP cost_per_km, quota alerts, final deploy + docs).
+Post-GA backlog unchanged (realtime co-edit, native offline maps, meal slots…).
+
 ### Change history
 - 2026-06-09 — log created; Phase 0.1 started.
 - 2026-06-09 — Phase 0.1 ✅ (cost_per_km retired, time-first; tsc + jest verified).
