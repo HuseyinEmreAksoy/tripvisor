@@ -149,7 +149,7 @@ Realtime co-edit (presence **dots** + live changes + live comments — **no curs
 The 2026-06-10 session-limit checkpoint was resolved: Wave 2 work was inspected, gate-verified, and committed (`cb2e9c4` UI, `6313d2a` backend); Wave 3 (N3.4/3.5) then shipped the real Plan-my-trip flow.
 
 **⚠ USER ACTIONS REQUIRED before the new features run live:**
-1. Apply migrations 0019 + 0020 + 0021 + 0022: `npx supabase db push --linked` (or local `npx supabase db reset`).
+1. Apply ALL pending migrations **0019 → 0026** (incl. the 0026 optimize-mutex fix — optimize is broken on any deployment without it): `npx supabase db push --linked` (or local `npx supabase db reset`).
 2. Set Edge Function secrets: `npx supabase secrets set GEMINI_API_KEY=… GROQ_API_KEY=…` (AI shows a friendly `ai_misconfigured` banner until then). For ORS routing: `npx supabase secrets set ORS_API_KEY=…` (free key at openrouteservice.org) then insert `app_config` row `('routing_provider','ors')` — instant, redeploy-free; kill-switch back = set the row to 'google'.
 3. Deploy the functions: `npx supabase functions deploy ai-itinerary ai-edit distance-matrix directions-polyline optimize-trip weather` (P1/P2 added optimize-trip changes + the new weather fn). **Order: `db push` (0019–0024) BEFORE deploying optimize-trip** (its INSERT now writes `transit_steps`). Watch `db push` for storage-privilege NOTICEs on 0024 (manual Dashboard policy steps if they appear — see `supabase/migrations/README-v2.md`).
 4. Dashboard (manual, see `supabase/migrations/README-v2.md`): Resend SMTP under Auth→SMTP; Google provider under Auth→Providers (OAuth button shows a friendly fallback until configured).
@@ -190,12 +190,12 @@ Hanken Grotesk (non-blocking load, system-stack fallback) · light teal retuned 
 - ☐ M3 (optional) Free-tier AdMob experiment: trips-list banner only, consent flow, `app_config` kill-switch, measure before keeping
 - **Decision locked:** subs-first freemium; the AI quota (C4) is the pricing lever; enforcement stays server-side; core loop free forever.
 
-### GO-LIVE — free cloud deployment (runbook: [`deployment.md`](deployment.md))
-- ☐ G1 Supabase Cloud project: link → `db push` (24 migrations; watch 0024 storage NOTICEs) → secrets → deploy all 12 functions → `routing_provider=ors` row
-- ☐ G2 Auth config: Site URL + redirect URLs (login breaks silently without!), Resend SMTP, Google provider
-- ☐ G3 Cloudflare Pages: connect repo, `npx expo export --platform web` → `dist`, EXPO_PUBLIC_* env (cloud URL/anon, maplibre)
-- ☐ G4 Keep-alive repo secrets + one `workflow_dispatch` run; optional Sentry DSN
-- ☐ G5 Post-deploy smoke → `docs/smoke/v2-live.md` (checklist in the runbook) → **public URL shareable**
+### GO-LIVE — free cloud deployment (runbook: [`deployment.md`](deployment.md)) — EXECUTED 2026-06-11
+- ✅ G1 **Supabase Cloud LIVE**: project `nahywqbrdlkemdtjjxkc` (eu-central-1, org "advisor"); all **26 migrations** pushed (storage policies created clean); secrets set (GOOGLE_MAPS_SERVER_KEY, GEMINI_API_KEY, ALLOWED_ORIGINS incl. the pages domain — **GROQ_API_KEY still absent**); **all 13 functions deployed**. Routing stays Google default (`ORS_API_KEY` never provided — `routing_provider` row deferred until it is). Credentials (access token, db password, smoke-user password) in gitignored `supabase/.env`.
+- ✅ G2a Auth URL config via Management API (site_url=https://tripvisor.pages.dev + allow-list incl. localhost) — 200. **G2b STILL MANUAL (dashboard): Resend SMTP** (built-in sender ≈2–4 emails/hr until then) **+ Google OAuth provider** (button shows fallback).
+- ✅ G3 **Cloudflare Pages**: project `tripvisor` created (wrangler OAuth, user's account); production export built with cloud env baked in; **deployed via direct upload** (34 files) → https://2cb76257.tripvisor.pages.dev / **https://tripvisor.pages.dev** (first-deploy TLS propagation in progress at time of writing; user's earlier 522 proved the domain reachable from their network). Direct-upload mode = future deploys are `npx expo export --platform web && npx wrangler pages deploy dist --project-name tripvisor --branch master` (NOT auto-on-push — git integration can be added later in the dashboard).
+- ⏸ G4 Keep-alive repo secrets — blocked on `gh auth login` (user) or add `SUPABASE_KEEPALIVE_URL=https://nahywqbrdlkemdtjjxkc.supabase.co/rest/v1/` + cloud anon key via the GitHub web UI → run keepalive.yml once.
+- 🟡 G5 Live smoke: cloud smoke user `live-smoke@test.local` seeded (password in supabase/.env); full authed smoke + `docs/smoke/v2-live.md` pending TLS propagation.
 
 ## 🗺 FURTHER STEPS (planned 2026-06-11)
 1. **You:** pick Option A/B above → first real user smoke of the golden path → report anything broken.
