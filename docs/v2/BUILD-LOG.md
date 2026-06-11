@@ -95,10 +95,11 @@
 
 ## SDK-track  ⏸ D1
 
-### S1 — SDK epic 52→53→54 (one epic, two checkpoints; PURE upgrade — no feature work)
-- ☐ S1.1 Checkpoint A: Expo 53 / RN 0.79 / React 19; Reanimated stays v3; `expo-doctor` + tsc + **Jest green (jest-expo bumped)**; device smoke (maps, drag, nav)
-- ☐ S1.2 Checkpoint B: Expo 54 / RN 0.81 / React 19.1; New Arch; Reanimated v4 + `react-native-worklets` (no double babel plugin); `react-native-maps` pinned 1.21+ — **Android marker check on real device**; drag re-smoked
-- ☐ S1.3 EAS budget: Android validates free via local `expo run:android`; reserve EAS builds for iOS checkpoints
+### ✅ S1 — SDK epic 52→53→54  (CODE-COMPLETE 2026-06-11, commits `7cacb56` A + `4ceae19` B; ⏸ DEVICE SMOKE OWED — D1 approved by user)
+- ✅ S1.1 **Checkpoint A**: Expo 53.0.27 / RN 0.79.6 / React 19 / expo-router v5 / TS 5.8; reanimated stayed v3; 4 mechanical fixes (expo-image placeholder→bg, RN0.79 aria props, TanStack functional updaters, expo-asset dep). Gates: expo-doctor **18/18**, tsc 0 new, jest 25/268, web export clean.
+- ✅ S1.2 **Checkpoint B**: Expo 54.0.35 / RN 0.81.5 / React 19.1 / **Reanimated 4.1.7 + worklets 0.5.1** (babel: explicit plugin REMOVED — preset auto-registers worklets; double-registration defused with source evidence) / **maps forced ^1.21→1.27.2** (+ expo.install.exclude) / sentry 7 / **expo-router v6** (came with 54, contrary to pre-research — runtime nav on the smoke list) / expo-file-system v19 → 2 legacy-shim call sites. draggable-flatlist on Reanimated 4 = compatible-by-evidence (symbols verified), device = true verdict. Gates: doctor 18/18, tsc byte-identical (1195), jest 25/268, export clean.
+- ⏸ S1.3 **USER DEVICE SMOKE (mandatory before native GA; NEW dev-client build required — old one will crash):** ① Android map markers (the ^1.21 reason) ② iOS map ③ drag-reorder (Reanimated-4 risk) ④ Hanken Grotesk loads ⑤ OAuth round-trip ⑥ expo-router v6 nav incl. share/invite cold-start deep links ⑦ sheets/animations (new engine) ⑧ ICS/account-export share sheets ⑨ Sentry 7 init. Android free via local `expo run:android`; reserve EAS for iOS.
+- **Unblocked by S1:** P3 charts (gifted-charts needs React 19 ✓) + the victory-class ecosystem generally.
 
 ### S2 — Offline engine (old Phases 4+5 merged; staged)
 - ☐ S2.1 Migration: `created_at/updated_at/deleted` + `handle_times()` on all synced roots; **`manual_rank`** (fractional index, client-writable, LWW) on `trip_places` — C1-refined: user-intent order syncs, `day_index`/`order_in_day`/`trip_legs` stay server-computed; `route_render_mode` picks renderer
@@ -123,9 +124,9 @@
 - ✅ P2.2 Packing: migration **0024** `trip_packing_items` + hooks (bulk create, optimistic toggle); pure `packingSeed.ts` (≤30 items, season buckets, rain gear when rainy — northern-hemisphere simplification documented); new `/trip/[id]/packing` route (grouped checklist, "N of M packed", suggest-dedupe, role-gated); SettingsTab entry.
 - ✅ P2.3 Documents: `trip-docs` private bucket + **injection-safe path-parse RLS** (uuid validated before cast, fails closed; INSERT policy pins `storage_path_trip_id(path)=trip_id`); `trip_documents` metadata + hooks (object-first/row-second upload protocol, 60s signed URLs as MUTATION); SettingsTab section — view on all 3 platforms, **upload web-only** (native picker = forbidden new dep; muted note), 10MB pre-check, editor-gated delete.
 
-### P3 — Charts + analytics  (needs S1, N2)
-- ☐ P3.1 gifted-charts (+ `react-gifted-charts` web) across analytics + budget
-- ☐ P3.2 Wire the N2 analytics MV (server-side aggregation; cap properly dead) + live same-day fallback
+### ✅ P3 — Charts + analytics  (DONE 2026-06-11; gates: tsc 1195 baseline-exact, jest 25/268, web export clean)
+- ✅ P3.1 **gifted-charts** wrappers replace the hand-rolled SVG (Bar/Pie/Line; prop contracts byte-preserved + additive `grouped` for liked/disliked pairs; tokens-themed; `useReducedMotion`-gated animation; a11y data summaries). **Web verdict: PASS, single shared impl** — gifted's gradient dep is optional-peer and falls through to our existing expo-linear-gradient... (verified in the exported bundle; `react-native-linear-gradient` NOT added; gradients unused anyway). Fallback documented: resurrect old SVG as `.web.tsx` from git history if live smoke shows blanks.
+- ✅ P3.2 **MV-first analytics** via new `src/api/trip-stats.ts` (`get_my_trip_stats` reader; [] on missing RPC): per-trip aggregates from the nightly MV, live client aggregation as fallback for MV-absent trips; category pie + place catalogs stay always-live (MV has no categories/names); "Aggregates refresh nightly." footnote when MV contributed. The v1 10-trip cap is now properly dead at any scale.
 
 ### P4 — Native parity + push  (needs S1, S2)
 - ☐ P4.1 iOS + Android EAS builds + native smoke checklist (close v1's zero-native debt)
