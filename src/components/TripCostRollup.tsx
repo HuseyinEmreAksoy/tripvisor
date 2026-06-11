@@ -32,17 +32,23 @@ export function TripCostRollup({ legs }: TripCostRollupProps) {
   const t = useTheme();
 
   const totals = useMemo(() => {
-    if (legs.length === 0) return null;
-    const totalMeters = legs.reduce((s, l) => s + l.distance_meters, 0);
-    const totalSeconds = legs.reduce((s, l) => s + l.duration_seconds, 0);
-    return { totalMeters, totalSeconds, totalKm: totalMeters / 1000 };
+    // Fix (2026-06-11): trip_legs also stores the optimizer's pairwise
+    // distance-matrix CACHE rows (day_index = -1, no polyline) — only rows
+    // assigned to a day are real route hops. Summing everything inflated
+    // the total massively on larger trips (a 14-place trip carries 182
+    // cache rows); latent since v1 because small trips masked it.
+    const routeLegs = legs.filter((l) => l.day_index >= 0);
+    if (routeLegs.length === 0) return null;
+    const totalMeters = routeLegs.reduce((s, l) => s + l.distance_meters, 0);
+    const totalSeconds = routeLegs.reduce((s, l) => s + l.duration_seconds, 0);
+    return { totalMeters, totalSeconds, totalKm: totalMeters / 1000, count: routeLegs.length };
   }, [legs]);
 
   const formattedDuration = totals ? humanizeDuration(totals.totalSeconds) : '—';
   const formattedDistance = totals ? `${totals.totalKm.toFixed(0)} km` : '—';
-  const formattedLegs = totals ? `${legs.length}` : '—';
+  const formattedLegs = totals ? `${totals.count}` : '—';
 
-  const isEmpty = legs.length === 0;
+  const isEmpty = totals === null;
 
   return (
     <View

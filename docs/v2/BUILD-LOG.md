@@ -206,6 +206,16 @@ Hanken Grotesk (non-blocking load, system-stack fallback) · light teal retuned 
 6. **P5** launch hardening (DROP cost_per_km, quota alerts, final deploy + docs).
 Post-GA backlog unchanged (realtime co-edit, native offline maps, meal slots…).
 
+## ✅ FIRST REAL AI GOLDEN-PATH RUN (2026-06-11 — "test AI" with the user's Gemini key)
+**The flagship works end-to-end:** prompt → Gemini 2.5-flash → grounding → draft review (partial-grounding card live: "couldn't find Karşıyaka Kordon") → accept → trip created → **optimizer + real routes on the map**. Idempotent replay + quota ledger verified (2/10 runs). Transient Gemini free-tier 503 ("high demand") observed → retry succeeded; **Groq fallback key still recommended** for exactly this.
+**Quality verdict:** Days 1–2 genuinely good (walkable Konak clustering, sane durations); weakness = grounding ambiguous LLM names to wrong businesses ("Kordon" → a kumru shop; one pick grounded to a muhtarlık office) → prompt/grounding tuning queued (prefer well-known named attractions; bias harder).
+**THREE latent bugs caught & fixed (none findable by green suites):**
+1. **Optimize mutex blocked since Phase 22** — `claim_trip_optimize` (service-role) hit the editor-restriction trigger (`auth.uid()` NULL → not owner → optimizing_at denied). Fix: **migration 0026** service-role bypass (post-RLS NULL uid = our own server). Optimize was last smoke-verified Phase 20 — predates the trigger.
+2. **Matrix call shape broken for >5 places since Phase 2** — optimize-trip sent one origin/destination PER missing pair (14 places → 182 entries) into the 25-cap endpoint. Fix: send unique places once (N×N cross product, ≤25 by the existing guard) + pair-filter the response. Every v1 smoke used ≤5 places.
+3. **Drive-time card inflated** — it summed ALL trip_legs incl. the day_index=-1 pairwise cache rows (14-place trip: 173h shown). Fix: filter to day legs (now 19h 3m / 9 legs, correct).
+Gates after fixes: deno optimize-trip 11/11, jest 25/268, live re-optimize of the 14-place trip succeeded with routes rendered.
+**Ops note #2:** local edge runtime bakes `supabase/functions/.env` at container CREATE — adding keys needs `npx supabase stop && start`, not `docker restart`.
+
 ### Change history
 - 2026-06-09 — log created; Phase 0.1 started.
 - 2026-06-09 — Phase 0.1 ✅ (cost_per_km retired, time-first; tsc + jest verified).

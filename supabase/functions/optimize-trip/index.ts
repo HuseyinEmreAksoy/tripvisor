@@ -310,11 +310,19 @@ export async function handler(req: Request): Promise<Response> {
     }> = [];
 
     if (!cacheHit) {
-      const origins = missing.map((m) => ({ lat: m.from.lat, lng: m.from.lng }));
-      const destinations = missing.map((m) => ({ lat: m.to.lat, lng: m.to.lng }));
+      // Fix (2026-06-11, caught by the first real 14-place trip): send each
+      // UNIQUE place once as both origin and destination. distance-matrix
+      // computes the full N×M cross product, so the previous pair-expanded
+      // arrays (one origin/destination entry PER missing pair) both blew the
+      // endpoint's 25-coordinate cap whenever uncached pairs > 25 — i.e.
+      // ANY trip with more than 5 places (latent since Phase 2; every v1
+      // smoke used ≤5 places) — and requested a quadratically redundant
+      // matrix. `places` is already capped at MAX 25 by the too_many_places
+      // guard, which is exactly the matrix endpoint's per-side limit.
+      const coords = places.map((p) => ({ lat: p.lat, lng: p.lng }));
       const matrixRes = await callEdge('distance-matrix', {
-        origins,
-        destinations,
+        origins: coords,
+        destinations: coords,
         mode: trip.transport_mode,
       });
       if (!matrixRes.ok) {
@@ -323,10 +331,14 @@ export async function handler(req: Request): Promise<Response> {
       const matrix = matrixRes.body as {
         legs: Array<{ fromIndex: number; toIndex: number; durationSeconds: number; distanceMeters: number }>;
       };
+      const missingPairs = new Set(missing.map((m) => `${m.from.id}__${m.to.id}`));
       for (const el of matrix.legs) {
-        const fromPlace = missing[el.fromIndex]?.from;
-        const toPlace = missing[el.toIndex]?.to;
+        const fromPlace = places[el.fromIndex];
+        const toPlace = places[el.toIndex];
         if (!fromPlace || !toPlace) continue;
+        if (fromPlace.id === toPlace.id) continue; // diagonal — zero-length hop
+        // Cached pairs stay cached; only the ones we actually needed are fresh.
+        if (!missingPairs.has(`${fromPlace.id}__${toPlace.id}`)) continue;
         freshLegs.push({
           fromId: fromPlace.id,
           toId: toPlace.id,
