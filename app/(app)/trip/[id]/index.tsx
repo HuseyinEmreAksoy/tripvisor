@@ -75,6 +75,17 @@ export default function TripDetail() {
 
   // Auto-optimize (debounced 500ms) when places or trip settings change meaningfully.
   // Includes visit_duration_minutes so duration edits trigger re-split.
+  //
+  // Bug fix (2026-06-11, user report): in "My order" mode the map's polylines
+  // (trip_legs) must follow the user's arrangement, so two things change:
+  //  1. `layout` joins the key ONLY in manual mode — a drag/move-to-day now
+  //     re-triggers the recompute (entries encode day+position, so the
+  //     sorted set still changes whenever the arrangement does). In
+  //     optimized mode the key stays order-insensitive: the optimizer owns
+  //     the layout there, and re-keying on it would loop after every run.
+  //  2. `mode` is passed through to the Edge Function — previously omitted,
+  //     which defaulted every auto-run to the 'optimized' branch and could
+  //     silently re-cluster a manually arranged trip after a duration edit.
   const stateKey = useMemo(
     () =>
       JSON.stringify({
@@ -83,16 +94,23 @@ export default function TripDetail() {
           .sort(),
         budget: trip?.daily_hours_budget,
         mode: trip?.transport_mode,
+        layout:
+          trip?.route_render_mode === 'manual'
+            ? places
+                .map((p) => `${p.id}:${p.day_index ?? 'x'}:${p.order_in_day ?? 'x'}`)
+                .sort()
+            : null,
       }),
-    [places, trip?.daily_hours_budget, trip?.transport_mode],
+    [places, trip?.daily_hours_budget, trip?.transport_mode, trip?.route_render_mode],
   );
   const lastOptimizedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!id || places.length < 2 || !trip) return;
     if (lastOptimizedRef.current === stateKey) return;
+    const renderMode = trip.route_render_mode ?? 'optimized';
     const timer = setTimeout(() => {
       lastOptimizedRef.current = stateKey;
-      optimizeMutate({ tripId: id });
+      optimizeMutate({ tripId: id, mode: renderMode });
     }, 500);
     return () => clearTimeout(timer);
   }, [id, stateKey, places.length, trip, optimizeMutate]);
