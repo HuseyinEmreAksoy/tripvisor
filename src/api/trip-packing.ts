@@ -41,6 +41,12 @@ export interface TripPackingItem {
   checked: boolean;
   /** true = seeded by the packing template; false = user-added. */
   auto: boolean;
+  /**
+   * v2 S2.1 (migration 0027): soft-delete tombstone for the offline sync
+   * engine — supersedes the "hard delete until S2" stance in 0024. Optional:
+   * nothing writes `true` until S2 Wave 2 enables Tier-1 writes.
+   */
+  deleted?: boolean;
   created_at: string;
   updated_at: string;
 }

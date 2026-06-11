@@ -157,6 +157,20 @@ export interface TripPlace {
    * Google data). Display-layer anchor; the optimizer ignores it.
    */
   pinned_start: string | null;
+  /**
+   * v2 S2.1 (migration 0027, C1 refinement): USER-intent order as a
+   * fractional-index key (lexicographic text, e.g. 'a0' < 'a0V' < 'a1').
+   * Client-writable + LWW-synced + offline-safe; the optimizer NEVER writes
+   * it (optimizer-computed order stays in `day_index`/`order_in_day`).
+   * Optional: pre-S2 read paths don't select it. NULL = never hand-ordered.
+   */
+  manual_rank?: string | null;
+  /**
+   * v2 S2.1 (migration 0027): soft-delete tombstone for the offline sync
+   * engine. Optional: nothing writes `true` until S2 Wave 2 enables Tier-1
+   * writes; from then on reads must filter it.
+   */
+  deleted?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -178,6 +192,16 @@ export interface TripDay {
    * trip_legs).
    */
   start_time?: string | null;
+  /**
+   * v2 S2.1 (migration 0027): trip_days had NO timestamps until 0027 added
+   * them for the sync engine (`updated_at` is the LWW conflict clock,
+   * server-stamped by `handle_times()`). Optional: pre-S2 read paths don't
+   * select them; pre-0027 rows were backfilled with the migration time.
+   */
+  created_at?: string;
+  updated_at?: string;
+  /** v2 S2.1 (migration 0027): soft-delete tombstone — see {@link TripPlace.deleted}. */
+  deleted?: boolean;
 }
 
 /**
@@ -211,6 +235,8 @@ export interface TripExpense {
   day_index: number | null;
   /** Free-text label for the line item (e.g. "Hotel night 2"). NOT a place reference. */
   label: string | null;
+  /** v2 S2.1 (migration 0027): soft-delete tombstone — see {@link TripPlace.deleted}. */
+  deleted?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -243,6 +269,8 @@ export interface TripAccommodation {
   check_in_date: string;
   check_out_date: string;
   notes: string | null;
+  /** v2 S2.1 (migration 0027): soft-delete tombstone — see {@link TripPlace.deleted}. */
+  deleted?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -439,6 +467,13 @@ export interface TripPlaceReaction {
   trip_place_id: Uuid;
   user_id: Uuid;
   reaction: TripPlaceReactionType;
+  /**
+   * v2 S2.1 (migration 0027): soft-delete tombstone. Wave 2 note: the v1
+   * "clear reaction" path hard-DELETEs the row — it must become
+   * `set deleted = true` once Tier-1 writes are enabled (incremental
+   * `updated_at > last-sync` pulls cannot observe hard DELETEs).
+   */
+  deleted?: boolean;
   created_at: string;
   updated_at: string;
 }

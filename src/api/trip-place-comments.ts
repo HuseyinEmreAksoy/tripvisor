@@ -52,7 +52,15 @@ export interface TripPlaceComment {
   author_id: Uuid;
   body: string;
   created_at: string;
-  /** Null until first edit; the set_updated_at trigger stamps it on UPDATE. */
+  /**
+   * v2 S2.1 (migration 0027): NOT NULL server-side since 0027 — the
+   * `handle_times()` trigger stamps it on INSERT and UPDATE because it is
+   * the sync engine's LWW conflict clock (a NULL would hide the row from
+   * incremental `updated_at > last-sync` pulls; 0019's NULL-until-edited
+   * rows were backfilled to `created_at`). The TS type stays nullable so
+   * pre-0027 rows cached on devices still parse; an "edited" indicator, if
+   * ever rendered, is `updated_at > created_at` (not `!= null`).
+   */
   updated_at: string | null;
   /** Soft-delete tombstone. Reads in this module always exclude `deleted = true`. */
   deleted: boolean;
