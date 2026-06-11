@@ -103,6 +103,10 @@ const updateTripPlaceSchema = z.object({
   // surfaces through the mutation's onError instead.
   arrive_after: timeOfDaySchema.nullish(),
   leave_before: timeOfDaySchema.nullish(),
+  // T1 (migration 0025): user-pinned arrival. Same semantics as the window
+  // bounds: omitted = untouched, explicit null = clear the pin. Same ToS
+  // invariant — user input only, never derived from Google data.
+  pinned_start: timeOfDaySchema.nullish(),
 });
 
 type UpdateTripPlaceInput = z.infer<typeof updateTripPlaceSchema>;

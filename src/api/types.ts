@@ -148,6 +148,15 @@ export interface TripPlace {
    * auto-filled from Google opening hours.
    */
   leave_before: string | null;
+  /**
+   * T1 editable timeline (migration 0025): user-pinned arrival time for this
+   * stop (`'HH:MM:SS'`). NULL = arrival is computed from the day flow. The
+   * timeline cursor jumps to a reachable pin; an unreachable pin renders the
+   * non-blocking 'pinned_tight' warning chip. USER-AUTHORED ONLY — same ToS
+   * invariant as {@link TripPlace.arrive_after} (never auto-filled from
+   * Google data). Display-layer anchor; the optimizer ignores it.
+   */
+  pinned_start: string | null;
   created_at: string;
   updated_at: string;
 }

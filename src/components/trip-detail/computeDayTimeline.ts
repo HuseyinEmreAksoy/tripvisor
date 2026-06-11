@@ -57,10 +57,20 @@ export interface TimelinePlaceInput {
    */
   arrive_after?: string | null;
   leave_before?: string | null;
+  /**
+   * T1 editable timeline (migration 0025): user-pinned arrival time, same
+   * wire shape. The cursor JUMPS to the pin when it's reachable; an
+   * unreachable pin (computed arrival already past it) flags
+   * `conflict: 'pinned_tight'` without rewinding time.
+   */
+  pinned_start?: string | null;
 }
 
-/** v2 P1.1b: why a stop violates its user-set time window. */
-export type TimelineConflict = 'arrives_late' | 'overruns';
+/**
+ * Why a stop's schedule is in tension: a user-set window violation
+ * (v2 P1.1b) or an unreachable user-pinned arrival (T1).
+ */
+export type TimelineConflict = 'arrives_late' | 'overruns' | 'pinned_tight';
 
 /** Minimal shape needed from a TripLeg. */
 export interface TimelineLegInput {
@@ -101,6 +111,12 @@ export interface TimelineStop {
    * place has no leave_before window.
    */
   windowEndMinutes: number | null;
+  /**
+   * T1: parsed `pinned_start` (minutes since midnight). Non-null whenever the
+   * user pinned this stop — the UI renders the arrival as a pinned chip, and
+   * `conflict === 'pinned_tight'` means the day flow can't reach the pin.
+   */
+  pinnedStartMinutes: number | null;
 }
 
 /**
@@ -202,12 +218,27 @@ export function computeDayTimeline(input: {
       }
     }
 
+    // ── T1: user-pinned arrival ("be here at 14:00") ─────────────────────
+    // Applied before the window overlay — the pin is the user's explicit
+    // schedule. Reachable pin = the cursor jumps forward to it (downstream
+    // stops shift through the gap). Unreachable pin (flow already past it)
+    // keeps the computed arrival and flags 'pinned_tight' — time is never
+    // rewound, warnings never block (ux-principles).
+    const pinnedStart = parseTimeOfDay(place.pinned_start);
+    let pinnedTight = false;
+    if (pinnedStart !== null) {
+      if (cursor <= pinnedStart) cursor = pinnedStart;
+      else pinnedTight = true;
+    }
+
     // ── v2 P1.1b: user-set time window overlay ───────────────────────────
     const arriveAfter = parseTimeOfDay(place.arrive_after);
     const leaveBefore = parseTimeOfDay(place.leave_before);
 
     // Wait: arriving before the window opens pushes the effective arrival
     // to the window start; downstream stops shift via the advanced cursor.
+    // (A pin that already advanced the cursor past the window start simply
+    // produces no wait.)
     let waitUntilMinutes: number | null = null;
     if (arriveAfter !== null && cursor < arriveAfter) {
       waitUntilMinutes = arriveAfter;
@@ -220,11 +251,14 @@ export function computeDayTimeline(input: {
     );
 
     // Conflict: warning-only, nothing clamped (user can always ignore).
+    // Window violations outrank the pin message — they mean the place may
+    // literally be closed; the pin tension is schedule-internal.
     let conflict: TimelineConflict | null = null;
     if (leaveBefore !== null) {
       if (arrivalMinutes > leaveBefore) conflict = 'arrives_late';
       else if (departureMinutes > leaveBefore) conflict = 'overruns';
     }
+    if (conflict === null && pinnedTight) conflict = 'pinned_tight';
 
     stops.set(place.id, {
       placeId: place.id,
@@ -234,6 +268,7 @@ export function computeDayTimeline(input: {
       waitUntilMinutes,
       conflict,
       windowEndMinutes: leaveBefore,
+      pinnedStartMinutes: pinnedStart,
     });
     cursor = departureMinutes;
     previousId = place.id;

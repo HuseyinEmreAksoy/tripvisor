@@ -174,11 +174,15 @@ The web app runs NOW via `npm run web` → http://localhost:8081 (login renders 
 
 ## 📋 NEW TRACKS (added 2026-06-11 per user direction)
 
-### T1 — Editable timeline (pinned times)  _(next UI wave after the redesign lands — collision: ItineraryTab/PlaceRow)_
-- ☐ T1.1 Migration `0025`: `trip_places.pinned_start time null` (user-authored; COMMENT: ToS-safe, Tier-1-syncable) + allow through `useUpdateTripPlace` _(backend)_
-- ☐ T1.2 `computeDayTimeline`: pins as anchors — cursor jumps to pin; early = wait chip; pin earlier than computed arrival = conflict chip ("tight") _(ui)_
-- ☐ T1.3 Arrival chip → tap → set/clear pinned time (editor-gated); pinned state visually distinct _(ui)_
+### ✅ T1 — Editable timeline (pinned times)  (DONE 2026-06-11; gates: jest 25/268, tsc baseline-clean; migration applied locally)
+- ✅ T1.1 Migration `0025` (`pinned_start time null`, ToS comment) + `types.ts` + `useUpdateTripPlace` schema (omit=untouched, null=unpin).
+- ✅ T1.2 `computeDayTimeline`: pin applied before the window overlay — reachable pin = cursor jumps (downstream shifts); unreachable = `'pinned_tight'` conflict ("arrives 14:20 — pinned 14:00"), time never rewound; window conflicts outrank the pin message.
+- ✅ T1.3 **Editor lives in PlaceActionsSheet** (`PinnedTimeEditor`, mirrors TimeWindowEditor: one HH:MM field, clear=unpin, friendly copy); the arrival chip renders pinned state (pin glyph + primary outline) with a11y "Arrival pinned to 14:00". *(Scope note: chip is indicator, not tap-target — the actions sheet is the established editing surface; direct chip-tap editing deferred.)*
 - Already shipped & counted toward "users plan their days": visit-duration stepper ✓ · day `start_time` ✓ · time windows ✓ · move-to-day/Ideas promote ✓ · drag reorder ✓
+
+### ✅ DESIGN SYSTEM v3 IMPLEMENTED  (2026-06-11, commit `87fdeb1` — from the user's Claude Design handoff bundle)
+Hanken Grotesk (non-blocking load, system-stack fallback) · light teal retuned to `#0C8578` family + strengthened wash · hybrid **Lucide Icon system** (`src/components/Icon.tsx`, 1.75 stroke; emoji stays expressive) replacing functional glyphs in BackButton/PlaceRow comments/SettingsTab/PlaceActionsSheet · jest: lucide transform + expo-font mock. **Remaining icon spots** (tab glyphs, transport picker, tool chips, trips-header controls) → next UI wave. Live-verified with screenshots.
+**Ops note (the user's 503/refresh report):** Docker-on-Windows **port-proxy desync** — containers healthy but no host listener on 54321/54322 after a Docker restart; fix = `docker restart supabase_kong_Tripvisor` (and `…_db_…` for 54322). Recorded because it WILL recur.
 
 ### M-track — Monetization (post-GA; plan: [`monetization.md`](monetization.md))
 - ☐ M1 Entitlements foundation: `user_entitlements` migration + `useEntitlements()` + plan-aware quota constants in ai-* fns + Pro badge/paywall shell (admin-granted Pro for testing)

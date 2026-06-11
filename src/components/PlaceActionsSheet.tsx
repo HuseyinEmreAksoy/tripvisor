@@ -69,6 +69,9 @@ export function PlaceActionsSheet({
         {/* v2 P1.1a: user-set time window. Keyed by place id so drafts reset
             when the sheet is reused for a different place. */}
         <TimeWindowEditor key={place.id} place={place} />
+        {/* T1: pinned arrival ("be here at 14:00") — keyed like the window
+            editor so switching places reseeds the draft. */}
+        <PinnedTimeEditor key={`pin-${place.id}`} place={place} />
 
         <Button
           variant="danger"
@@ -338,6 +341,130 @@ function TimeWindowEditor({ place }: { place: TripPlace }) {
           <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
             Tip: check opening hours on the place's detail page — you choose the
             window yourself; it's never filled in automatically.
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ── PinnedTimeEditor (T1 editable timeline, migration 0025) ──────────────────
+// One pinned clock time: "be here at 14:00". The day timeline jumps to a
+// reachable pin (gap before it just becomes free time); an unreachable pin
+// renders the non-blocking 'pinned_tight' chip. Mirrors TimeWindowEditor's
+// expander + draft + save shape, sharing its field/validation helpers.
+
+function PinnedTimeEditor({ place }: { place: TripPlace }) {
+  const t = useTheme();
+  const updatePlace = useUpdateTripPlace();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => timeWindowLabel(place.pinned_start) ?? '');
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const currentLabel = timeWindowLabel(place.pinned_start);
+  const summary = currentLabel
+    ? `Pinned to ${currentLabel}`
+    : 'Not pinned — arrival is computed';
+
+  function save() {
+    const value = draft.trim();
+    if (!isValidDraft(value)) {
+      setFieldError('Use 24h HH:MM, e.g. 14:00 — or clear the field to unpin.');
+      return;
+    }
+    setFieldError(null);
+    setSaved(false);
+    updatePlace.mutate(
+      {
+        id: place.id,
+        trip_id: place.trip_id,
+        pinned_start: value === '' ? null : value, // 'HH:MM' or null unpins
+      },
+      { onSuccess: () => setSaved(true) },
+    );
+  }
+
+  const saveError = updatePlace.isError
+    ? "Couldn't save the pinned time — check your connection and try again."
+    : null;
+
+  return (
+    <View style={{ gap: t.spacing.sm }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Pinned arrival time. Currently: ${summary}. ${open ? 'Collapse' : 'Expand to edit'}.`}
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((v) => !v)}
+        style={[
+          styles.expander,
+          {
+            backgroundColor: t.colors.bgElevated,
+            borderColor: t.colors.border,
+            borderRadius: t.radius.md,
+            padding: t.spacing.md,
+          },
+        ]}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Icon name="pin" size={18} color={t.colors.primary} />
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>Pinned arrival</Text>
+        </View>
+        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{summary}</Text>
+      </Pressable>
+
+      {open ? (
+        <View style={{ gap: t.spacing.sm }}>
+          <TimeWindowField
+            label="Be here at"
+            placeholder="e.g. 14:00"
+            value={draft}
+            onChange={(text) => {
+              setDraft(text);
+              setFieldError(null);
+              setSaved(false);
+            }}
+            onClear={() => {
+              setDraft('');
+              setFieldError(null);
+              setSaved(false);
+            }}
+          />
+
+          {fieldError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[t.typography.small, { color: t.colors.danger }]}
+            >
+              {fieldError}
+            </Text>
+          ) : null}
+          {saveError && !fieldError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[t.typography.small, { color: t.colors.danger }]}
+            >
+              {saveError}
+            </Text>
+          ) : null}
+          {saved && !updatePlace.isPending && !fieldError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[t.typography.small, { color: t.colors.textMuted }]}
+            >
+              Pinned time saved.
+            </Text>
+          ) : null}
+
+          <Button
+            label={updatePlace.isPending ? 'Saving…' : 'Save pin'}
+            loading={updatePlace.isPending}
+            onPress={save}
+          />
+
+          <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+            The day flows around your pin — earlier stops keep their times, and
+            this is just a heads-up if the plan can't reach it in time.
           </Text>
         </View>
       ) : null}

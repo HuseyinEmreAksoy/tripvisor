@@ -90,6 +90,11 @@ export interface PlaceRowProps {
     departure: string;
     waitUntil?: string | null;
     warning?: string | null;
+    /**
+     * T1: non-null when the user pinned this stop's arrival ("14:00") — the
+     * arrival chip renders in its pinned styling (primary tint + pin glyph).
+     */
+    pinnedAt?: string | null;
   } | null;
   /** v2 N1 1.7: comment count for the badge (0 shows the bare 💬 affordance). */
   commentCount?: number;
@@ -227,11 +232,25 @@ export function PlaceRow({
                         {
                           backgroundColor: t.colors.gradientSubtle,
                           borderRadius: t.radius.pill,
+                          // T1: pinned arrivals read as deliberate — a quiet
+                          // primary outline distinguishes them from computed.
+                          borderWidth: timeline.pinnedAt ? 1 : 0,
+                          borderColor: timeline.pinnedAt ? t.colors.primary : 'transparent',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
                         },
                       ]}
                       accessible
-                      accessibilityLabel={`Arrives ${timeline.arrival}, departs ${timeline.departure}`}
+                      accessibilityLabel={
+                        timeline.pinnedAt
+                          ? `Arrival pinned to ${timeline.pinnedAt}, departs ${timeline.departure}`
+                          : `Arrives ${timeline.arrival}, departs ${timeline.departure}`
+                      }
                     >
+                      {timeline.pinnedAt ? (
+                        <Icon name="pin" size={11} color={t.colors.primary} />
+                      ) : null}
                       <Text
                         style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}
                       >
