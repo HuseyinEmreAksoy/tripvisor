@@ -1,23 +1,28 @@
 /**
- * BarChart — hand-rolled SVG bar chart using react-native-svg.
+ * BarChart — thin wrapper around react-native-gifted-charts' BarChart.
  *
- * Chart library: react-native-svg (already in deps).
- * Reason: victory-native@41 requires @shopify/react-native-skia which
- * demands React 19; this project uses React 18, making victory-native
- * incompatible. Hand-rolled SVG is adequate for the 4 chart types needed.
+ * v2 Phase P3.1: replaces the hand-rolled react-native-svg implementation
+ * (the v1 workaround for victory-native's React-19 requirement — moot since
+ * S1 upgraded us to React 19). gifted-charts renders through react-native-svg
+ * + plain RN Views, so it works on iOS / Android / Web (RNW) from one file.
+ * Gradients are NOT used: gifted's gradient module optionally resolves
+ * expo-linear-gradient (already a dep) and we never enable `showGradient`.
  *
- * Props:
+ * The exported prop contract is byte-compatible with the v1 component:
  *   - data: Array<{ label: string; value: number; color?: string }>
- *   - width / height: layout dimensions (caller measures via useWindowDimensions)
+ *   - width / height: TOTAL footprint (caller measures via useWindowDimensions)
  *   - yAxisLabel?: suffix for Y axis tick labels (e.g. '€')
  *   - maxBars?: cap the number of bars shown (default 20)
- *
- * Phase 24 Step 24.11 / 24.12.
+ *   - title?: caption above the chart
+ *   - grouped?: NEW (optional, additive) — adjacent bars pair up visually
+ *     (small intra-pair gap, larger inter-pair gap). Used by the analytics
+ *     liked/disliked chart, which flattens two series into alternating bars.
  */
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
+import { BarChart as GiftedBarChart, type barDataItem } from 'react-native-gifted-charts';
 import { useTheme } from '@/theme';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface BarChartDatum {
   label: string;
@@ -32,10 +37,21 @@ interface BarChartProps {
   yAxisLabel?: string;
   maxBars?: number;
   title?: string;
+  grouped?: boolean;
 }
 
-const PADDING = { top: 16, right: 12, bottom: 48, left: 48 };
+// gifted renders the Y-axis label gutter OUTSIDE its `width` prop and the
+// X-axis labels BELOW its `height` prop — budget both so the total footprint
+// stays within the caller's width/height (cards clip on mobile otherwise).
+const Y_AXIS_LABEL_WIDTH = 44;
+const X_LABEL_SPACE = 64; // top headroom + x-axis label rows (old PADDING budget)
 const DEFAULT_HEIGHT = 200;
+
+function compactNumber(label: string): string {
+  const n = Number(label);
+  if (!Number.isFinite(n)) return label;
+  return n > 999 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n));
+}
 
 export function BarChart({
   data,
@@ -44,28 +60,45 @@ export function BarChart({
   yAxisLabel = '',
   maxBars = 20,
   title,
+  grouped = false,
 }: BarChartProps) {
   const t = useTheme();
+  const reducedMotion = useReducedMotion();
 
   const sliced = useMemo(() => data.slice(0, maxBars), [data, maxBars]);
 
-  const chartW = width - PADDING.left - PADDING.right;
-  const chartH = height - PADDING.top - PADDING.bottom;
+  const plotW = Math.max(80, width - Y_AXIS_LABEL_WIDTH);
+  const plotH = Math.max(60, height - X_LABEL_SPACE);
 
-  const maxVal = useMemo(
-    () => Math.max(...sliced.map((d) => d.value), 1),
-    [sliced],
+  // Distribute bars to fill the plot width (no horizontal scrolling).
+  const n = sliced.length;
+  const slot = n > 0 ? plotW / n : 24;
+  const barWidth = Math.max(8, Math.floor(slot) - 6);
+  const gap = Math.max(2, slot - barWidth);
+  // Grouped mode: alternate a tight intra-pair gap with a wide inter-pair gap
+  // so flattened two-series data (👍/👎 per trip) reads as pairs.
+  const intraGap = Math.max(2, Math.min(4, gap / 2));
+  const interGap = Math.max(2, gap * 2 - intraGap);
+
+  const giftedData = useMemo<barDataItem[]>(
+    () =>
+      sliced.map((d, i) => ({
+        value: d.value,
+        label: d.label.length > 10 ? d.label.slice(0, 9) + '…' : d.label,
+        frontColor: d.color ?? t.colors.primary,
+        ...(grouped ? { spacing: i % 2 === 0 ? intraGap : interGap } : {}),
+      })),
+    [sliced, t.colors.primary, grouped, intraGap, interGap],
   );
 
-  const barWidth = sliced.length > 0 ? Math.max(8, chartW / sliced.length - 6) : 24;
-
-  const yTicks = useMemo(() => {
-    const steps = 4;
-    const step = Math.ceil(maxVal / steps / 10) * 10 || 1;
-    return Array.from({ length: steps + 1 }, (_, i) => i * step).filter(
-      (v) => v <= maxVal * 1.05,
-    );
-  }, [maxVal]);
+  // Screen-reader summary — the SVG bars themselves are not readable.
+  const a11ySummary = useMemo(
+    () =>
+      `${title ?? 'Bar chart'}. ${sliced
+        .map((d) => `${d.label}: ${Math.round(d.value)}${yAxisLabel}`)
+        .join(', ')}`,
+    [title, sliced, yAxisLabel],
+  );
 
   if (sliced.length === 0) {
     return (
@@ -78,93 +111,42 @@ export function BarChart({
   }
 
   return (
-    <View>
+    <View accessible accessibilityLabel={a11ySummary}>
       {title ? (
         <Text style={[t.typography.caption, { color: t.colors.textMuted, marginBottom: 4 }]}>
           {title}
         </Text>
       ) : null}
-      <Svg width={width} height={height}>
-        {/* Y axis grid lines */}
-        {yTicks.map((tick) => {
-          const y = PADDING.top + chartH - (tick / maxVal) * chartH;
-          return (
-            <React.Fragment key={`tick-${tick}`}>
-              <Line
-                x1={PADDING.left}
-                y1={y}
-                x2={PADDING.left + chartW}
-                y2={y}
-                stroke={t.colors.border}
-                strokeWidth={1}
-                strokeDasharray="4 3"
-              />
-              <SvgText
-                x={PADDING.left - 4}
-                y={y + 4}
-                fontSize={9}
-                fill={t.colors.textMuted}
-                textAnchor="end"
-              >
-                {tick > 999 ? `${(tick / 1000).toFixed(1)}k` : String(tick)}
-                {yAxisLabel}
-              </SvgText>
-            </React.Fragment>
-          );
-        })}
-
-        {/* Bars */}
-        {sliced.map((d, i) => {
-          const barH = Math.max(2, (d.value / maxVal) * chartH);
-          const x = PADDING.left + i * (chartW / sliced.length) + (chartW / sliced.length - barWidth) / 2;
-          const y = PADDING.top + chartH - barH;
-          const color = d.color ?? t.colors.primary;
-
-          return (
-            <React.Fragment key={`bar-${i}`}>
-              <Rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={barH}
-                rx={3}
-                fill={color}
-                opacity={0.85}
-              />
-              {/* X axis label */}
-              <SvgText
-                x={x + barWidth / 2}
-                y={PADDING.top + chartH + 14}
-                fontSize={9}
-                fill={t.colors.textMuted}
-                textAnchor="middle"
-                // Truncate long labels to 10 chars
-              >
-                {d.label.length > 10 ? d.label.slice(0, 9) + '…' : d.label}
-              </SvgText>
-            </React.Fragment>
-          );
-        })}
-
-        {/* Y axis line */}
-        <Line
-          x1={PADDING.left}
-          y1={PADDING.top}
-          x2={PADDING.left}
-          y2={PADDING.top + chartH}
-          stroke={t.colors.border}
-          strokeWidth={1}
-        />
-        {/* X axis line */}
-        <Line
-          x1={PADDING.left}
-          y1={PADDING.top + chartH}
-          x2={PADDING.left + chartW}
-          y2={PADDING.top + chartH}
-          stroke={t.colors.border}
-          strokeWidth={1}
-        />
-      </Svg>
+      <GiftedBarChart
+        data={giftedData}
+        width={plotW}
+        height={plotH}
+        disableScroll
+        barWidth={barWidth}
+        spacing={gap}
+        initialSpacing={Math.ceil(gap / 2)}
+        endSpacing={Math.ceil(gap / 2)}
+        barBorderTopLeftRadius={3}
+        barBorderTopRightRadius={3}
+        noOfSections={4}
+        yAxisLabelWidth={Y_AXIS_LABEL_WIDTH}
+        yAxisLabelSuffix={yAxisLabel}
+        formatYLabel={compactNumber}
+        yAxisColor={t.colors.border}
+        xAxisColor={t.colors.border}
+        yAxisThickness={1}
+        xAxisThickness={1}
+        rulesColor={t.colors.border}
+        rulesType="dashed"
+        dashWidth={4}
+        dashGap={3}
+        yAxisTextStyle={[t.typography.caption, { color: t.colors.textMuted }]}
+        xAxisLabelTextStyle={[t.typography.caption, { color: t.colors.textMuted }]}
+        xAxisTextNumberOfLines={1}
+        disablePress
+        isAnimated={!reducedMotion}
+        animationDuration={600}
+      />
     </View>
   );
 }

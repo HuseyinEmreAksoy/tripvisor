@@ -1,19 +1,32 @@
 /**
  * Analytics / Insights screen — cross-trip spending + reaction data.
  *
- * Charts (hand-rolled SVG via react-native-svg):
+ * Charts (react-native-gifted-charts wrappers in src/components/charts/):
  *   1. Spending per trip           — BarChart
  *   2. Spending by category        — PieChart
- *   3. Liked vs disliked per trip  — grouped BarChart (two series)
+ *   3. Liked vs disliked per trip  — grouped BarChart (two series, flattened
+ *                                    into alternating 👍/👎 bars, `grouped`)
  *   4. Spending over time          — LineChart (requires ≥ 3 trips with dates)
  *
  * Textual catalogs:
  *   5. Most liked places overall   — top 5 by like count
  *   6. Didn't like overall         — top 5 by dislike count
  *
- * All aggregations are pure client-side useMemo over TanStack Query data.
+ * Data sources (v2 Phase P3.2 — MV-first, live fallback):
+ *   - useTripStats() reads the nightly-refreshed `analytics_user_trip_stats`
+ *     materialized view (per-trip actual spend + liked/disliked counts).
+ *     When a trip has an MV row, its PER-TRIP aggregates come from the MV —
+ *     cheap and scalable, but up to ~24h stale (changes made since the last
+ *     nightly refresh appear tomorrow; the footnote says so).
+ *   - Trips ABSENT from the MV (created since the refresh — or ALL trips when
+ *     the MV/RPC doesn't exist yet, since useTripStats then returns []) fall
+ *     back to the LIVE client-side aggregation over useAllUserExpenses /
+ *     useAllUserReactions (the Phase 0.5c useQueries path).
+ *   - Per-category spending and the liked/disliked place CATALOGS are always
+ *     live: the MV has no category breakdown and no place names — the
+ *     per-trip places queries still resolve names.
  *
- * Phase 24 Step 24.10 / 24.12.
+ * Phase 24 Step 24.10 / 24.12; v2 P3.1 (gifted-charts) + P3.2 (MV wiring).
  */
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -25,6 +38,7 @@ import { PieChart } from '@/components/charts/PieChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { useAllUserReactions } from '@/api/trip-place-reactions';
 import { useAllUserExpenses } from '@/api/trip-expenses';
+import { useTripStats } from '@/api/trip-stats';
 import { useTrips } from '@/api';
 import { tripPlacesKeys } from '@/api/_keys';
 import { supabase } from '@/api/supabase';
@@ -74,6 +88,21 @@ export default function AnalyticsScreen() {
   const { data: allTrips = [], isLoading: tripsLoading } = useTrips({ archived: false });
   const { data: allExpenses = [], isLoading: expensesLoading } = useAllUserExpenses();
   const { data: allReactions = [], isLoading: reactionsLoading } = useAllUserReactions();
+  // MV aggregates — [] when the RPC is missing or the MV hasn't refreshed yet,
+  // in which case every trip takes the live-fallback path below.
+  const { data: tripStats = [] } = useTripStats();
+
+  const statsByTrip = useMemo(
+    () => new Map(tripStats.map((row) => [row.trip_id, row])),
+    [tripStats],
+  );
+
+  // Footnote driver: true when at least one rendered trip aggregate came
+  // from the (nightly-stale) MV rather than live queries.
+  const mvContributed = useMemo(
+    () => allTrips.some((trip) => statsByTrip.has(trip.id)),
+    [allTrips, statsByTrip],
+  );
 
   // Fetch places for EVERY trip (one cached query per trip) to resolve names
   // in the liked/disliked catalogs. v2 Phase 0.5c: the v1 version hand-wired
@@ -120,20 +149,24 @@ export default function AnalyticsScreen() {
   }, [placeQueryResults, allTrips]);
 
   // ── Chart 1: Spending per trip ────────────────────────────────────────────
+  // MV-first: trips with an MV row use total_actual_spend; trips absent from
+  // the MV use the live client sum over allExpenses (P3.2 merge).
   const spendingPerTrip = useMemo(() => {
     const byTrip = new Map<string, number>();
     for (const exp of allExpenses) {
       if (exp.kind !== 'actual') continue;
       byTrip.set(exp.trip_id, (byTrip.get(exp.trip_id) ?? 0) + exp.amount);
     }
+    const totalFor = (tripId: string): number =>
+      statsByTrip.get(tripId)?.total_actual_spend ?? byTrip.get(tripId) ?? 0;
     return allTrips
-      .filter((trip) => byTrip.has(trip.id))
+      .filter((trip) => totalFor(trip.id) > 0)
       .map((trip, i) => ({
         label: trip.title,
-        value: byTrip.get(trip.id) ?? 0,
+        value: totalFor(trip.id),
         color: dayColor(i),
       }));
-  }, [allExpenses, allTrips]);
+  }, [allExpenses, allTrips, statsByTrip]);
 
   // ── Chart 2: Spending by category ────────────────────────────────────────
   const spendingByCategory = useMemo(() => {
@@ -152,9 +185,11 @@ export default function AnalyticsScreen() {
   }, [allExpenses]);
 
   // ── Chart 3: Liked vs disliked per trip ───────────────────────────────────
+  // MV-first: trips with an MV row use liked_count/disliked_count; trips
+  // absent from the MV use the live reverse-lookup aggregation (P3.2 merge).
   const reactionsByTrip = useMemo(() => {
-    // Map tripPlaceId → tripId using the trips' places (all trips — 0.5c).
-    // We need to reverse-look up which trip a tripPlaceId belongs to.
+    // Live fallback: map tripPlaceId → tripId using the trips' places
+    // (all trips — 0.5c) to reverse-look up which trip a reaction belongs to.
     const placeToTrip = new Map<string, string>();
     for (let i = 0; i < placeQueryResults.length; i++) {
       const trip = allTrips[i];
@@ -176,18 +211,21 @@ export default function AnalyticsScreen() {
       }
     }
 
-    const tripIdsWithReactions = new Set([...liked.keys(), ...disliked.keys()]);
     return allTrips
-      .filter((trip) => tripIdsWithReactions.has(trip.id))
-      .map((trip, i) => ({
-        tripTitle: trip.title,
-        liked: liked.get(trip.id) ?? 0,
-        disliked: disliked.get(trip.id) ?? 0,
-        colorIndex: i,
-      }));
-  }, [allReactions, allTrips, placeQueryResults]);
+      .map((trip) => {
+        const mv = statsByTrip.get(trip.id);
+        return {
+          tripTitle: trip.title,
+          liked: mv?.liked_count ?? liked.get(trip.id) ?? 0,
+          disliked: mv?.disliked_count ?? disliked.get(trip.id) ?? 0,
+        };
+      })
+      .filter((r) => r.liked + r.disliked > 0)
+      .map((r, i) => ({ ...r, colorIndex: i }));
+  }, [allReactions, allTrips, placeQueryResults, statsByTrip]);
 
   // ── Chart 4: Spending over time ───────────────────────────────────────────
+  // Same MV-first merge as Chart 1, keyed by trip start month.
   const spendingOverTime = useMemo(() => {
     const withDates = allTrips
       .filter((trip) => Boolean(trip.start_date))
@@ -198,17 +236,19 @@ export default function AnalyticsScreen() {
       if (exp.kind !== 'actual') continue;
       byTrip.set(exp.trip_id, (byTrip.get(exp.trip_id) ?? 0) + exp.amount);
     }
+    const totalFor = (tripId: string): number =>
+      statsByTrip.get(tripId)?.total_actual_spend ?? byTrip.get(tripId) ?? 0;
 
     const result = withDates
-      .filter((trip) => byTrip.has(trip.id))
+      .filter((trip) => totalFor(trip.id) > 0)
       .map((trip) => ({
         label: trip.start_date?.slice(0, 7) ?? '', // YYYY-MM
-        value: byTrip.get(trip.id) ?? 0,
+        value: totalFor(trip.id),
       }));
 
     // Only show if 3+ trips with dates and expenses.
     return result.length >= 3 ? result : [];
-  }, [allExpenses, allTrips]);
+  }, [allExpenses, allTrips, statsByTrip]);
 
   // ── Catalog 1: Most liked places ─────────────────────────────────────────
   const topLiked = useMemo(() => {
@@ -327,6 +367,7 @@ export default function AnalyticsScreen() {
                   width={chartContainerWidth}
                   height={200}
                   maxBars={20}
+                  grouped
                 />
               </ChartCard>
             ) : null}
@@ -380,6 +421,13 @@ export default function AnalyticsScreen() {
             reactionsByTrip.length === 0 ? (
               <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
                 {'No data yet — add expenses or rate places to see insights.'}
+              </Text>
+            ) : null}
+
+            {/* MV staleness footnote — only when server aggregates were used */}
+            {mvContributed ? (
+              <Text style={[t.typography.caption, { color: t.colors.textMuted, textAlign: 'center' }]}>
+                {'Aggregates refresh nightly.'}
               </Text>
             ) : null}
           </View>

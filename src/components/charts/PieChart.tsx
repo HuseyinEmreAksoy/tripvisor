@@ -1,15 +1,24 @@
 /**
- * PieChart — hand-rolled SVG pie/donut chart using react-native-svg.
+ * PieChart — thin wrapper around react-native-gifted-charts' PieChart.
  *
- * Chart library: react-native-svg (same rationale as BarChart.tsx —
- * victory-native is incompatible with React 18).
+ * v2 Phase P3.1: replaces the hand-rolled SVG donut (same rationale as
+ * BarChart.tsx — React 19 unblocked modern chart libs; gifted renders via
+ * react-native-svg on all three platforms). Gradients stay disabled.
  *
- * Phase 24 Step 24.11 / 24.12.
+ * The exported prop contract is byte-compatible with the v1 component:
+ *   - data: Array<{ label: string; value: number; color: string }>
+ *   - size?: donut diameter (default 180)
+ *   - title?: caption above the chart
+ *
+ * The legend (color dot + label + percentage) is OURS, not gifted's — gifted
+ * has no legend component, and the v1 layout (donut left, legend right,
+ * wrapping) is preserved verbatim.
  */
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
+import { PieChart as GiftedPieChart, type pieDataItem } from 'react-native-gifted-charts';
 import { useTheme } from '@/theme';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export interface PieChartSlice {
   label: string;
@@ -27,51 +36,27 @@ const DEFAULT_SIZE = 180;
 
 export function PieChart({ data, size = DEFAULT_SIZE, title }: PieChartProps) {
   const t = useTheme();
+  const reducedMotion = useReducedMotion();
   const r = size / 2;
-  const innerR = r * 0.55; // donut hole
+  const innerR = r * 0.55; // donut hole — same ratio as v1
 
   const total = useMemo(() => data.reduce((s, d) => s + d.value, 0), [data]);
 
-  const slices = useMemo(() => {
-    if (total === 0) return [];
-    let angle = -Math.PI / 2; // start from top
-    return data
-      .filter((d) => d.value > 0)
-      .map((d) => {
-        const sweep = (d.value / total) * Math.PI * 2;
-        const start = angle;
-        const end = angle + sweep;
-        angle = end;
-        return { ...d, start, end, sweep };
-      });
-  }, [data, total]);
+  const slices = useMemo(() => data.filter((d) => d.value > 0), [data]);
 
-  function describeArc(
-    cx: number,
-    cy: number,
-    radius: number,
-    startAngle: number,
-    endAngle: number,
-  ): string {
-    const x1 = cx + radius * Math.cos(startAngle);
-    const y1 = cy + radius * Math.sin(startAngle);
-    const x2 = cx + radius * Math.cos(endAngle);
-    const y2 = cy + radius * Math.sin(endAngle);
-    const largeArcFlag = endAngle - startAngle > Math.PI ? 1 : 0;
+  const giftedData = useMemo<pieDataItem[]>(
+    () => slices.map((s) => ({ value: s.value, color: s.color })),
+    [slices],
+  );
 
-    const ix1 = cx + innerR * Math.cos(endAngle);
-    const iy1 = cy + innerR * Math.sin(endAngle);
-    const ix2 = cx + innerR * Math.cos(startAngle);
-    const iy2 = cy + innerR * Math.sin(startAngle);
-
-    return [
-      `M ${x1} ${y1}`,
-      `A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`,
-      `L ${ix1} ${iy1}`,
-      `A ${innerR} ${innerR} 0 ${largeArcFlag} 0 ${ix2} ${iy2}`,
-      'Z',
-    ].join(' ');
-  }
+  // Screen-reader summary — slices themselves are not readable.
+  const a11ySummary = useMemo(
+    () =>
+      `${title ?? 'Pie chart'}. ${slices
+        .map((s) => `${s.label}: ${total > 0 ? Math.round((s.value / total) * 100) : 0}%`)
+        .join(', ')}`,
+    [title, slices, total],
+  );
 
   if (total === 0 || slices.length === 0) {
     return (
@@ -84,29 +69,24 @@ export function PieChart({ data, size = DEFAULT_SIZE, title }: PieChartProps) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessible accessibilityLabel={a11ySummary}>
       {title ? (
         <Text style={[t.typography.caption, { color: t.colors.textMuted, marginBottom: 4 }]}>
           {title}
         </Text>
       ) : null}
       <View style={styles.row}>
-        <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          {/* Background circle */}
-          <Circle cx={r} cy={r} r={r - 1} fill={t.colors.bgMuted} />
-          {slices.map((s, i) => (
-            <Path
-              key={`slice-${i}`}
-              d={describeArc(r, r, r - 2, s.start, s.end)}
-              fill={s.color}
-              opacity={0.9}
-            />
-          ))}
-          {/* Center hole fill */}
-          <Circle cx={r} cy={r} r={innerR - 1} fill={t.colors.bgElevated} />
-        </Svg>
+        <GiftedPieChart
+          data={giftedData}
+          donut
+          radius={r - 2}
+          innerRadius={innerR}
+          innerCircleColor={t.colors.bgElevated}
+          isAnimated={!reducedMotion}
+          animationDuration={600}
+        />
 
-        {/* Legend */}
+        {/* Legend — ours, preserved from v1 */}
         <View style={styles.legend}>
           {slices.map((s, i) => (
             <View key={`legend-${i}`} style={styles.legendItem}>
