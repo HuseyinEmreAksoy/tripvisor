@@ -5,7 +5,10 @@
 // ics.native.ts exactly.
 
 import { useMutation } from '@tanstack/react-query';
-import * as FileSystem from 'expo-file-system';
+// SDK 54: expo-file-system v19 made the new File/Directory API the default
+// export; the string-URI API used here now lives at `expo-file-system/legacy`
+// (official migration shim — no behavior change).
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { fetchAccountExportJson } from './account-export.shared';
 
