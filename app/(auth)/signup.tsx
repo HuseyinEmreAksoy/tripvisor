@@ -132,13 +132,12 @@ export default function Signup() {
         <View style={styles.desktopHero}>
           <Image
             source={{ uri: HERO_URI }}
-            style={StyleSheet.absoluteFillObject}
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
             contentFit="cover"
             accessibilityElementsHidden
             importantForAccessibility="no"
             aria-hidden
             transition={400}
-            placeholder={{ color: '#16332E' }}
           />
           <View
             style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
@@ -193,13 +192,12 @@ export default function Signup() {
       <View style={styles.heroContainer}>
         <Image
           source={{ uri: HERO_URI }}
-          style={StyleSheet.absoluteFillObject}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
           contentFit="cover"
           accessibilityElementsHidden
           importantForAccessibility="no"
           aria-hidden
           transition={400}
-          placeholder={{ color: '#16332E' }}
         />
         <View
           style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}

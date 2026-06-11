@@ -87,13 +87,12 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
     >
       <Image
         source={{ uri: HERO_URI }}
-        style={StyleSheet.absoluteFillObject}
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
         contentFit="cover"
         accessibilityElementsHidden
         importantForAccessibility="no"
         aria-hidden
         transition={400}
-        placeholder={{ color: '#16332E' }}
       />
       {/* Layered scrim: a soft full wash + a heavier bottom band — fakes a
           vertical gradient with plain Views (no new deps). Decorative. */}

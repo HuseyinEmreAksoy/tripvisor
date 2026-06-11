@@ -38,9 +38,10 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
   return (
     <View
       style={styles.container}
-      // @ts-expect-error — web-only aria passthrough
+      // RN 0.79 ViewProps supports role / aria-modal / aria-label natively
+      // (the pre-SDK-53 @ts-expect-error passthrough hack is no longer needed).
       role="dialog"
-      aria-modal="true"
+      aria-modal
       aria-label={accessibilityLabel ?? 'Dialog'}
     >
       <Pressable
@@ -52,7 +53,7 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
         ref={(r) => {
           sheetRef.current = r;
         }}
-        // @ts-expect-error — tabIndex for focus management
+        // tabIndex is a first-class ViewProps member in RN 0.79 (focus management).
         tabIndex={-1}
         style={[
           styles.sheet,

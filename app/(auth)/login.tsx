@@ -116,13 +116,12 @@ export default function Login() {
         <View style={styles.desktopHero}>
           <Image
             source={{ uri: HERO_URI }}
-            style={StyleSheet.absoluteFillObject}
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
             contentFit="cover"
             accessibilityElementsHidden
             importantForAccessibility="no"
             aria-hidden
             transition={400}
-            placeholder={{ color: '#16332E' }}
           />
           <View
             style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
@@ -231,15 +230,15 @@ export default function Login() {
       <View style={styles.heroContainer}>
         <Image
           source={{ uri: HERO_URI }}
-          style={StyleSheet.absoluteFillObject}
+          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
           contentFit="cover"
           // Decorative background — excluded from a11y tree.
           accessibilityElementsHidden
           importantForAccessibility="no"
           aria-hidden
-          // Fade in from placeholder.
+          // Fade in over the backgroundColor placeholder (expo-image 2.4 dropped
+          // `{ color }` placeholder sources; style background serves the same role).
           transition={400}
-          placeholder={{ color: '#16332E' }}
         />
         {/* Dark scrim over the photo for text legibility */}
         <View

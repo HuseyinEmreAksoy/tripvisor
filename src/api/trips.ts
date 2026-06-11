@@ -474,7 +474,12 @@ export function useUpdateTripBudget(tripId: Uuid) {
       await qc.cancelQueries({ queryKey: detailKey });
       const prevDetail = qc.getQueryData<Trip | null>(detailKey);
       if (prevDetail) {
-        qc.setQueryData<Trip | null>(detailKey, { ...prevDetail, total_budget });
+        // Functional updater: TanStack v5.101 + TS 5.8 mis-infers the direct
+        // value form against Updater<NoInfer<Trip | null>>; the callback form
+        // type-checks cleanly and is atomic against concurrent cache writes.
+        qc.setQueryData<Trip | null>(detailKey, (old) =>
+          old ? { ...old, total_budget } : old,
+        );
       }
       return { prevDetail };
     },
@@ -576,10 +581,10 @@ export function useUpdateRouteRenderMode(tripId: Uuid) {
       await qc.cancelQueries({ queryKey: detailKey });
       const prevDetail = qc.getQueryData<Trip | null>(detailKey);
       if (prevDetail) {
-        qc.setQueryData<Trip | null>(detailKey, {
-          ...prevDetail,
-          route_render_mode: mode,
-        });
+        // Functional updater — see useUpdateTripBudget onMutate for rationale.
+        qc.setQueryData<Trip | null>(detailKey, (old) =>
+          old ? { ...old, route_render_mode: mode } : old,
+        );
       }
       return { prevDetail };
     },
