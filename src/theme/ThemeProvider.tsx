@@ -7,8 +7,25 @@ import {
   type ReactNode,
 } from 'react';
 import { Appearance, Platform, useColorScheme } from 'react-native';
+import { useFonts } from 'expo-font';
+import {
+  HankenGrotesk_400Regular,
+  HankenGrotesk_500Medium,
+  HankenGrotesk_600SemiBold,
+  HankenGrotesk_700Bold,
+  HankenGrotesk_800ExtraBold,
+} from '@expo-google-fonts/hanken-grotesk';
 import { storageAdapter } from '@/api/storage';
-import { radius, shadows, spacing, themes, typography, type Colors, type ThemeName } from './tokens';
+import {
+  brandTypography,
+  radius,
+  shadows,
+  spacing,
+  themes,
+  typography,
+  type Colors,
+  type ThemeName,
+} from './tokens';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -64,6 +81,17 @@ function readModeSync(): ThemeMode {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
 
+  // Brand typeface (v3): Hanken Grotesk, loaded non-blocking — the UI renders
+  // with the system stack and upgrades in place when the font is ready. A
+  // failed load just means the fallback stack forever (by design).
+  const [fontsLoaded] = useFonts({
+    HankenGrotesk_400Regular,
+    HankenGrotesk_500Medium,
+    HankenGrotesk_600SemiBold,
+    HankenGrotesk_700Bold,
+    HankenGrotesk_800ExtraBold,
+  });
+
   // Web initializes synchronously (no FOUC). Native starts as 'system' and
   // rehydrates asynchronously from SecureStore on first mount.
   const [mode, setModeState] = useState<ThemeMode>(readModeSync);
@@ -107,7 +135,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         colors: themes[name],
         spacing,
         radius,
-        typography,
+        typography: brandTypography(fontsLoaded),
         shadows,
       },
       mode,
@@ -117,7 +145,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setOverride: (n) => setMode(n === null ? 'system' : n),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, systemScheme]);
+  }, [mode, systemScheme, fontsLoaded]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

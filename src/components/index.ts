@@ -1,4 +1,5 @@
 export { Button } from './Button';
+export { Icon, type IconName, type IconProps } from './Icon';
 export { TextField } from './TextField';
 export { Screen } from './Screen';
 export { Heading } from './Heading';

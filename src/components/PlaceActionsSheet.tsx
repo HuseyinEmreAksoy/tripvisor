@@ -3,6 +3,7 @@ import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, Vi
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
 import { Heading } from './Heading';
+import { Icon } from './Icon';
 import { VisitDurationStepper } from './VisitDurationStepper';
 import { useTheme } from '@/theme';
 import type { TripPlace, Uuid } from '@/api';
@@ -261,7 +262,11 @@ function TimeWindowEditor({ place }: { place: TripPlace }) {
           },
         ]}
       >
-        <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>⏰ Time window</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {/* v3: Lucide alarm-clock replaces ⏰ (functional control lead). */}
+          <Icon name="alarm-clock" size={18} color={t.colors.primary} />
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>Time window</Text>
+        </View>
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{summary}</Text>
       </Pressable>
 

@@ -21,6 +21,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button, SegmentedControl, Slider } from '@/components';
+import { Icon } from '@/components/Icon';
 import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { dayColor } from '@/components/Map';
 import { useTheme } from '@/theme';
@@ -330,16 +331,20 @@ export function SettingsTab({
         ]}
       >
         <View style={{ gap: 2 }}>
-          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-            🧳 Packing list
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {/* v3: Lucide luggage replaces 🧳 (functional row lead). */}
+            <Icon name="luggage" size={18} color={t.colors.primary} />
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+              Packing list
+            </Text>
+          </View>
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
             {canEdit
               ? 'Checklist with smart suggestions for this trip'
               : 'See what the group is packing'}
           </Text>
         </View>
-        <Text style={{ fontSize: 18, color: t.colors.textMuted }}>›</Text>
+        <Icon name="chevron-right" size={18} color={t.colors.textMuted} />
       </Pressable>
 
       {/* ── Phase 24 Step 24.5: Liked / disliked catalog ────────────────── */}

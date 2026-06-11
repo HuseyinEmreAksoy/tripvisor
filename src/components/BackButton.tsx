@@ -7,6 +7,7 @@
  */
 import { Platform, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from './Icon';
 
 export interface BackButtonProps {
   onPress: () => void;
@@ -44,14 +45,9 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
       ]}
       {...printProps}
     >
-      <Text
-        style={[styles.arrow, { color: t.colors.primary }]}
-        accessibilityElementsHidden
-        importantForAccessibility="no"
-        aria-hidden
-      >
-        ←
-      </Text>
+      {/* v3: Lucide chevron replaces the unicode arrow (decorative — the
+          Pressable carries the accessible name). */}
+      <Icon name="chevron-left" size={18} color={t.colors.primary} />
       <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600', fontSize: 14 }]}>
         {label}
       </Text>
@@ -68,10 +64,5 @@ const styles = StyleSheet.create({
     minHeight: 38,
     minWidth: 44,
     gap: 6,
-  },
-  arrow: {
-    fontSize: 17,
-    lineHeight: 20,
-    fontWeight: '600',
   },
 });

@@ -26,6 +26,7 @@
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { dayColor } from '@/components/Map';
+import { Icon } from '@/components/Icon';
 import { ReactionChip } from '@/components/ReactionChip';
 import { formatDuration, formatDurationSeconds } from '@/lib/formatDuration';
 import type { TransportMode, TripLeg, TripPlace } from '@/api';
@@ -321,9 +322,15 @@ export function PlaceRow({
                     },
                   ]}
                 >
-                  <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                    {commentCount > 0 ? `💬 ${commentCount}` : '💬'}
-                  </Text>
+                  {/* v3: Lucide message-circle replaces 💬 (functional spot). */}
+                  <Icon name="message-circle" size={13} color={t.colors.textMuted} />
+                  {commentCount > 0 ? (
+                    <Text
+                      style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}
+                    >
+                      {commentCount}
+                    </Text>
+                  ) : null}
                 </Pressable>
               ) : null}
               {onReactionChange ? (
@@ -427,8 +434,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     minHeight: 28,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {

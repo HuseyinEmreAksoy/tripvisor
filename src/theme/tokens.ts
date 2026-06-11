@@ -103,6 +103,47 @@ export const typography = {
   },
 } as const;
 
+// ─── Brand typeface — Hanken Grotesk (v3 design-system refresh) ───────────────
+// The brand font loads at runtime via expo-font (ThemeProvider). RN needs a
+// distinct family name per weight; the system stack above stays the deliberate
+// fallback until (or if never) loaded — per the design handoff, native builds
+// without the webfont should still feel right.
+
+const HANKEN_BY_WEIGHT: Record<string, string> = {
+  '400': 'HankenGrotesk_400Regular',
+  '500': 'HankenGrotesk_500Medium',
+  '600': 'HankenGrotesk_600SemiBold',
+  '700': 'HankenGrotesk_700Bold',
+  '800': 'HankenGrotesk_800ExtraBold',
+};
+
+function brandFamilyFor(weight: string): string {
+  const family = HANKEN_BY_WEIGHT[weight] ?? 'HankenGrotesk_400Regular';
+  // On web the expo-font-registered family gets the system stack appended so a
+  // failed font fetch degrades to the same stack we ship pre-load.
+  return Platform.OS === 'web'
+    ? `${family}, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif`
+    : family;
+}
+
+/**
+ * Returns the typography scale with the brand font families applied when the
+ * webfont has loaded, or the system-stack scale otherwise. Consumers never
+ * call this — ThemeProvider does, so `useTheme().typography` upgrades in
+ * place once fonts are ready.
+ */
+export function brandTypography(fontsLoaded: boolean): typeof typography {
+  if (!fontsLoaded) return typography;
+  const out = {} as Record<keyof typeof typography, object>;
+  for (const key of Object.keys(typography) as (keyof typeof typography)[]) {
+    const style = typography[key];
+    out[key] = { ...style, fontFamily: brandFamilyFor(style.fontWeight) };
+  }
+  // Same shape + an added fontFamily per style — structurally compatible with
+  // the base scale; the cast keeps the public token type unchanged.
+  return out as typeof typography;
+}
+
 // ─── Light Theme — "Paper" ────────────────────────────────────────────────────
 export const lightColors = {
   // Backgrounds — warm off-white paper, white cards float on top.
@@ -122,10 +163,11 @@ export const lightColors = {
   border: 'rgba(108, 97, 85, 0.18)',
   borderStrong: 'rgba(108, 97, 85, 0.32)',
 
-  // Primary — Aegean teal (5.0:1 with white label text)
-  primary: '#0E7C72',
-  primaryLight: '#27A294',
-  primaryDark: '#0A5F57',
+  // Primary — Aegean teal, v3 brightened (#0C8578 — 4.5:1 with white label text;
+  // exact value from the design-system handoff tokens/colors.css)
+  primary: '#0C8578',
+  primaryLight: '#2BAD9E',
+  primaryDark: '#0A6A5F',
   primaryText: '#FFFFFF',
 
   // Accent — sunset terracotta (4.9:1 with white label text)
@@ -150,10 +192,10 @@ export const lightColors = {
   // Attribution
   attribution: '#8E8478',
 
-  // Gradients (teal sea → terracotta sunset)
-  gradientStart: '#0E7C72',
+  // Gradients (teal sea → terracotta sunset) — v3: wash strengthened to 0.10
+  gradientStart: '#0C8578',
   gradientEnd: '#C8431D',
-  gradientSubtle: 'rgba(14, 124, 114, 0.08)',
+  gradientSubtle: 'rgba(12, 133, 120, 0.10)',
 
   // Shadows — warm-tinted, soft and layered.
   shadowColor: 'rgba(46, 38, 28, 0.10)',
@@ -165,7 +207,7 @@ export const lightColors = {
   heroChipText: '#FFFFFF',
 
   // Glow (for focused/active elements)
-  glowPrimary: 'rgba(14, 124, 114, 0.30)',
+  glowPrimary: 'rgba(12, 133, 120, 0.30)',
   glowAccent: 'rgba(200, 67, 29, 0.25)',
 
   // Budget semantic tokens (Phase 21 Step 21.10)

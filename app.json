@@ -24,7 +24,10 @@
           "apiKey": "REPLACE_WITH_ANDROID_MAPS_KEY"
         }
       },
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -34,7 +37,8 @@
       "expo-router",
       "expo-location",
       "expo-secure-store",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
