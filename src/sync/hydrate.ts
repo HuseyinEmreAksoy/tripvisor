@@ -285,6 +285,61 @@ export function resyncTier1(): void {
 }
 
 /**
+ * Session user the engine is ACTIVE for, or null when inactive (flag off /
+ * never initialized / torn down). The S2.8.3 read facades use this to derive
+ * `isOwner` and to backfill `user_id` on locally-created rows that have not
+ * been acked yet (sync creates deliberately omit user_id — it is stamped at
+ * the write boundary by sanitizeWriteRow, so the only client whose store can
+ * contain a user_id-less row is the engine user's own).
+ */
+export function getTier1SyncUserId(): string | null {
+  return initializedForUser;
+}
+
+/**
+ * S2.8.4 (decision D5) — drop a hard-DELETED trip from the LOCAL Tier-1
+ * store WITHOUT echoing a network write.
+ *
+ * Trip hard-delete stays on the legacy PostgREST path even flag-on (trips
+ * have no tombstone by design — 0027: archive is their lifecycle). After the
+ * server acks the DELETE, the hydrated row must leave the local store, but
+ * `trips` is sync-attached — so the prune has to be a store write the engine
+ * provably treats as a no-op:
+ *
+ *   - attachEntity configures trips with `actions: ['read','create','update']`
+ *     (no 'delete') and NO `fieldDeleted` (the trips-only exception above).
+ *   - The crud plugin's set() handler routes a store-level delete through:
+ *     deleteFn? → (fieldDeleted && updateFn)? → `console.warn("[legend-state]
+ *     missing delete function")`. With neither configured for trips it takes
+ *     the warn branch: NO outbound request, and the change resolves without
+ *     retry-queue residue. Verified against @legendapp/state 3.0.0-beta.47
+ *     (sync-plugins/crud.js, "Handle deletes" block); Step S2.8.12's validate
+ *     extension asserts zero network writes for this op before the flag
+ *     flips. The dev-console warn IS the expected signature of the no-op
+ *     branch — do not "fix" it by adding a delete action.
+ *
+ * DO NOT generalize this to trip_places (or any root with `fieldDeleted`
+ * configured): there a store-level delete IS interpreted as a local edit and
+ * EMITS `UPDATE … SET deleted = true` — a real network write.
+ *
+ * Known, accepted leftover: the deleted trip's trip_places rows were
+ * hard-deleted server-side by FK cascade, which incremental pulls cannot
+ * observe (no row left to carry the fact). Those store rows go stale but are
+ * unreachable — every read facade selects places by trip, and the trip is
+ * gone from both the store and the server. Store-deleting them here would
+ * echo tombstone UPDATEs against rows that no longer exist (infinite-retry
+ * fodder), so we deliberately leave them.
+ *
+ * Fallback if S2.8.12 disproves the no-op (plan risk): replace this with a
+ * facade-level deleted-ids session set and re-plan only this seam.
+ */
+export function pruneTripFromLocalStore(tripId: string): void {
+  const row = tier1Store$.trips[tripId]?.peek();
+  if (!row) return; // never hydrated (flag off / other user) — nothing to prune
+  tier1Store$.trips[tripId]?.delete();
+}
+
+/**
  * Reconnect listener: NetInfo where available (native + web), DOM 'online'
  * as the web fallback. Lazy/guarded so neither path can throw at init.
  */

@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { RefetchOptions, UseQueryResult } from '@tanstack/react-query';
+import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type {
@@ -8,8 +10,17 @@ import type {
   TripCollaboratorRole,
   Uuid,
 } from './types';
-import { tripsKeys, tripExpensesKeys } from './_keys';
+import { tripsKeys, tripExpensesKeys, tripCollaboratorsKeys } from './_keys';
 import { useOptimizeTrip } from './routes';
+import {
+  createTrip as syncCreateTrip,
+  isTier1SyncActive,
+  tombstoneTrip as syncTombstoneTrip,
+  updateTrip as syncUpdateTrip,
+} from '@/sync/mutations';
+import { getTier1SyncUserId, pruneTripFromLocalStore, resyncTier1 } from '@/sync/hydrate';
+import { tier1Store$ } from '@/sync/store';
+import { getSessionUndoStack } from '@/sync/undo';
 
 // ----- Query keys ---------------------------------------------------------
 //
@@ -37,6 +48,167 @@ const createTripSchema = z.object({
   transport_mode: z.enum(['driving', 'walking', 'transit', 'bicycling']).default('driving'),
   timezone: z.string().nullish(),
 });
+
+// ============================================================
+// v2 S2.8.3 / S2.8.4 — Tier-1 sync facade (reads + write repoint)
+// ============================================================
+//
+// `useTrips` / `useTrip` are now FACADES over two data sources:
+//
+//   1. The Tier-1 Legend-State store (`tier1Store$.trips`) — served when the
+//      sync engine is ACTIVE (flag on + initialized, `isTier1SyncActive()`)
+//      AND the trips root has hydrated at least one row.
+//   2. The v1 TanStack queryFn (unchanged, byte-identical flag-off) — served
+//      otherwise, including the D2 hydration window: a v1 user whose
+//      persisted TanStack cache restored but whose Tier-1 store hasn't
+//      finished its first pull must keep seeing cached trips, never an empty
+//      (or partial) list.
+//
+// Rules-of-Hooks discipline (the plan's flagged High risk): every hook below
+// is called UNCONDITIONALLY in the same order on every render — the facade
+// branches only on RETURNED VALUES. The legacy query stays mounted with
+// `enabled` gated off while Tier-1 serves, so its cache survives for
+// fallback transitions and the persister.
+//
+// Hydration signal: "store has rows" (read INSIDE the `use$` selector so the
+// trips root is tracked and the facade re-renders the instant hydration —
+// network pull, disk persist load, or realtime merge — lands rows). This is
+// the reactive equivalent of telemetry's `entities.trips.lastSyncAt`: both
+// flip on the first store change, but the store read is per-table (no
+// re-render on unrelated entity telemetry) and race-free (no listener-order
+// dependency between telemetry's onChange and ours). A zero-trip account
+// never flips to Tier-1 — the TanStack branch serves its (authoritative,
+// empty) server result, which is the conservative side of D2.
+//
+// Write gating (S2.8.4): update-shaped hooks route through src/sync/mutations
+// when THE ROW IS IN THE STORE (`tier1TripRow`), creates when the store has
+// rows at all — i.e. writes go sync only when reads are Tier-1-served. This
+// is deliberately stricter than bare `isTier1SyncActive()`: a sync-create
+// into an empty, still-hydrating store would flip the read facade and render
+// a one-trip list while the user's other trips are still in flight (the
+// exact D2 bug the fallback exists to prevent). Exactly one source renders,
+// and exactly that source is written.
+//
+// TanStack invalidations KEEP FIRING on every mutation, both branches:
+//   - flag-off they are load-bearing (v1 behavior, byte-identical);
+//   - flag-on the facade's list/detail queries are disabled while Tier-1
+//     serves, so invalidation just marks them stale (no fetch) — cheap, and
+//     it keeps the D2 fallback cache + degraded-client persister coherent;
+//   - shared Tier-2 keys (trip-expenses rollup after a budget write) still
+//     NEED them flag-on.
+
+/**
+ * The trip row as hydrated into the Tier-1 store, IF the engine is active.
+ * Used by the write hooks to decide sync-vs-legacy: a present row means the
+ * store is hydrated and Tier-1 is serving reads, so the write must land in
+ * the store (and a missing row means `mutations.updateTrip` would throw
+ * `row_not_found` anyway — legacy is the only correct path).
+ */
+function tier1TripRow(tripId: Uuid): Trip | undefined {
+  if (!isTier1SyncActive()) return undefined;
+  return tier1Store$.trips[tripId]?.peek();
+}
+
+/** Has the trips root hydrated (or locally created) at least one row? */
+function tier1TripsStoreHasRows(): boolean {
+  const record = tier1Store$.trips.peek();
+  return record != null && Object.keys(record).length > 0;
+}
+
+/**
+ * Sort contract shared with the v1 queryFn (step 5 there): owner-trips
+ * first, then `created_at` desc, then id asc for deterministic RN list keys.
+ *
+ * One Tier-1-only extension: locally-created rows that haven't been acked
+ * yet OMIT `created_at` (its absence is the sync plugin's create/update
+ * discriminator — it must never be set client-side), and they sort NEWEST:
+ * a trip the user just created belongs at the top of a descending list.
+ */
+function compareTier1Trips(a: Trip, b: Trip): number {
+  if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
+  // `created_at` is typed required because hydrated rows always carry it;
+  // the casts acknowledge the unacked-local-create exception above.
+  const aCreated = a.created_at as string | undefined;
+  const bCreated = b.created_at as string | undefined;
+  if (aCreated === undefined || bCreated === undefined) {
+    if (aCreated !== undefined) return 1; // b is the local create → b first
+    if (bCreated !== undefined) return -1; // a is the local create → a first
+    return a.id.localeCompare(b.id);
+  }
+  const cmp = bCreated.localeCompare(aCreated);
+  return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+}
+
+/**
+ * Pure Tier-1 list selector — reproduces the v1 `useTrips` queryFn contract
+ * (archived partition on `archived_at`, `{ isOwner, collaboratorRole }`
+ * tagging, owner-first sort) over the hydrated store record. Exported for
+ * tests: feed it a fixture record and compare against the queryFn's shape.
+ *
+ * `roleByTripId` comes from the Tier-2 collaborators query; while it is
+ * unknown (offline, still fetching) non-owner rows degrade to
+ * `collaboratorRole: null` — the viewer-safe value (`useTripRole` treats
+ * null as no-permissions).
+ */
+export function selectTier1Trips(
+  record: Record<string, Trip>,
+  opts: {
+    archived: boolean;
+    callerId: string | null;
+    roleByTripId: Partial<Record<Uuid, TripCollaboratorRole>> | undefined;
+  },
+): Trip[] {
+  const { archived, callerId, roleByTripId } = opts;
+  const out: Trip[] = [];
+  for (const row of Object.values(record)) {
+    if (!row) continue;
+    if ((row.archived_at != null) !== archived) continue;
+    // Unacked local creates omit user_id (stamped server-side at the write
+    // boundary) — only the engine user's own store can contain such a row,
+    // so it backfills to the caller. Hydrated rows always carry it.
+    const ownerId = (row.user_id as Uuid | undefined) ?? (callerId as Uuid | null);
+    const isOwner = callerId !== null && ownerId === callerId;
+    out.push({
+      ...row,
+      ...(ownerId !== null ? { user_id: ownerId } : {}),
+      isOwner,
+      collaboratorRole: isOwner ? null : roleByTripId?.[row.id] ?? null,
+    });
+  }
+  return out.sort(compareTier1Trips);
+}
+
+/**
+ * Dress Tier-1-served data in the `UseQueryResult` shape consumers already
+ * destructure (`data`, `isLoading`, `error`, `refetch`, `isRefetching`, …).
+ * The paused legacy query is spread first so fetch-state fields stay live;
+ * the success-state fields are overridden because the store IS the data.
+ *
+ * `refetch` (pull-to-refresh) does both: forces an incremental Tier-1 pull
+ * AND delegates to the legacy refetch — the latter still fetches even while
+ * `enabled: false` (TanStack contract), which keeps the D2 fallback cache
+ * warm and drives the caller's `isRefetching` spinner. One extra request on
+ * an explicit user gesture is an acceptable cost for that coherence.
+ */
+function tier1SuccessResult<T>(paused: UseQueryResult<T, Error>, data: T): UseQueryResult<T, Error> {
+  return {
+    ...paused,
+    data,
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isLoadingError: false,
+    isRefetchError: false,
+    isError: false,
+    isSuccess: true,
+    isPlaceholderData: false,
+    refetch: async (options?: RefetchOptions) => {
+      resyncTier1();
+      return paused.refetch(options);
+    },
+  } as UseQueryResult<T, Error>;
+}
 
 export type UseTripsOptions = { archived?: boolean };
 
@@ -71,10 +243,63 @@ export type UseTripsOptions = { archived?: boolean };
  * The filter applies uniformly to owned + collaborator trips (RLS is
  * row-level, not partition-level).
  */
-export function useTrips(opts: UseTripsOptions = {}) {
+export function useTrips(opts: UseTripsOptions = {}): UseQueryResult<Trip[], Error> {
   const archived = opts.archived ?? false;
-  return useQuery<Trip[]>({
+
+  // [Hook 1/3] Caller's accepted-collaborator role map for the Tier-1
+  // branch's `collaboratorRole` tagging. Collaborators are Tier-2 — they
+  // stay on TanStack permanently (not in the sync allowlist's write slice),
+  // which is why this is a separate query instead of a store read. Disabled
+  // until the engine is active (flag-off: zero behavior change, never
+  // fetches); while its data is unknown the selector degrades non-owner
+  // rows to the viewer-safe `collaboratorRole: null`.
+  const rolesQuery = useQuery<Partial<Record<Uuid, TripCollaboratorRole>>>({
+    // Key sits under the trip-collaborators prefix so the existing blanket
+    // invalidations in trip-collaborators.ts (invite accept/revoke) refresh
+    // it without new wiring.
+    queryKey: [...tripCollaboratorsKeys.all, 'my-roles'],
+    enabled: isTier1SyncActive(),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      const callerId = userData.user?.id;
+      if (!callerId) return {};
+      const { data, error } = await supabase
+        .from('trip_collaborators')
+        .select('trip_id, role')
+        .eq('user_id', callerId)
+        .eq('status', 'accepted');
+      if (error) throw error;
+      return Object.fromEntries(
+        (data ?? []).map((r) => [r.trip_id as Uuid, r.role as TripCollaboratorRole]),
+      ) as Partial<Record<Uuid, TripCollaboratorRole>>;
+    },
+  });
+  const roleByTripId = rolesQuery.data;
+
+  // [Hook 2/3] Tier-1 selector. `use$` re-runs the selector on every render
+  // (fresh `archived` / `roleByTripId` closures) and re-renders when a
+  // TRACKED observable changes; the trips root is read FIRST so it is
+  // tracked even while the engine is still booting — the first hydration
+  // write is what flips the facade. Tracking is per-table: changes to other
+  // store roots (places, expenses, …) never re-render this hook.
+  const tier1Trips = use$((): Trip[] | null => {
+    const record = tier1Store$.trips.get();
+    const hasRows = record != null && Object.keys(record).length > 0;
+    if (!hasRows || !isTier1SyncActive()) return null; // → fallback branch
+    return selectTier1Trips(record, {
+      archived,
+      callerId: getTier1SyncUserId(),
+      roleByTripId,
+    });
+  });
+  const tier1Serves = tier1Trips !== null;
+
+  // [Hook 3/3] The v1 query — queryFn byte-identical, paused (not unmounted)
+  // while Tier-1 serves so its cache stays warm for the D2 fallback.
+  const query = useQuery<Trip[]>({
     queryKey: tripsKeys.list({ archived }),
+    enabled: !tier1Serves,
     queryFn: async () => {
       // 1. Fetch the UNION via RLS. NOTE: no .eq('user_id', ...) filter —
       //    the trips_collab_select policy already gates this to
@@ -138,12 +363,37 @@ export function useTrips(opts: UseTripsOptions = {}) {
       });
     },
   });
+
+  if (!tier1Serves) return query;
+  return tier1SuccessResult(query, tier1Trips as Trip[]);
 }
 
-export function useTrip(id: Uuid | undefined) {
-  return useQuery<Trip | null>({
+export function useTrip(id: Uuid | undefined): UseQueryResult<Trip | null, Error> {
+  // [Hook 1/2] Tier-1 row selector — tracks ONLY this trip's store node
+  // (not the trips root), so a detail screen re-renders on changes to its
+  // own row and on the hydration write that first creates it, never on
+  // sibling-trip churn. Hydration-aware fallback is per-row here: a missing
+  // row (engine off, store still pulling, or an archived trip evicted from
+  // a stale cache) falls through to the server fetch.
+  const tier1Trip = use$((): Trip | null => {
+    if (!id) return null;
+    // Read BEFORE the active-check so the node is tracked from first render.
+    const row = tier1Store$.trips[id]?.get();
+    if (!row || !isTier1SyncActive()) return null; // → fallback branch
+    // v1 contract: detail rows carry no isOwner/collaboratorRole tagging
+    // (consumers are defensive per the Trip type docs). Only backfill the
+    // unacked-local-create gap: user_id is absent until the server ack
+    // merges it, and `useTripRole` derives ownership from it.
+    const userId = (row.user_id as Uuid | undefined) ?? (getTier1SyncUserId() as Uuid | null);
+    return userId !== null && userId !== row.user_id ? { ...row, user_id: userId } : row;
+  });
+  const tier1Serves = tier1Trip !== null;
+
+  // [Hook 2/2] The v1 detail query — queryFn byte-identical, paused while
+  // Tier-1 serves.
+  const query = useQuery<Trip | null>({
     queryKey: id ? tripsKeys.detail(id) : ['trips', 'detail', 'none'],
-    enabled: Boolean(id),
+    enabled: Boolean(id) && !tier1Serves,
     queryFn: async () => {
       if (!id) return null;
       const { data, error } = await supabase
@@ -155,6 +405,9 @@ export function useTrip(id: Uuid | undefined) {
       return (data as Trip | null) ?? null;
     },
   });
+
+  if (!tier1Serves) return query;
+  return tier1SuccessResult<Trip | null>(query, tier1Trip);
 }
 
 export function useCreateTrip() {
@@ -162,6 +415,39 @@ export function useCreateTrip() {
   return useMutation<Trip, Error, CreateTripInput>({
     mutationFn: async (input) => {
       const parsed = createTripSchema.parse(input);
+      // S2.8.4: sync-create only when the store is already serving reads
+      // (has rows) — see the facade header for why bare isTier1SyncActive()
+      // is not enough (a create into an empty, still-hydrating store would
+      // flip the read facade to a one-trip list). Until first hydration,
+      // creates ride the legacy path the reads are also serving from; the
+      // engine's incremental pull picks the new row up.
+      if (isTier1SyncActive() && tier1TripsStoreHasRows()) {
+        // Offline-safe optimistic create: the row is in the local store (and
+        // the trips list, via the facade) synchronously; the engine queues
+        // the INSERT. created_at/updated_at/user_id are NEVER set on the
+        // store row — created_at absence is the plugin's create/update
+        // discriminator, and user_id is stamped at the write boundary.
+        const id = syncCreateTrip({
+          title: parsed.title,
+          start_date: parsed.start_date ?? null,
+          end_date: parsed.end_date ?? null,
+          daily_hours_budget: parsed.daily_hours_budget,
+          transport_mode: parsed.transport_mode,
+          timezone: parsed.timezone ?? null,
+        });
+        const row = tier1Store$.trips[id]?.peek() as Trip; // just written — present
+        // The placeholders below exist ONLY in this RETURN value so it
+        // satisfies the Trip contract for callers (every current caller —
+        // new.tsx, useSampleTrip, useAiDraftCommit — reads just `trip.id`).
+        // Nothing here writes them back into the store.
+        const nowIso = new Date().toISOString();
+        return {
+          ...row,
+          user_id: (row.user_id as Uuid | undefined) ?? ((getTier1SyncUserId() ?? '') as Uuid),
+          created_at: (row.created_at as string | undefined) ?? nowIso,
+          updated_at: (row.updated_at as string | undefined) ?? nowIso,
+        };
+      }
       const { data: userData, error: userErr } = await supabase.auth.getUser();
       if (userErr || !userData.user) throw userErr ?? new Error('Not authenticated');
       const { data, error } = await supabase
@@ -173,11 +459,20 @@ export function useCreateTrip() {
       return data as Trip;
     },
     onSuccess: () => {
+      // Fires in both branches — load-bearing flag-off; flag-on it marks the
+      // paused facade queries stale (no fetch while disabled) and keeps the
+      // D2 fallback cache coherent. See the facade header's invalidation note.
       qc.invalidateQueries({ queryKey: tripsKeys.all });
     },
   });
 }
 
+/**
+ * Hard-delete a trip. Per decision D5 this stays on the legacy PostgREST
+ * path even flag-on: trips have no tombstone column by design (0027 —
+ * archive is their lifecycle), so a hard delete is an online-only
+ * destructive op that must not route through the sync engine.
+ */
 export function useDeleteTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid>({
@@ -187,6 +482,13 @@ export function useDeleteTrip() {
       return id;
     },
     onSuccess: (id) => {
+      // D5: after the server ack, drop the hydrated row from the Tier-1
+      // store WITHOUT a network echo (no delete action + no fieldDeleted for
+      // trips — contract documented on pruneTripFromLocalStore). Incremental
+      // pulls can never observe a hard DELETE (no row left to carry it), so
+      // without this the trip would ghost in the flag-on list forever.
+      // No-ops flag-off (the store never hydrated the row).
+      pruneTripFromLocalStore(id);
       qc.invalidateQueries({ queryKey: tripsKeys.all });
       qc.removeQueries({ queryKey: tripsKeys.detail(id) });
     },
@@ -226,6 +528,15 @@ export function useArchiveTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid, ArchiveContext>({
     mutationFn: async (tripId) => {
+      // S2.8.4: flag-on (row hydrated) the archive is a sync write —
+      // offline-safe, instant in the Tier-1 list, and UNDOABLE: the
+      // tombstoneTrip entry (trips "tombstone" == archive; no deleted
+      // column by design) goes onto the session undo stack, which is what
+      // the S2.8.8 UndoToast surfaces.
+      if (tier1TripRow(tripId)) {
+        getSessionUndoStack().push(syncTombstoneTrip(tripId));
+        return tripId;
+      }
       const userId = await getCallerId();
       const { error } = await supabase
         .from('trips')
@@ -261,6 +572,13 @@ export function useUnarchiveTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid, ArchiveContext>({
     mutationFn: async (tripId) => {
+      // S2.8.4: sync write when the row is hydrated. The returned UndoEntry
+      // is deliberately DISCARDED — unarchive IS the inverse affordance (and
+      // the undo of an archive); pushing it would stack noise.
+      if (tier1TripRow(tripId)) {
+        syncUpdateTrip(tripId, { archived_at: null }, 'Unarchive trip');
+        return tripId;
+      }
       const userId = await getCallerId();
       const { error } = await supabase
         .from('trips')
@@ -367,6 +685,17 @@ export function useUpdateTrip(tripId: Uuid) {
       // Empty patch is a no-op; avoid issuing a pointless UPDATE that would
       // still bump updated_at via the trigger.
       if (Object.keys(patch).length === 0) return tripId;
+      // S2.8.4: sync write when the row is hydrated (UpdateTripPatch is a
+      // strict subset of TripWritePatch, so this is shape-safe). The
+      // UndoEntry is discarded — the S2.8 plan pushes undo only for archive
+      // (above) and the D4 mode-switch (wired at the S2.8.7 call site);
+      // generic metadata edits are not in the five-case undo catalog.
+      // Editor-collaborator writes work identically: the engine syncs under
+      // the user's JWT, so RLS + the column-restriction trigger still gate.
+      if (tier1TripRow(tripId)) {
+        syncUpdateTrip(tripId, patch);
+        return tripId;
+      }
       // Touch the auth session so the supabase client picks up an expired
       // JWT before the UPDATE hits PostgREST. RLS + the trigger gate
       // authorization — no client-side user_id filter (see fn doc).
@@ -406,6 +735,12 @@ export function useDuplicateTrip() {
       return data as Uuid;
     },
     onSuccess: () => {
+      // D5: duplicate stays on the RPC (the clone is server-knowable only).
+      // Flag-on, force an incremental pull so the cloned trip + its places
+      // land in the Tier-1 store promptly (their fresh server-stamped
+      // updated_at rides the changesSince watermark) instead of waiting for
+      // the next realtime event or reconnect.
+      if (isTier1SyncActive()) resyncTier1();
       qc.invalidateQueries({ queryKey: ACTIVE_KEY });
     },
   });
@@ -455,6 +790,14 @@ export function useUpdateTripBudget(tripId: Uuid) {
       // `null` is a meaningful value (clear the ceiling); we deliberately
       // do NOT short-circuit on `null` like we would on `undefined`.
       //
+      // S2.8.4: sync write when the row is hydrated (undo discarded — not
+      // in the five-case catalog). The onSettled invalidation of
+      // tripExpensesKeys still fires below: the expense rollup is Tier-2
+      // and needs it in BOTH branches.
+      if (tier1TripRow(tripId)) {
+        syncUpdateTrip(tripId, { total_budget }, 'Change budget');
+        return tripId;
+      }
       // Phase 25 Step 25.1: no `.eq('user_id', userId)` filter. The
       // `trips_editor_budget_update` RLS policy explicitly grants editors
       // permission to UPDATE total_budget; the prior client filter
@@ -553,14 +896,25 @@ export function useUpdateRouteRenderMode(tripId: Uuid) {
 
   return useMutation<RouteRenderMode, Error, RouteRenderMode, UpdateRouteRenderModeContext>({
     mutationFn: async (mode) => {
-      // Persist the new mode. RLS handles authorization (owner OR
-      // editor-via-trips_editor_budget_update policy + the trigger
-      // allow-list which now includes route_render_mode).
-      const { error } = await supabase
-        .from('trips')
-        .update({ route_render_mode: mode })
-        .eq('id', tripId);
-      if (error) throw error;
+      // S2.8.4: sync write when the row is hydrated — offline-safe, so a
+      // flag-on offline toggle persists locally and queues; the optimize
+      // re-render below then fails (no network) and is swallowed exactly
+      // like the legacy best-effort path (the S2.8.7 pendingRecompute pill
+      // covers the lag). UndoEntry discarded HERE: the D4 drag-triggered
+      // mode-switch undo is wired at its S2.8.7 call site, not on every
+      // settings toggle.
+      if (tier1TripRow(tripId)) {
+        syncUpdateTrip(tripId, { route_render_mode: mode }, 'Change route mode');
+      } else {
+        // Persist the new mode. RLS handles authorization (owner OR
+        // editor-via-trips_editor_budget_update policy + the trigger
+        // allow-list which now includes route_render_mode).
+        const { error } = await supabase
+          .from('trips')
+          .update({ route_render_mode: mode })
+          .eq('id', tripId);
+        if (error) throw error;
+      }
 
       // Immediately re-render legs with the new mode. Best-effort: a
       // failure here does NOT roll back the persisted mode (the user
