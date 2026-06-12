@@ -559,6 +559,25 @@ v1 records (Phases 3-26) live in [[phase3-through-phase26-commits]]
   sync:validate 7/7 GO. Residual owed: analytics MV counts tombstones
   (Wave C migration); S1 device smoke STILL owed.
 
+## S2.8 Wave B1 committed + pushed 2026-06-12 (1 commit)
+
+- `7c52cd7` — feat(sync): S2.8 Wave B1 — trips read/write facade on the
+  Tier-1 store
+  (2 files, 423 ins/14 del: src/api/trips.ts useTrips/useTrip use$ selector
+   from tier1Store$ when flag active AND store has rows — v1 cache stays
+   authoritative until first hydration, v1 queryFn byte-identical paused not
+   unmounted; create/update/budget/render-mode/archive/unarchive repointed
+   to sync mutations when Tier-1-served, archive pushes UndoEntry;
+   delete/duplicate stay legacy server paths; src/sync/hydrate.ts
+   pruneTripFromLocalStore() verified zero-network-emission store delete +
+   resyncTier1(). created_at never written client-side — plugin create
+   discriminator.)
+- Pushed origin/master fast-forward 24d1e92..7c52cd7. Note: remote tip was
+  24d1e92, ahead of my Wave A record (b97af68) — Wave A-to-B interim commits
+  landed between sessions, ff was clean regardless.
+- Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate
+  7/7 GO. S1 device smoke STILL owed.
+
 ## Leftover artifacts — RESOLVED 2026-06-10 in 7572d32
 
 `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`
