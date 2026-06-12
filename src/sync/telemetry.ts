@@ -14,7 +14,7 @@
  */
 
 import { Sentry } from '../lib/sentry';
-import type { Tier1Table } from './allowlist';
+import type { Tier1Table, Tier1WriteDropKind } from './allowlist';
 import { TIER1_TABLES } from './allowlist';
 
 export interface SyncEntityTelemetry {
@@ -24,6 +24,9 @@ export interface SyncEntityTelemetry {
   lastSyncAt: number | null;
   /** Consecutive load failures since the last success. */
   errorCount: number;
+  /** Failed outbound writes (create/update/tombstone) — S2.4. Retries are
+   * counted per attempt; a healthy queue drains back to no new increments. */
+  writeErrorCount: number;
 }
 
 export interface SyncTelemetrySnapshot {
@@ -40,6 +43,14 @@ export interface SyncTelemetrySnapshot {
   droppedUnknownFields: number;
   /** Restricted-field strips — every one of these is a C3 bug upstream. */
   tosViolations: number;
+  /**
+   * Server-only fields stripped from WRITE payloads (S2.4, C1: day_index,
+   * order_in_day, created_at, updated_at, …). NOT a bug signal per se —
+   * updatePartial:false means hydrated server fields ride along on every
+   * full-row update — but a sudden spike on a field that should never be in
+   * a patch (day_index on a fresh create) is worth investigating.
+   */
+  strippedServerOnlyWriteFields: number;
   entities: Record<Tier1Table, SyncEntityTelemetry>;
   /** Age of the OLDEST per-entity lastSyncAt (ms), or null if any entity has
    * never synced — the honest "how stale could the store be" number. */
@@ -48,7 +59,7 @@ export interface SyncTelemetrySnapshot {
 
 function emptyEntities(): Record<Tier1Table, SyncEntityTelemetry> {
   return Object.fromEntries(
-    TIER1_TABLES.map((t) => [t, { rowCount: 0, lastSyncAt: null, errorCount: 0 }]),
+    TIER1_TABLES.map((t) => [t, { rowCount: 0, lastSyncAt: null, errorCount: 0, writeErrorCount: 0 }]),
   ) as Record<Tier1Table, SyncEntityTelemetry>;
 }
 
@@ -58,8 +69,14 @@ const state = {
   degradedReason: null as string | null,
   droppedUnknownFields: 0,
   tosViolations: 0,
+  strippedServerOnlyWriteFields: 0,
   entities: emptyEntities(),
 };
+
+/** Dev-warn dedupe for routine server-only write strips — `table:field`.
+ * Full-row updates strip day_index/updated_at/… EVERY time; warning once per
+ * combination per session keeps it loud without drowning the console. */
+const warnedWriteStrips = new Set<string>();
 
 function breadcrumb(message: string, data?: Record<string, unknown>): void {
   try {
@@ -95,6 +112,51 @@ export function recordHydrationFailure(table: Tier1Table, error: unknown): void 
   });
 }
 
+export function recordWriteFailure(table: Tier1Table, error: unknown): void {
+  state.entities[table].writeErrorCount += 1;
+  breadcrumb('sync write failure', {
+    table,
+    message: error instanceof Error ? error.message : String(error),
+    writeErrorCount: state.entities[table].writeErrorCount,
+  });
+}
+
+/**
+ * A field was dropped from an outbound WRITE payload (S2.4 — the
+ * sanitizeForTier1Write boundary in hydrate.ts).
+ *
+ *  - 'restricted'  → C3 violation, same loud path as the read boundary.
+ *  - 'server_only' → C1 strip (day_index/order_in_day/updated_at/…) —
+ *    counted always, dev-warned once per table:field (expected riders on
+ *    every full-row update; see strippedServerOnlyWriteFields docs).
+ *  - 'unknown'     → default-deny, counted with the read-path counter.
+ */
+export function recordWriteSanitizedDrop(
+  table: Tier1Table,
+  field: string,
+  kind: Tier1WriteDropKind,
+): void {
+  if (kind === 'restricted') {
+    // Same severity as a read-side strip: Tier-2 data headed for Postgres.
+    recordDroppedField(table, field, true);
+    return;
+  }
+  if (kind === 'server_only') {
+    state.strippedServerOnlyWriteFields += 1;
+    const dedupeKey = `${table}:${field}`;
+    if (!warnedWriteStrips.has(dedupeKey)) {
+      warnedWriteStrips.add(dedupeKey);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          `[sync] C1: server-only field "${field}" stripped from ${table} write payload (expected for full-row updates; never client-sent)`,
+        );
+      }
+    }
+    return;
+  }
+  state.droppedUnknownFields += 1;
+}
+
 export function recordDroppedField(table: Tier1Table, field: string, restricted: boolean): void {
   if (restricted) {
     state.tosViolations += 1;
@@ -122,6 +184,7 @@ export function getSyncTelemetry(): SyncTelemetrySnapshot {
     degradedReason: state.degradedReason,
     droppedUnknownFields: state.droppedUnknownFields,
     tosViolations: state.tosViolations,
+    strippedServerOnlyWriteFields: state.strippedServerOnlyWriteFields,
     entities: Object.fromEntries(
       TIER1_TABLES.map((t) => [t, { ...state.entities[t] }]),
     ) as Record<Tier1Table, SyncEntityTelemetry>,
@@ -136,5 +199,7 @@ export function _resetSyncTelemetryForTests(): void {
   state.degradedReason = null;
   state.droppedUnknownFields = 0;
   state.tosViolations = 0;
+  state.strippedServerOnlyWriteFields = 0;
   state.entities = emptyEntities();
+  warnedWriteStrips.clear();
 }

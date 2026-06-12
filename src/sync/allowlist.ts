@@ -363,3 +363,193 @@ export function sanitizeForTier1<K extends Tier1Table>(
 export function tier1SelectColumns(table: Tier1Table): string {
   return TIER1_FIELDS[table].join(',');
 }
+
+// ===========================================================================
+// Tier-1 WRITE firewall (v2 S2.4, risk condition C1)
+// ===========================================================================
+//
+// Reads and writes have DIFFERENT allowlists. TIER1_FIELDS above answers
+// "what may enter the store from the server"; TIER1_WRITE_FIELDS answers the
+// stricter question "what may the CLIENT send back". The gap between the two
+// is exactly the C1 refinement (docs/v2/risks-and-decisions.md):
+//
+//   ORDER IS TWO FIELDS WITH TWO OWNERS. `manual_rank` is USER-intent order —
+//   client-writable, LWW-synced, written by offline drag, never reverted.
+//   `day_index` / `order_in_day` are OPTIMIZER-computed order — written ONLY
+//   by the optimize-trip Edge Function's mutex path, server → client, one
+//   way. They flow INTO the store as reads (they're in TIER1_FIELDS) but a
+//   client write carrying them must be stripped before it reaches PostgREST:
+//   under per-field LWW a stale offline client replaying day_index would
+//   overwrite a fresher server optimize, which is precisely the conflict C1
+//   exists to prevent. Same posture for `details_refreshed_at` (stamped by
+//   the place-details refresh path) and `created_at`/`updated_at`
+//   (handle_times() server-stamps both; updated_at IS the conflict clock —
+//   a client must never supply its own).
+//
+// This matters doubly because the syncedSupabase plugin hard-codes
+// `updatePartial: false`: every UPDATE sends the FULL store row, so hydrated
+// server-only fields (day_index, updated_at, …) ride along on every routine
+// write and MUST be stripped here — their presence in a patch is expected,
+// not a bug, which is why they're dropped (with telemetry) rather than
+// thrown on.
+
+/** The write-enabled slice this wave (S2.4): trips + trip_places only. The
+ * other six roots stay read-only until a later slice widens them. */
+export type Tier1WriteTable = Extract<Tier1Table, 'trips' | 'trip_places'>;
+
+/**
+ * Client-writable column subsets, default-deny, compile-bound to the row
+ * types exactly like TIER1_FIELDS (a typo or non-existent column is a type
+ * error). Every entry MUST be user-authored content or a user-intent flag.
+ *
+ * NEVER add (C1 — server-only writers):
+ *   - trip_places.day_index / order_in_day  — optimizer-computed order
+ *   - trip_places.details_refreshed_at      — server refresh stamp
+ *   - created_at / updated_at (any table)   — handle_times() server-stamps;
+ *     updated_at is the LWW conflict clock
+ *   - trips.user_id                         — ownership; the sync engine
+ *     stamps it from the authenticated session on CREATE (see hydrate.ts),
+ *     and RLS WITH CHECK (auth.uid() = user_id) verifies it server-side
+ */
+export const TIER1_WRITE_FIELDS: { readonly [K in Tier1WriteTable]: FieldsOf<Tier1RowTypes[K]> } = {
+  // trips has NO `deleted` (archive via archived_at IS its lifecycle — 0027
+  // header) and no tombstone field here by design.
+  trips: [
+    'title',
+    'start_date',
+    'end_date',
+    'daily_hours_budget',
+    'anchor_place_id',
+    'transport_mode',
+    'timezone',
+    'archived_at',
+    'currency',
+    'total_budget',
+    'route_render_mode',
+    'cover_photo_google_place_id',
+  ],
+  // `manual_rank` is the ONLY client-writable order field (C1 refinement).
+  // `deleted` is writable: tombstoning (`deleted: true`) IS the Wave-2
+  // delete path — hard DELETEs don't replicate through incremental pulls.
+  trip_places: [
+    'google_place_id',
+    'user_title',
+    'category',
+    'lat',
+    'lng',
+    'visit_duration_minutes',
+    'notes',
+    'arrive_after',
+    'leave_before',
+    'pinned_start',
+    'manual_rank',
+    'deleted',
+  ],
+};
+
+export const TIER1_WRITE_TABLES = Object.keys(TIER1_WRITE_FIELDS) as readonly Tier1WriteTable[];
+
+export function isTier1WriteTable(table: Tier1Table): table is Tier1WriteTable {
+  return Object.prototype.hasOwnProperty.call(TIER1_WRITE_FIELDS, table);
+}
+
+const TIER1_WRITE_FIELD_SETS: { [K in Tier1WriteTable]: ReadonlySet<string> } = Object.fromEntries(
+  TIER1_WRITE_TABLES.map((t) => [t, new Set<string>(TIER1_WRITE_FIELDS[t])]),
+  // Same unknown-bridge as TIER1_FIELD_SETS (Object.fromEntries widens keys).
+) as unknown as { [K in Tier1WriteTable]: ReadonlySet<string> };
+
+/**
+ * Structural identity fields the sync ENGINE requires in write payloads —
+ * allowed through not because the client "owns" them but because the
+ * machinery cannot function without them:
+ *
+ *   - `id` (always): the syncedSupabase plugin's update() builds
+ *     `.eq('id', input.id)` FROM the payload — stripping id would break
+ *     every update — and a create's insert must carry the client-generated
+ *     id so the returned row matches the store key. (The S2.4 spec said
+ *     "id on CREATE only"; update retention is engine-mandated. Re-setting
+ *     a PK to its own value is a no-op, and RLS re-checks the row.)
+ *   - `trip_id` (CREATE only): a new child row must declare its parent;
+ *     RLS WITH CHECK validates the caller can write that trip. On UPDATE it
+ *     is dropped (server_only) — the parent of an existing row is not
+ *     client-reassignable through sync.
+ *
+ * Create-vs-update is detected the same way the plugin itself does it
+ * (fieldCreatedAt presence): hydrated rows ALWAYS carry created_at (NOT
+ * NULL, in the select projection), locally-created rows must not (the
+ * server stamps it). This is also why app code must never set created_at on
+ * a new row — it would make the engine misclassify the create as an update.
+ */
+const TIER1_WRITE_STRUCTURAL: {
+  readonly [K in Tier1WriteTable]: { always: ReadonlySet<string>; createOnly: ReadonlySet<string> };
+} = {
+  trips: { always: new Set(['id']), createOnly: new Set() },
+  trip_places: { always: new Set(['id']), createOnly: new Set(['trip_id']) },
+};
+
+/** Why a field was dropped from a write payload:
+ *  - 'restricted'  — Google-restricted content name (C3): a bug upstream.
+ *  - 'server_only' — in the READ allowlist but not client-writable (C1:
+ *    day_index, order_in_day, updated_at, …). Expected on every full-row
+ *    update (updatePartial: false), stripped loudly-but-deduped.
+ *  - 'unknown'     — not in any allowlist (default-deny). */
+export type Tier1WriteDropKind = 'restricted' | 'server_only' | 'unknown';
+
+export interface WriteSanitizeOptions {
+  /** Same contract as SanitizeOptions.mode — 'throw' (default) raises
+   * SyncTosViolationError on restricted names; 'strip' drops them. */
+  mode?: 'throw' | 'strip';
+  /** Invoked for every dropped field with its classification. */
+  onDrop?: (field: string, kind: Tier1WriteDropKind) => void;
+}
+
+/**
+ * Default-deny projection of a CLIENT WRITE onto the table's write subset —
+ * the C1 mirror of sanitizeForTier1. Wired into the sync engine's
+ * `transform.save` (hydrate.ts) so every create/update the plugin emits
+ * passes through here before reaching PostgREST.
+ *
+ * - Write-allowlisted fields copy through (undefined skipped — PostgREST
+ *   must not receive explicit undefined).
+ * - Structural ids pass per TIER1_WRITE_STRUCTURAL above.
+ * - Restricted Google names THROW (default) or strip per options.mode (C3).
+ * - Server-only fields (read-allowlisted, not writable) are DROPPED and
+ *   reported — a client write attempting day_index is stripped, never sent.
+ * - Unknown fields are dropped (default-deny).
+ *
+ * Pure function: no I/O, never mutates `patch`.
+ */
+export function sanitizeForTier1Write<K extends Tier1WriteTable>(
+  table: K,
+  patch: Record<string, unknown>,
+  options?: WriteSanitizeOptions,
+): Partial<Tier1RowTypes[K]> {
+  if (!isTier1WriteTable(table)) {
+    // Runtime guard for untyped callers (the engine wires save only for
+    // write-enabled roots, but a JS caller could bypass the types).
+    throw new Error(
+      `[sync] sanitizeForTier1Write: table "${table as string}" is not write-enabled in this wave (S2.4 slice = ${TIER1_WRITE_TABLES.join(', ')})`,
+    );
+  }
+  const mode = options?.mode ?? 'throw';
+  const writable = TIER1_WRITE_FIELD_SETS[table];
+  const structural = TIER1_WRITE_STRUCTURAL[table];
+  const readAllowed = TIER1_FIELD_SETS[table];
+  // Mirror the plugin's own create detection (fieldCreatedAt falsy ⇒ create).
+  const isCreate = !patch['created_at'];
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(patch)) {
+    const isStructural = structural.always.has(key) || (isCreate && structural.createOnly.has(key));
+    if (writable.has(key) || isStructural) {
+      if (patch[key] !== undefined) out[key] = patch[key];
+      continue;
+    }
+    if (isRestrictedFieldName(key)) {
+      if (mode === 'throw') throw new SyncTosViolationError(table, key);
+      options?.onDrop?.(key, 'restricted');
+      continue;
+    }
+    options?.onDrop?.(key, readAllowed.has(key) ? 'server_only' : 'unknown');
+  }
+  return out as Partial<Tier1RowTypes[K]>;
+}

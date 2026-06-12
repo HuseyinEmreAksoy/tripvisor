@@ -9,10 +9,16 @@
 import {
   TIER1_FIELDS,
   TIER1_TABLES,
+  TIER1_WRITE_FIELDS,
+  TIER1_WRITE_TABLES,
   SyncTosViolationError,
   isRestrictedFieldName,
+  isTier1WriteTable,
   sanitizeForTier1,
+  sanitizeForTier1Write,
   tier1SelectColumns,
+  type Tier1Table,
+  type Tier1WriteDropKind,
 } from '../allowlist';
 
 describe('sanitizeForTier1 — restricted Google content', () => {
@@ -147,5 +153,211 @@ describe('allowlist self-consistency (the two layers cannot drift)', () => {
     expect(fields).toContain('id');
     expect(fields).toContain('created_at');
     expect(fields).toContain('updated_at'); // LWW ordering depends on it
+  });
+});
+
+// ===========================================================================
+// S2.4 — the WRITE subset (C1: optimizer fields are server-only writers)
+// ===========================================================================
+
+describe('sanitizeForTier1Write — C1 server-only fields are stripped', () => {
+  /** A realistic trip_places UPDATE payload: updatePartial:false means the
+   * full hydrated row rides along, server-stamped fields included. */
+  const hydratedPlaceRow = {
+    id: 'p1',
+    trip_id: 't1',
+    google_place_id: 'ChIJ123',
+    user_title: 'Louvre',
+    category: 'museum',
+    lat: 48.86,
+    lng: 2.33,
+    visit_duration_minutes: 90,
+    day_index: 2, // ← optimizer-computed (C1)
+    order_in_day: 3, // ← optimizer-computed (C1)
+    notes: 'buy tickets online',
+    details_refreshed_at: '2026-06-01T00:00:00Z',
+    arrive_after: null,
+    leave_before: '17:00:00',
+    pinned_start: null,
+    manual_rank: 'a0V',
+    deleted: false,
+    created_at: '2026-05-01T00:00:00Z',
+    updated_at: '2026-06-01T12:00:00Z',
+  };
+
+  it('strips day_index + order_in_day from trip_places writes (the C1 invariant)', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write('trip_places', hydratedPlaceRow, {
+      onDrop: (f, k) => dropped.push([f, k]),
+    }) as Record<string, unknown>;
+    expect(out).not.toHaveProperty('day_index');
+    expect(out).not.toHaveProperty('order_in_day');
+    expect(out).not.toHaveProperty('details_refreshed_at');
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['day_index', 'server_only'],
+        ['order_in_day', 'server_only'],
+        ['details_refreshed_at', 'server_only'],
+      ]),
+    );
+  });
+
+  it('never client-sends created_at / updated_at (handle_times owns the conflict clock)', () => {
+    const out = sanitizeForTier1Write('trip_places', hydratedPlaceRow) as Record<string, unknown>;
+    expect(out).not.toHaveProperty('created_at');
+    expect(out).not.toHaveProperty('updated_at');
+
+    const tripsOut = sanitizeForTier1Write('trips', {
+      id: 't1',
+      title: 'Rome',
+      created_at: '2026-05-01T00:00:00Z',
+      updated_at: '2099-01-01T00:00:00Z', // a forged clock must not pass
+    }) as Record<string, unknown>;
+    expect(tripsOut).not.toHaveProperty('created_at');
+    expect(tripsOut).not.toHaveProperty('updated_at');
+  });
+
+  it('manual_rank passes (the ONLY client-writable order field)', () => {
+    const out = sanitizeForTier1Write('trip_places', hydratedPlaceRow) as Record<string, unknown>;
+    expect(out['manual_rank']).toBe('a0V');
+  });
+
+  it('deleted: true passes — tombstoning is the Wave-2 delete path', () => {
+    const out = sanitizeForTier1Write('trip_places', {
+      id: 'p1',
+      created_at: '2026-05-01T00:00:00Z',
+      deleted: true,
+    }) as Record<string, unknown>;
+    expect(out).toEqual({ id: 'p1', deleted: true });
+  });
+
+  it('trips: user_id is stripped (engine stamps it on create; RLS verifies)', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trips',
+      { id: 't1', user_id: 'u-evil', title: 'Rome' },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    ) as Record<string, unknown>;
+    expect(out).toEqual({ id: 't1', title: 'Rome' });
+    expect(dropped).toEqual([['user_id', 'server_only']]);
+  });
+
+  it('restricted Google fields THROW by default and strip with telemetry in strip mode (C3)', () => {
+    expect(() =>
+      sanitizeForTier1Write('trip_places', { id: 'p1', rating: 4.5 }),
+    ).toThrow(SyncTosViolationError);
+
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trip_places',
+      { id: 'p1', rating: 4.5, day_index: 2, user_title: 'ok' },
+      { mode: 'strip', onDrop: (f, k) => dropped.push([f, k]) },
+    ) as Record<string, unknown>;
+    expect(out).toEqual({ id: 'p1', user_title: 'ok' });
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['rating', 'restricted'],
+        ['day_index', 'server_only'],
+      ]),
+    );
+  });
+
+  it('unknown fields are default-denied with kind "unknown"', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    sanitizeForTier1Write(
+      'trips',
+      { id: 't1', title: 'Rome', some_future_column: 1 },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    );
+    expect(dropped).toEqual([['some_future_column', 'unknown']]);
+  });
+});
+
+describe('sanitizeForTier1Write — structural ids (engine requirements)', () => {
+  it('CREATE (no created_at): id + trip_id pass through', () => {
+    const out = sanitizeForTier1Write('trip_places', {
+      id: 'p-new',
+      trip_id: 't1',
+      google_place_id: 'ChIJ123',
+      lat: 1,
+      lng: 2,
+      manual_rank: 'a0',
+    }) as Record<string, unknown>;
+    expect(out['id']).toBe('p-new');
+    expect(out['trip_id']).toBe('t1');
+  });
+
+  it('UPDATE (created_at present): id is retained (plugin .eq needs it), trip_id is dropped (parent not reassignable)', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trip_places',
+      { id: 'p1', trip_id: 't-other', notes: 'x', created_at: '2026-05-01T00:00:00Z' },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    ) as Record<string, unknown>;
+    expect(out['id']).toBe('p1');
+    expect(out).not.toHaveProperty('trip_id');
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['trip_id', 'server_only'],
+        ['created_at', 'server_only'],
+      ]),
+    );
+  });
+
+  it('never mutates the input patch', () => {
+    const patch = { id: 'p1', day_index: 5, notes: 'n' };
+    const copy = { ...patch };
+    sanitizeForTier1Write('trip_places', patch);
+    expect(patch).toEqual(copy);
+  });
+});
+
+describe('write-allowlist self-consistency', () => {
+  it('this wave write-enables exactly trips + trip_places', () => {
+    expect([...TIER1_WRITE_TABLES].sort()).toEqual(['trip_places', 'trips']);
+    expect(isTier1WriteTable('trips')).toBe(true);
+    expect(isTier1WriteTable('trip_places')).toBe(true);
+    expect(isTier1WriteTable('trip_days')).toBe(false);
+  });
+
+  it('throws on a table that is not write-enabled', () => {
+    expect(() =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately bypassing the type guard to test the runtime contract
+      sanitizeForTier1Write('trip_days' as any, { id: 'd1', notes: 'x' }),
+    ).toThrow(/not write-enabled/);
+  });
+
+  it.each(TIER1_WRITE_TABLES)('every "%s" write field is a subset of the read allowlist', (table) => {
+    const readSet = new Set<string>(TIER1_FIELDS[table as Tier1Table]);
+    for (const field of TIER1_WRITE_FIELDS[table]) {
+      expect({ table, field, inReadAllowlist: readSet.has(field) }).toEqual({
+        table,
+        field,
+        inReadAllowlist: true,
+      });
+    }
+  });
+
+  it.each(TIER1_WRITE_TABLES)('"%s" write fields never include the C1/C3 forbidden names', (table) => {
+    const fields = TIER1_WRITE_FIELDS[table] as readonly string[];
+    for (const forbidden of [
+      'day_index',
+      'order_in_day',
+      'details_refreshed_at',
+      'created_at',
+      'updated_at',
+      'user_id',
+      'id',
+      'trip_id',
+    ]) {
+      expect(fields).not.toContain(forbidden);
+    }
+    for (const field of fields) {
+      expect({ table, field, restricted: isRestrictedFieldName(field) }).toEqual({
+        table,
+        field,
+        restricted: false,
+      });
+    }
   });
 });

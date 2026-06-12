@@ -13,10 +13,11 @@
  * consumers derive sorted arrays per trip client-side (places per trip are
  * ≤ dozens of rows).
  *
- * READ-ONLY in Wave 1: nothing in the app writes these observables yet, and
- * hydrate.ts configures the sync layer with `actions: ['read']` so even an
- * accidental `tier1Store$.trips[id].set(...)` could not reach Supabase.
- * Wave 2 (S2.4) enables writes entity-by-entity.
+ * Write status (S2.4, Wave 2): trips + trip_places are READ-WRITE through
+ * the sync layer — a `tier1Store$.trips[id].set(...)` syncs to Supabase via
+ * the sanitizeForTier1Write boundary (see hydrate.ts). The other six roots
+ * remain read-only (`actions: ['read']`) until a later slice. Nothing in
+ * the app UI writes these observables yet — Wave 3 repoints the hooks.
  */
 
 import { observable } from '@legendapp/state';

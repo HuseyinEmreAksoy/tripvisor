@@ -13,6 +13,7 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:e2e": "playwright test",
+    "sync:validate": "node scripts/validate-sync-roundtrip.mjs",
     "test:e2e:headed": "playwright test --headed",
     "smoke": "playwright test --reporter=list",
     "deploy:db": "supabase db push --linked",
