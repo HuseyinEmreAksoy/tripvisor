@@ -600,6 +600,28 @@ v1 records (Phases 3-26) live in [[phase3-through-phase26-commits]]
 - Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate
   7/7 GO. S1 device smoke STILL owed.
 
+## S2.8 Wave C committed + pushed 2026-06-12 (1 commit)
+
+- `80048bd` — feat(sync): S2.8 Wave C — dual-path retired, rank-aware
+  optimize key, persister retirement, MV tombstone filter
+  (10 files, 614 ins/87 del: ItineraryTab + trip/[id]/index — flag-on drag
+   writes manual_rank only, dayOrderOverrides retired, manual-mode stateKey
+   from rank-ordered id sequence, D4 composite undo; PlaceActionsSheet
+   move-to-day offline-lock; offline.web/.native + hydrate.ts —
+   shouldDehydrateQuery flag-AND-degraded-aware persister retirement;
+   NEW src/sync/wipe.ts (account-deletion tier1/<userId>/* kv wipe, hooked
+   into settings.tsx; sign-out never clears per ADR-0010); NEW migration
+   0028 analytics MV tombstone filters; jest.config.js @sentry/.* back in
+   transformIgnorePatterns.)
+- Pushed origin/master fast-forward 61f4940..80048bd, standing authorization.
+- Concurrent-agent discipline: brief excluded scripts/validate-sync-roundtrip.mjs
+  (live edit by another agent) — it wasn't even dirty at commit time; explicit
+  10-path staging as always.
+- Only secret-scan hit was a benign `service_role` mention in a 0028 grants
+  COMMENT — SQL grant commentary is an accepted near-miss class.
+- Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate 7/7 GO,
+  web export clean with dist/_headers. S1 device smoke STILL owed.
+
 ## Leftover artifacts — RESOLVED 2026-06-10 in 7572d32
 
 `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`
