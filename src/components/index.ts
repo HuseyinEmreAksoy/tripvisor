@@ -7,6 +7,7 @@ export { EmptyState } from './EmptyState';
 export { PoweredByGoogle } from './PoweredByGoogle';
 export { TabBar } from './TabBar';
 export { StatusPill } from './StatusPill';
+export { SyncStatusPill } from './SyncStatusPill';
 export { SegmentedControl } from './SegmentedControl';
 export { Slider } from './Slider';
 export { BottomSheet, type BottomSheetProps } from './BottomSheet';

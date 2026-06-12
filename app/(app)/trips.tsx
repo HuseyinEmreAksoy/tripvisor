@@ -50,7 +50,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Button, EmptyState, FilterSheet, Heading, Screen, SegmentedControl } from '@/components';
+import {
+  Button,
+  EmptyState,
+  FilterSheet,
+  Heading,
+  Screen,
+  SegmentedControl,
+  SyncStatusPill,
+} from '@/components';
 import { noTrips } from '@/components/emptyStates';
 import { TripCard } from '@/components/TripCard';
 import {
@@ -394,6 +402,9 @@ export default function TripsList() {
       <View style={s.titleRow}>
         <Heading level={1}>Your trips</Heading>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          {/* v2 S2.7: sync-status pill — renders null while the Tier-1 sync
+              flag is off (zero layout shift; v1 header unchanged). */}
+          <SyncStatusPill />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="View analytics and insights"

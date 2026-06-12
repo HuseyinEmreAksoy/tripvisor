@@ -100,6 +100,14 @@ export interface PlaceRowProps {
   commentCount?: number;
   /** v2 N1 1.7: opens the comment thread sheet. Chip hidden when absent. */
   onOpenComments?: () => void;
+  /**
+   * v2 S2.6 (sync flag-gated): true while this row's OFFLINE reorder awaits
+   * its next route recompute — the displayed travel legs are stale for the
+   * new order. Renders a muted "route recompute pending" pill (same chip
+   * language as the timeline pills). Defaults to false, so flag-off renders
+   * are unchanged. Derivation + clear heuristic live in ItineraryTab.
+   */
+  pendingRecompute?: boolean;
 }
 
 export function PlaceRow({
@@ -115,6 +123,7 @@ export function PlaceRow({
   timeline,
   commentCount = 0,
   onOpenComments,
+  pendingRecompute = false,
 }: PlaceRowProps) {
   const t = useTheme();
 
@@ -221,8 +230,10 @@ export function PlaceRow({
               >
                 {'⏱ Visit ~'}{visitLabel}
               </Text>
-              {/* v2 N1 1.2 + P1.1: timeline / window / wait / warning chips */}
-              {timeline || windowLabel ? (
+              {/* v2 N1 1.2 + P1.1: timeline / window / wait / warning chips
+                  (+ v2 S2.6 pending-recompute — flag-off it is always false,
+                  so the render condition reduces to the original). */}
+              {timeline || windowLabel || pendingRecompute ? (
                 <View style={styles.timeChipRow}>
                   {/* arrival → departure (computed in ItineraryTab) */}
                   {timeline ? (
@@ -294,6 +305,29 @@ export function PlaceRow({
                     >
                       <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
                         {'⏳ waits until '}{timeline.waitUntil}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* v2 S2.6: offline reorder saved; travel times refresh
+                      with the next route recompute. Muted info pill — never
+                      a warning (the user's plan is intact, only the leg
+                      labels are stale). */}
+                  {pendingRecompute ? (
+                    <View
+                      style={[
+                        styles.timelineChip,
+                        {
+                          backgroundColor: t.colors.bgMuted,
+                          borderRadius: t.radius.pill,
+                        },
+                      ]}
+                      accessible
+                      accessibilityLiveRegion="polite"
+                      accessibilityLabel="Order saved on this device. Travel times update with the next route recompute once you're back online."
+                    >
+                      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                        {'⟳ route recompute pending'}
                       </Text>
                     </View>
                   ) : null}

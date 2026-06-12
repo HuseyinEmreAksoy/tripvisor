@@ -1,2 +1,2 @@
 - [Phase 3 through Phase 26 commit conventions](project_phase3_complete.md) — v1-era commits on master; multi-commit phase splits; bash quoting for (app)/(auth) paths; no Co-Authored-By trailer
-- [v2 commit log](project_v2_commits.md) — v2 Phase 0 + v2.1 plan-revision SHAs (…a990187/0eb41d6/e9e0715); ff-push to master pre-authorized; txt artifacts to gitignore
+- [v2 commit log](project_v2_commits.md) — v2 SHAs through S2 Wave 3a mutations+undo+auth (5b830a1; S1 device smoke owed); app LIVE on tripvisor.pages.dev; ff-push pre-authorized; commit -F via Bash heredoc (PS5.1 BOM)
