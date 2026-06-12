@@ -533,6 +533,32 @@ v1 records (Phases 3-26) live in [[phase3-through-phase26-commits]]
   ./BottomSheet. Not a regression signal unless the importing file was
   touched.
 
+## S2 Wave 3b + G6 hotfix (landed between my sessions, 2026-06-12)
+
+- `a8466a8` — feat(sync): S2 Wave 3b — offline drag + sync-status pill +
+  metro wasm fix. My previously STAGED agent-memory updates (Wave 3a record)
+  rode along into this commit — that's why the tree was clean at Wave A.
+- `dc2ace9` — fix(env): live auth broken — static-first EXPO_PUBLIC reads
+  (G6 hotfix). Key fact in BUILD-LOG: Expo babel inlines ONLY literal
+  `process.env.EXPO_PUBLIC_X` member expressions — computed/optional-chained
+  reads ship the REPLACE_ME fallback in prod bundles. Site redeployed;
+  autoconfirm (`mailer_autoconfirm=true`) enabled until Resend SMTP (G2b).
+
+## S2.8 Wave A committed + pushed 2026-06-12 (1 commit)
+
+- `b97af68` — feat(sync): S2.8 Wave A — tombstone-filtered reads, manual_rank
+  optimize branch, undo toast, issues sheet, COOP/COEP
+  (18 files, 942 ins/69 del: eq(deleted,false) on all 9 trip_places read
+   sites incl. 4 Edge Fns; optimize-trip manual_rank branch; NEW UndoToast +
+   public/_headers (COOP/COEP for web OPFS persistence) + ADR-0010;
+   SyncStatusPill issues sheet; plan.md S2.8 phase plan.)
+- Concurrent-agent discipline applied: another agent was editing
+  src/api/trips.ts + src/sync/* — staged by explicit path only; neither was
+  dirty at commit time. Untracked `public/` dir contained ONLY _headers.
+- Gates baseline now: jest 28 suites / 346 tests, tsc 1341 baseline-exact,
+  sync:validate 7/7 GO. Residual owed: analytics MV counts tombstones
+  (Wave C migration); S1 device smoke STILL owed.
+
 ## Leftover artifacts — RESOLVED 2026-06-10 in 7572d32
 
 `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`
