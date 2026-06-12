@@ -15,10 +15,13 @@
 import { useMemo } from 'react';
 import Constants from 'expo-constants';
 
-// Read the Supabase URL the same way `./supabase.ts` does, so the hook
-// works identically on every platform (process.env on web/native dev,
-// expo-constants `extra` on EAS-built native binaries).
-function readEnv(key: string): string | undefined {
+// Read the Supabase URL the same way `./supabase.ts` does: `inlined` must be
+// a literal `process.env.EXPO_PUBLIC_X` expression at the call site — the
+// only form Expo's babel preset replaces at build time. Computed
+// `process.env[key]` is NOT inlined (production web has no runtime
+// process.env). Dynamic read kept as dev-server/jest fallback.
+function readEnv(key: string, inlined: string | undefined): string | undefined {
+  if (inlined) return inlined;
   const fromProcess = typeof process !== 'undefined' ? process.env?.[key] : undefined;
   if (fromProcess) return fromProcess;
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
@@ -26,8 +29,10 @@ function readEnv(key: string): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
-const SUPABASE_URL = readEnv('EXPO_PUBLIC_SUPABASE_URL') ?? null;
-const SUPABASE_ANON_KEY = readEnv('EXPO_PUBLIC_SUPABASE_ANON_KEY') ?? null;
+const SUPABASE_URL =
+  readEnv('EXPO_PUBLIC_SUPABASE_URL', process.env.EXPO_PUBLIC_SUPABASE_URL) ?? null;
+const SUPABASE_ANON_KEY =
+  readEnv('EXPO_PUBLIC_SUPABASE_ANON_KEY', process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY) ?? null;
 
 export interface UsePlacePhotoUrlOptions {
   /**

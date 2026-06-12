@@ -51,10 +51,13 @@ import {
 
 const DEFAULT_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 
-/** Style URL override for self-hosted/alternate tile styles; defaults to OpenFreeMap. */
+/** Style URL override for self-hosted/alternate tile styles; defaults to
+ * OpenFreeMap. Static read inlines at build; dynamic read is the dev/jest
+ * fallback (production web has no runtime process.env). */
 function getStyleUrl(): string {
   const fromEnv =
-    typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_MAPLIBRE_STYLE_URL : undefined;
+    process.env.EXPO_PUBLIC_MAPLIBRE_STYLE_URL ??
+    (typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_MAPLIBRE_STYLE_URL : undefined);
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_STYLE_URL;
 }
 

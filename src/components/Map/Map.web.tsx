@@ -51,7 +51,10 @@ export function Map({ providerOverride, ...props }: MapWebProps) {
     providerOverride ??
     normalizeProvider(config.data?.map_provider_web) ??
     normalizeProvider(
-      typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_MAP_PROVIDER : undefined,
+      // Static read inlines at build; dynamic read is the dev/jest fallback
+      // (production web has no runtime process.env).
+      process.env.EXPO_PUBLIC_MAP_PROVIDER ??
+        (typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_MAP_PROVIDER : undefined),
     ) ??
     'maplibre';
 

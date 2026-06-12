@@ -43,9 +43,13 @@ function buildShareUrl(token: string): { url: string; usingDeepLink: boolean } {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     return { url: `${window.location.origin}/share/${token}`, usingDeepLink: false };
   }
-  // Native: prefer EXPO_PUBLIC_APP_URL (set in .env / EAS env vars for production).
-  const appUrl =
-    typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_APP_URL?.trim() : undefined;
+  // Native: prefer EXPO_PUBLIC_APP_URL (set in .env / EAS env vars for
+  // production). Static read inlines at build; dynamic read is the dev/jest
+  // fallback (release bundles have no runtime process.env).
+  const appUrl = (
+    process.env.EXPO_PUBLIC_APP_URL ??
+    (typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_APP_URL : undefined)
+  )?.trim();
   if (appUrl) {
     return { url: `${appUrl}/share/${token}`, usingDeepLink: false };
   }

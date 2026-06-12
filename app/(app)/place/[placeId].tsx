@@ -334,6 +334,9 @@ function ReviewsFooter({
 function buildPhotoUrl(photoName: string, maxWidth: number): string | null {
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
   const key =
+    // Static read inlines at build; dynamic read is the dev/jest fallback
+    // (production web has no runtime process.env).
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY ||
     (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY) ||
     (typeof extra.googleMapsWebKey === 'string' ? (extra.googleMapsWebKey as string) : null);
   if (!key) return null;

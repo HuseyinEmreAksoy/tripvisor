@@ -23,7 +23,12 @@ import Constants from 'expo-constants';
 
 type HealthStatus = 'reachable' | 'unreachable' | 'unknown';
 
-function readEnv(key: string): string | undefined {
+// `inlined` must be a literal `process.env.EXPO_PUBLIC_X` expression at the
+// call site — the only form Expo inlines at build time; computed
+// `process.env[key]` is NOT inlined (production web has no runtime
+// process.env). Dynamic read kept as dev-server/jest fallback.
+function readEnv(key: string, inlined: string | undefined): string | undefined {
+  if (inlined) return inlined;
   const fromProcess = typeof process !== 'undefined' ? process.env?.[key] : undefined;
   if (fromProcess) return fromProcess;
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
@@ -31,7 +36,8 @@ function readEnv(key: string): string | undefined {
   return typeof val === 'string' ? val : undefined;
 }
 
-const SUPABASE_URL = readEnv('EXPO_PUBLIC_SUPABASE_URL') ?? '';
+const SUPABASE_URL =
+  readEnv('EXPO_PUBLIC_SUPABASE_URL', process.env.EXPO_PUBLIC_SUPABASE_URL) ?? '';
 
 /** Returns true only when running against local Supabase dev stack. */
 function isLocalEnv(): boolean {

@@ -34,12 +34,16 @@ import { MapUnavailable } from '../MapUnavailable';
 
 /**
  * Returns the Maps JavaScript API key, or null when absent.
- * Checks process.env first (Metro inlines EXPO_PUBLIC_* at bundle time),
- * then falls back to Constants.expoConfig.extra for OTA-update scenarios.
+ * The literal `process.env.EXPO_PUBLIC_X` member read is the ONLY form Expo
+ * inlines at build time — production web has no runtime process.env, so the
+ * optional-chained dynamic read exists purely for the dev server and the
+ * jest suite (Map.web.test.tsx mutates process.env per test). Then falls
+ * back to Constants.expoConfig.extra for OTA-update scenarios.
  */
 function getWebKey(): string | null {
   const fromEnv =
-    typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY : undefined;
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY ??
+    (typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY : undefined);
   if (fromEnv) return fromEnv;
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
   const k = extra.googleMapsWebKey;
