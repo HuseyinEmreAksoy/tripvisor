@@ -39,6 +39,15 @@
  * Out-of-horizon trips and fetch errors hide all weather UI quietly. When any
  * chip renders, the CC-BY line "Weather data by Open-Meteo.com" closes the
  * list.
+ *
+ * v2 S2.8.7 (flag-flip): the Wave 3b dual-path drag is retired. Flag-on,
+ * drags persist as manual_rank ONLY (no reorderDay RPC — order_in_day is
+ * re-derived by the next manual-mode optimize, S2.8.2), display order comes
+ * from orderPlacesForDisplay (the Edge-mirrored canonical rule), a drag in
+ * "Best route" mode auto-switches the trip to "My order" with ONE composite
+ * undo entry (D4), and move-to-day affordances disable while offline with
+ * honest copy (D5 — the server mutation cannot run without a network).
+ * Flag-off, every path below is byte-identical to v1.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
@@ -56,12 +65,14 @@ import { useTheme } from '@/theme';
 import {
   countCommentsByPlace,
   isRainy,
+  orderPlacesForDisplay,
   useDayWeather,
   useMoveToDay,
   useReorderDay,
   useTripComments,
   useTripDays,
   useTripLegs,
+  useUpdateRouteRenderMode,
   type Trip,
   type TripDay,
   type TripLeg,
@@ -70,7 +81,7 @@ import {
 // v2 S2.6 (flag-gated): offline-drag rank path. Metro resolves the platform
 // implementation of '@/api/offline' (native NetInfo / web navigator.onLine).
 import { useIsOnline } from '@/api/offline';
-import { isTier1SyncActive } from '@/sync/mutations';
+import { isTier1SyncActive, restoreRanks, snapshotRanks } from '@/sync/mutations';
 import { useUndo } from '@/sync/undo';
 import { commitDragRanks } from './dragRank';
 import { useTripReactions, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
@@ -139,46 +150,52 @@ export function ItineraryTab({
   const [gapFill, setGapFill] = useState<{ dayIndex: number; slackMinutes: number } | null>(null);
   const [gapFillVisible, setGapFillVisible] = useState(false);
 
-  // ── v2 S2.6 (flag-gated): offline drag via manual_rank ──────────────────
+  // ── v2 S2.6 → S2.8.7: flag-on drag persists manual_rank ONLY ────────────
   // EVERYTHING in this block is a strict no-op while the Tier-1 sync flag is
   // off: `tier1Active` stays false → the legs watcher below is disabled
   // (undefined tripId → enabled:false), the drag handler takes the v1
-  // reorderDay path verbatim, and the two state values never leave their
-  // initial empty objects (their setters only run inside flag-on branches).
+  // reorderDay path verbatim, and `pendingRecompute` never leaves its
+  // initial empty set (its setter only runs inside flag-on branches).
+  //
+  // S2.8.7 retired the Wave 3b dual-path AND the `dayOrderOverrides`
+  // session-visual mechanism: flag-on, rank writes land synchronously in the
+  // Tier-1 store, the places facade re-renders reactively, and the
+  // rank-aware `byDay` below puts the dragged order on screen — no transient
+  // override needed, online or offline.
   const tier1Active = isTier1SyncActive();
   const undo = useUndo();
   const online = useIsOnline();
+  // D4: a flag-on drag while in "Best route" mode switches the trip to
+  // "My order" (a drag IS an assertion of manual order — C1). The repointed
+  // hook writes route_render_mode through the sync store flag-on
+  // (offline-safe) and best-effort re-runs optimize.
+  const updateRenderMode = useUpdateRouteRenderMode(tripId);
+  // D5: move-to-day stays a legacy server mutation flag-on (day_index is
+  // server-domain), so offline it can only fail — the affordances below
+  // disable with honest copy instead. Always false flag-off (no UI change).
+  const moveLockedOffline = tier1Active && !online;
   // Rows whose offline reorder still awaits a route recompute — drives the
   // muted "route recompute pending" chip on the row (PlaceRow).
   const [pendingRecompute, setPendingRecompute] = useState<ReadonlySet<string>>(() => new Set());
-  // Per-day visual order committed OFFLINE (dayIndex → ordered place ids).
-  // `places` orders by optimizer-owned order_in_day, which cannot reflect an
-  // offline drag until the next server-side reorder/optimize — this override
-  // keeps the user's drag on screen instead of snapping back (ux-principles:
-  // never block or revert the drag). manual_rank itself syncs on reconnect.
-  const [dayOrderOverrides, setDayOrderOverrides] = useState<
-    ReadonlyMap<number, readonly string[]>
-  >(() => new Map());
 
   // Pending-clear heuristic (documented per the wave spec): the sync queue
-  // depth is not observable (telemetry exposes no pendingWrites), so both
-  // the chips and the visual overrides clear on ANY successful trip-legs
-  // refetch — reorderDay/optimize invalidate trip-legs, so a fresh legs
-  // payload is the closest honest "travel times caught up" signal we have.
-  // Trade-off (accepted): a focus-refetch that succeeds while the rank is
-  // still queued clears the chip early; the synced rank is not lost — the
-  // next optimize still applies it. The hook dedupes with the route shell's
-  // useTripLegs (same query key), so flag-on adds no second network fetch.
+  // depth is not observable (telemetry exposes no pendingWrites), so the
+  // chips clear on ANY successful trip-legs refetch — the auto-optimize
+  // recompute invalidates trip-legs, so a fresh legs payload is the closest
+  // honest "travel times caught up" signal we have. Trade-off (accepted): a
+  // focus-refetch that succeeds while the rank is still queued clears the
+  // chip early; the synced rank is not lost — the next optimize still
+  // applies it. The hook dedupes with the route shell's useTripLegs (same
+  // query key), so flag-on adds no second network fetch.
   const legsWatcher = useTripLegs(tier1Active ? tripId : undefined);
   const legsUpdatedAt = legsWatcher.dataUpdatedAt;
   const lastLegsUpdatedAt = useRef(legsUpdatedAt);
   useEffect(() => {
     if (legsUpdatedAt === lastLegsUpdatedAt.current) return;
     lastLegsUpdatedAt.current = legsUpdatedAt;
-    // Functional no-op updates (same reference when already empty) so the
+    // Functional no-op update (same reference when already empty) so the
     // flag-off path never re-renders from this effect.
     setPendingRecompute((prev) => (prev.size === 0 ? prev : new Set()));
-    setDayOrderOverrides((prev) => (prev.size === 0 ? prev : new Map()));
   }, [legsUpdatedAt]);
 
   // Phase 24: reaction data for the whole trip + current user id.
@@ -201,12 +218,21 @@ export function ItineraryTab({
     return m;
   }, [tripDays]);
 
-  // v2 S2.6: offline drag overrides re-sort the affected day(s); with no
-  // overrides (always true flag-off) this is groupByDay's output unchanged
-  // (same array reference — applyDayOrderOverrides is identity when empty).
+  // v2 S2.8.7: flag-on display order comes from orderPlacesForDisplay — the
+  // canonical rank-aware rule shared with the trip-places facade re-export
+  // and optimize-trip's manual branch (src/sync/order.ts binding header).
+  // A drag's rank write re-orders this list reactively (store → facade →
+  // props), and because the Edge recompute persists order_in_day from the
+  // SAME rule, the order can never "snap" when it lands. In 'optimized'
+  // render mode the helper itself falls back to order_in_day, so the
+  // optimizer's arrangement always wins there. Flag-off: groupByDay,
+  // byte-identical to v1.
   const byDay = useMemo(
-    () => applyDayOrderOverrides(groupByDay(places), dayOrderOverrides),
-    [places, dayOrderOverrides],
+    () =>
+      tier1Active
+        ? groupPlacesPreservingOrder(orderPlacesForDisplay(places, trip.route_render_mode, true))
+        : groupByDay(places),
+    [places, tier1Active, trip.route_render_mode],
   );
   const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
   const availableDays = useMemo(
@@ -553,6 +579,7 @@ export function ItineraryTab({
                             placeTitle={place.user_title ?? 'place'}
                             availableDays={availableDays}
                             disabled={moveToDay.isPending}
+                            offlineLocked={moveLockedOffline}
                             onMove={(toDay) =>
                               moveToDay.mutate({
                                 id: place.id,
@@ -569,38 +596,73 @@ export function ItineraryTab({
               })}
               onReorder={(newIds: string[]) => {
                 if (section.dayIndex < 0) return; // unscheduled bucket is not orderable
-                // ── v2 S2.6 (flag-gated) dual path ────────────────────────
-                // Flag ON: persist the user-intent order as manual_rank
-                // through the sync engine (LWW, offline-safe) and push the
-                // move onto the session undo stack. Checked at CALL time
-                // (not render) so a mid-session flag flip is honored.
-                // Flag OFF: this branch is dead code — the v1 reorderDay
-                // path below runs exactly as before.
+                // ── v2 S2.8.7: single-path drag commit ────────────────────
+                // Flag ON (checked at CALL time so a mid-session flip is
+                // honored): the drag persists as manual_rank ONLY — LWW,
+                // offline-safe, rendered reactively via the rank-aware
+                // `byDay` above. The legacy reorderDay RPC no longer fires
+                // here (Wave 3b dual-path retired): order_in_day is
+                // re-derived server-side by the next manual-mode optimize,
+                // which the route shell's rank-derived stateKey triggers
+                // (offline, that optimize mutation pauses and resumes on
+                // reconnect — TanStack networkMode 'online').
+                // Flag OFF: the v1 reorderDay path below, byte-identical.
                 if (isTier1SyncActive()) {
+                  const wasOptimized = trip.route_render_mode === 'optimized';
+                  // D4: capture pre-drag ranks BEFORE any rank write
+                  // (including commitDragRanks' silent backfill) so the
+                  // composite inverse restores the exact prior order intent.
+                  const preDragRanks = wasOptimized ? snapshotRanks(tripId) : null;
                   const { undoEntry, movedIds } = commitDragRanks(section.places, newIds);
-                  if (undoEntry) undo.push(undoEntry);
-                  if (!online) {
-                    // OFFLINE: skip the server reorder (it would only fail);
-                    // the rank syncs when connectivity returns. Keep the
-                    // dragged order on screen and chip the moved rows
-                    // "route recompute pending" until the next successful
-                    // legs refetch (heuristic documented above).
-                    setDayOrderOverrides((prev) => {
-                      const next = new Map(prev);
-                      next.set(section.dayIndex, newIds);
-                      return next;
+                  if (undoEntry === null && movedIds.length > 0) {
+                    // D2 hydration window: the places root isn't serving
+                    // yet, so ZERO rank writes landed and the store-backed
+                    // list cannot hold the drag — without persistence it
+                    // would snap back. Fall back to the v1 server reorder
+                    // once. This is NOT the dual-path: it fires only when
+                    // no rank was written, so nothing is double-persisted
+                    // (and reorderDay.onSuccess resyncs the store anyway).
+                    reorderDay.mutate({
+                      tripId,
+                      dayIndex: section.dayIndex,
+                      orderedIds: newIds,
                     });
-                    if (movedIds.length > 0) {
-                      setPendingRecompute((prev) => {
-                        const next = new Set(prev);
-                        for (const id of movedIds) next.add(id);
-                        return next;
-                      });
-                    }
                     return;
                   }
-                  // ONLINE flag-on falls through: the server reorder still
-                  // runs so legs recompute promptly (same as v1).
+                  if (wasOptimized && preDragRanks && undoEntry) {
+                    // D4 (approved): a drag in "Best route" IS an assertion
+                    // of manual order — switch the trip to "My order"
+                    // through the repointed hook (sync store write +
+                    // best-effort optimize re-render). ONE composite undo
+                    // entry, not two: the inverse restores the pre-drag
+                    // ranks AND flips the mode back, which re-runs the
+                    // optimizer so the screen returns to the pre-drag
+                    // "Best route" arrangement. The per-move undoEntry is
+                    // superseded (its rank restore is covered by the
+                    // snapshot) and deliberately not pushed.
+                    updateRenderMode.mutate('manual');
+                    undo.push({
+                      label: 'Switched to My order + reorder',
+                      inverse: async () => {
+                        restoreRanks(preDragRanks);
+                        await updateRenderMode.mutateAsync('optimized');
+                      },
+                    });
+                  } else if (undoEntry) {
+                    undo.push(undoEntry);
+                  }
+                  if (!online && movedIds.length > 0) {
+                    // OFFLINE: travel legs can't recompute yet — chip the
+                    // moved rows until the next successful legs refetch
+                    // (clear heuristic documented above). The dragged order
+                    // itself is already on screen via the rank-aware byDay.
+                    setPendingRecompute((prev) => {
+                      const next = new Set(prev);
+                      for (const id of movedIds) next.add(id);
+                      return next;
+                    });
+                  }
+                  return;
                 }
                 reorderDay.mutate({
                   tripId,
@@ -749,17 +811,23 @@ function IdeasAddToDayRow({
   placeTitle,
   availableDays,
   disabled,
+  offlineLocked,
   onMove,
 }: {
   placeTitle: string;
   availableDays: number[];
   disabled?: boolean;
+  /** v2 S2.8.7 / D5: move-to-day is a legacy server mutation flag-on, so it
+   * cannot work offline — the chips disable with honest copy instead of
+   * letting the write silently fail. Always false flag-off. */
+  offlineLocked?: boolean;
   onMove: (toDayIndex: number) => void;
 }) {
   const t = useTheme();
   const targets = [...availableDays];
   const maxDay = targets.length > 0 ? Math.max(...targets) : -1;
   if (maxDay < 9) targets.push(maxDay + 1);
+  const locked = Boolean(disabled) || Boolean(offlineLocked);
 
   return (
     <View style={[styles.ideasAddRow, { gap: t.spacing.xs }]}>
@@ -770,8 +838,10 @@ function IdeasAddToDayRow({
           <Pressable
             key={day}
             accessibilityRole="button"
-            accessibilityLabel={`Add ${placeTitle} to Day ${day + 1}${isNew ? ', a new day' : ''}`}
-            disabled={disabled}
+            // a11y: the disabled reason rides the label so screen-reader
+            // users hear WHY the chip is inert, not just "dimmed".
+            accessibilityLabel={`Add ${placeTitle} to Day ${day + 1}${isNew ? ', a new day' : ''}${offlineLocked ? '. Available when back online' : ''}`}
+            disabled={locked}
             onPress={() => onMove(day)}
             hitSlop={4}
             style={({ pressed }) => [
@@ -780,7 +850,7 @@ function IdeasAddToDayRow({
                 borderColor: dayColor(day),
                 backgroundColor: t.colors.bgElevated,
                 borderRadius: t.radius.pill,
-                opacity: disabled ? 0.5 : pressed ? 0.6 : 1,
+                opacity: locked ? 0.5 : pressed ? 0.6 : 1,
               },
             ]}
           >
@@ -790,6 +860,11 @@ function IdeasAddToDayRow({
           </Pressable>
         );
       })}
+      {offlineLocked ? (
+        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+          Available when back online
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -815,28 +890,27 @@ function buildConflictMessage(stop: TimelineStop): string | null {
 }
 
 /**
- * v2 S2.6: re-sorts each day's places to the offline-committed drag order.
- * Identity (the same array reference) when no overrides exist — the flag-off
- * render path through here is exactly groupByDay's output. Places missing
- * from an override (e.g. added to the day after the offline drag) keep their
- * relative order at the end of the day (Array.prototype.sort is stable).
+ * v2 S2.8.7: group an ALREADY display-ordered list (orderPlacesForDisplay's
+ * output) into day sections WITHOUT re-sorting inside each day — the
+ * helper's per-day order is canonical (rank-aware in manual mode), and
+ * re-sorting by order_in_day here (as groupByDay does) would undo it.
+ * Section order matches groupByDay's output: Ideas (-1) first, then days
+ * ascending — which is also exactly the order orderPlacesForDisplay emits,
+ * so the trailing sort is a determinism guarantee, not a reshuffle.
  */
-function applyDayOrderOverrides(
-  sections: Array<{ dayIndex: number; places: TripPlace[] }>,
-  overrides: ReadonlyMap<number, readonly string[]>,
+function groupPlacesPreservingOrder(
+  ordered: readonly TripPlace[],
 ): Array<{ dayIndex: number; places: TripPlace[] }> {
-  if (overrides.size === 0) return sections;
-  return sections.map((section) => {
-    const order = overrides.get(section.dayIndex);
-    if (!order) return section;
-    const position = new Map(order.map((id, i) => [id, i]));
-    const sorted = [...section.places].sort(
-      (a, b) =>
-        (position.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
-        (position.get(b.id) ?? Number.MAX_SAFE_INTEGER),
-    );
-    return { dayIndex: section.dayIndex, places: sorted };
-  });
+  const map = new Map<number, TripPlace[]>();
+  for (const p of ordered) {
+    const key = p.day_index ?? -1;
+    const arr = map.get(key);
+    if (arr) arr.push(p);
+    else map.set(key, [p]);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([dayIndex, ps]) => ({ dayIndex, places: ps }));
 }
 
 function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: TripPlace[] }> {

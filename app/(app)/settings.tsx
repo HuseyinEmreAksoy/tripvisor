@@ -15,6 +15,8 @@ import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { BackButton, Button, Heading, Screen } from '@/components';
 import { useSession, useSignOut, useExportAccount, supabase, useChangeEmail, useChangePassword, AuthMutationError } from '@/api';
+import { teardownTier1Sync } from '@/sync/hydrate';
+import { wipeTier1PersistedStorage } from '@/sync/wipe';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -62,6 +64,11 @@ export default function SettingsScreen() {
     setIsDeleting(true);
     setDeleteError(null);
 
+    // Captured BEFORE the server deletion — the session (and its user id)
+    // is gone once sign-out lands, but the Tier-1 wipe below needs it to
+    // target the `tier1/<userId>/…` persist namespaces.
+    const userId = session?.user?.id;
+
     try {
       const { error } = await supabase.functions.invoke('delete-account', {
         method: 'POST',
@@ -70,6 +77,17 @@ export default function SettingsScreen() {
       if (error) {
         setDeleteError(error.message ?? 'Failed to delete account. Please try again.');
         return;
+      }
+
+      // ADR-0010 §2 (S2.8.11): account deletion is the ONE lifecycle event
+      // that wipes Tier-1 persisted data. Gate the engine off FIRST
+      // (idempotent — the sign-out below re-runs it as a no-op), then
+      // RAW-wipe the per-user storage namespaces underneath the engine.
+      // Best-effort by contract: the account is already gone server-side,
+      // so a failed wipe (breadcrumbed inside) must not block sign-out.
+      if (userId) {
+        teardownTier1Sync();
+        await wipeTier1PersistedStorage(userId);
       }
 
       await signOut.mutateAsync();

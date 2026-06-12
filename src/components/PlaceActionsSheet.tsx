@@ -8,6 +8,10 @@ import { VisitDurationStepper } from './VisitDurationStepper';
 import { useTheme } from '@/theme';
 import type { TripPlace, Uuid } from '@/api';
 import { useDeleteTripPlace, useMoveToDay, useUpdateTripPlace } from '@/api';
+// v2 S2.8.7 / D5: move-to-day stays a legacy server mutation flag-on, so it
+// cannot work offline — the affordance disables with honest copy instead.
+import { useIsOnline } from '@/api/offline';
+import { isTier1SyncActive } from '@/sync/mutations';
 import {
   formatClockTime,
   parseTimeOfDay,
@@ -31,6 +35,13 @@ export function PlaceActionsSheet({
   const updatePlace = useUpdateTripPlace();
   const moveToDay = useMoveToDay();
   const deletePlace = useDeleteTripPlace();
+  const online = useIsOnline();
+  // v2 S2.8.7 / D5: day_index is server-domain (C1), so move-to-day cannot
+  // route through the offline sync engine — flag-on + offline the control
+  // locks with honest copy. Flag-off this is always false (no UI change);
+  // the other actions on this sheet (duration, windows, delete) are
+  // sync-routed flag-on and stay fully usable offline.
+  const moveLockedOffline = isTier1SyncActive() && !online;
 
   if (!place) return null;
 
@@ -57,6 +68,7 @@ export function PlaceActionsSheet({
         <MoveToDay
           currentDayIndex={place.day_index}
           availableDays={availableDays}
+          offlineLocked={moveLockedOffline}
           onMove={(toDay) => {
             moveToDay.mutate({
               id: place.id,
@@ -89,10 +101,14 @@ export function PlaceActionsSheet({
 function MoveToDay({
   currentDayIndex,
   availableDays,
+  offlineLocked = false,
   onMove,
 }: {
   currentDayIndex: number | null;
   availableDays: number[];
+  /** v2 S2.8.7 / D5: flag-on + offline, the move is a server-only write
+   * that can't run — lock the control with honest copy. */
+  offlineLocked?: boolean;
   onMove: (toDay: number) => void;
 }) {
   const t = useTheme();
@@ -107,7 +123,15 @@ function MoveToDay({
     <View style={{ gap: t.spacing.sm }}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Move to a different day"
+        // a11y: the disabled reason rides the label so screen-reader users
+        // hear WHY the control is inert (Pressable's `disabled` also sets
+        // accessibilityState.disabled).
+        accessibilityLabel={
+          offlineLocked
+            ? 'Move to a different day. Available when back online.'
+            : 'Move to a different day'
+        }
+        disabled={offlineLocked}
         onPress={() => setOpen((v) => !v)}
         style={[
           styles.expander,
@@ -116,15 +140,18 @@ function MoveToDay({
             borderColor: t.colors.border,
             borderRadius: t.radius.md,
             padding: t.spacing.md,
+            opacity: offlineLocked ? 0.5 : 1,
           },
         ]}
       >
         <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>Move to day</Text>
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          Currently: {currentDayIndex == null || currentDayIndex < 0 ? 'Unscheduled' : `Day ${currentDayIndex + 1}`}
+          {offlineLocked
+            ? 'Available when back online'
+            : `Currently: ${currentDayIndex == null || currentDayIndex < 0 ? 'Unscheduled' : `Day ${currentDayIndex + 1}`}`}
         </Text>
       </Pressable>
-      {open ? (
+      {open && !offlineLocked ? (
         <View
           accessibilityRole="radiogroup"
           style={{ gap: t.spacing.xs }}

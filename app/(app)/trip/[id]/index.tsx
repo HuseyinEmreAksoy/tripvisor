@@ -22,12 +22,15 @@ import { Button, Heading, Screen, TabBar } from '@/components';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
+  orderPlacesForDisplay,
   useDeleteTrip,
   useOptimizeTrip,
   useTrip,
   useTripLegs,
   useTripPlaces,
+  type TripPlace,
 } from '@/api';
+import { isTier1SyncActive } from '@/sync/mutations';
 import { useTripAccommodations } from '@/api/trip-accommodations';
 import { useTripRole } from '@/hooks/useTripRole';
 import { TripHeader } from '@/components/trip-detail/TripHeader';
@@ -86,6 +89,20 @@ export default function TripDetail() {
   //  2. `mode` is passed through to the Edge Function — previously omitted,
   //     which defaulted every auto-run to the 'optimized' branch and could
   //     silently re-cluster a manually arranged trip after a duration edit.
+  //
+  // v2 S2.8.7: flag-on, drags persist as manual_rank ONLY (the legacy
+  // reorderDay RPC is retired), so order_in_day stops changing on drag —
+  // keying manual-mode layout on it would never recompute legs after a
+  // drag. Flag-on + manual, `layout` instead derives from the rank-ordered
+  // per-day place-id SEQUENCE (manualRankLayout below). Loop safety (the
+  // High risk this step flags): the manual-mode optimize writes derived
+  // order_in_day back, but that write cannot re-change the key because the
+  // key never reads order_in_day VALUES — only the sequence, which the Edge
+  // function derives from the SAME canonical rule (src/sync/order.ts
+  // binding header). So the key changes exactly once per user-visible
+  // reorder and is stable across recomputes. Flag-off, the expression is
+  // byte-identical to the v1 key above.
+  const tier1Active = isTier1SyncActive();
   const stateKey = useMemo(
     () =>
       JSON.stringify({
@@ -96,12 +113,14 @@ export default function TripDetail() {
         mode: trip?.transport_mode,
         layout:
           trip?.route_render_mode === 'manual'
-            ? places
-                .map((p) => `${p.id}:${p.day_index ?? 'x'}:${p.order_in_day ?? 'x'}`)
-                .sort()
+            ? tier1Active
+              ? manualRankLayout(places)
+              : places
+                  .map((p) => `${p.id}:${p.day_index ?? 'x'}:${p.order_in_day ?? 'x'}`)
+                  .sort()
             : null,
       }),
-    [places, trip?.daily_hours_budget, trip?.transport_mode, trip?.route_render_mode],
+    [places, trip?.daily_hours_budget, trip?.transport_mode, trip?.route_render_mode, tier1Active],
   );
   const lastOptimizedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -302,6 +321,32 @@ export default function TripDetail() {
       ) : null}
     </Screen>
   );
+}
+
+/**
+ * v2 S2.8.7: the flag-on manual-mode layout key — per scheduled day, the
+ * rank-ordered place-id chain (via orderPlacesForDisplay, the same canonical
+ * rule ItineraryTab renders with and optimize-trip's manual branch persists
+ * from). Ideas (day_index NULL) are excluded: the optimizer skips them, so
+ * their internal order can never affect legs (entering/leaving Ideas still
+ * changes a day's chain, which is what matters). Derived from the id
+ * SEQUENCE only — never from order_in_day values — so the optimizer writing
+ * derived order_in_day back cannot re-change the key (auto-optimize loop
+ * guard). Output is deterministic: days ascending, ids joined in display
+ * order.
+ */
+function manualRankLayout(places: TripPlace[]): string[] {
+  const ordered = orderPlacesForDisplay(places, 'manual', true);
+  const chains = new Map<number, string[]>();
+  for (const p of ordered) {
+    if (p.day_index === null) continue;
+    const chain = chains.get(p.day_index);
+    if (chain) chain.push(p.id);
+    else chains.set(p.day_index, [p.id]);
+  }
+  return [...chains.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([day, ids]) => `${day}:${ids.join('>')}`);
 }
 
 // ── Desktop side-by-side panel styles ────────────────────────────────────────

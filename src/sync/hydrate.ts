@@ -416,6 +416,24 @@ export function isTier1SyncInitialized(): boolean {
 }
 
 /**
+ * S2.8.11 — is the ACTIVE engine's persistence DEGRADED to in-memory?
+ * (web without COOP/COEP → no SharedArrayBuffer → no OPFS; native on a
+ * pre-S1 dev client → no expo-sqlite. See persistence.web/native, risk R5.)
+ *
+ * Consumers: the TanStack persister allowlist (src/api/offline.*) keeps
+ * dehydrating trips/trip-places for degraded clients so their offline reads
+ * never regress below v1 (ADR-0010 §3). Cheap synchronous module-var read —
+ * safe to call from shouldDehydrateQuery on every (throttled) dehydration.
+ *
+ * Meaningful only while the engine is active (`isTier1SyncActive()`); before
+ * the first initTier1Sync it returns false, which is why callers must gate
+ * on activity FIRST.
+ */
+export function isTier1PersistenceDegraded(): boolean {
+  return lastPersistenceDegraded || persistencePlugin === undefined;
+}
+
+/**
  * Sign-out teardown (S2.8 partial). HONESTY: the beta plugin has no clean
  * detach — syncObservable attachments live until the process dies. What this
  * CAN safely do is gate the engine off: `initializedForUser = null` makes
@@ -426,6 +444,15 @@ export function isTier1SyncInitialized(): boolean {
  * Cross-account safety comes from the per-user persist namespace + RLS; a
  * different-user sign-in in the same process returns started:false
  * (restart required), documented in initTier1Sync.
+ *
+ * POLICY (ADR-0010 §2, binding): plain sign-out NEVER clears Tier-1 stores —
+ * neither the observables (mass-tombstone risk above) nor the on-disk
+ * persist namespaces (`tier1/<userId>/<table>`). The privacy boundary is the
+ * per-user namespacing + the OS app sandbox / per-origin OPFS; the
+ * accepted consequence is that a signed-out device retains the last user's
+ * encrypted-at-rest Tier-1 data until they sign back in. The ONE lifecycle
+ * event that wipes disk state is ACCOUNT DELETION, via the RAW storage path
+ * in src/sync/wipe.ts (never through the engine — see that module's header).
  */
 export function teardownTier1Sync(): void {
   if (initializedForUser === null) return;

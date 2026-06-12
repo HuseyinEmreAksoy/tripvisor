@@ -2,7 +2,11 @@ module.exports = {
   preset: 'jest-expo',
   setupFilesAfterEnv: ['<rootDir>/jest-setup.ts'],
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-native-community|expo-modules-core|@supabase/.*|@tanstack/.*|@react-navigation/.*|lucide-react-native))',
+    // @sentry/.*: ships untranspiled ESM; part of jest-expo's UPSTREAM default
+    // pattern that this custom override had dropped. Needed since S2.8.11 —
+    // offline.web.ts imports the sync engine accessors, whose telemetry module
+    // imports src/lib/sentry.ts at module scope.
+    'node_modules/(?!((jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-native-community|expo-modules-core|@supabase/.*|@tanstack/.*|@react-navigation/.*|@sentry/.*|lucide-react-native))',
   ],
   testPathIgnorePatterns: ['/node_modules/', '/supabase/functions/', '<rootDir>/e2e/'],
   moduleNameMapper: {
