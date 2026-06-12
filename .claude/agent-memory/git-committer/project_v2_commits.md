@@ -578,6 +578,28 @@ v1 records (Phases 3-26) live in [[phase3-through-phase26-commits]]
 - Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate
   7/7 GO. S1 device smoke STILL owed.
 
+## S2.8 Wave B2 committed + pushed 2026-06-12 (1 commit)
+
+- `0ef9058` — feat(sync): S2.8 Wave B2 — trip_places read/write facade +
+  display-order comparator
+  (2 files, 463 ins/4 del: NEW src/sync/order.ts — orderDayPlacesByRank
+   mirrors optimize-trip manual-branch rule verbatim, orderPlacesForDisplay
+   gated to manual mode + tier1 active; src/api/trip-places.ts useTripPlaces
+   use$ facade from tier1Store$.tripPlaces when active AND hydrated,
+   deleted !== true filtered, v1 queryFn byte-identical paused;
+   create/update -> sync mutations on read-serving condition, delete
+   flag-on -> tombstonePlace + undo push (S2.5 case 1), flag-off
+   hard-delete byte-identical; move-to-day/reorderDay legacy + resyncTier1;
+   created_at never written client-side.)
+- Pushed origin/master fast-forward 1f73323..0ef9058. Remote tip was again
+  ahead of my last record (7c52cd7 -> 1f73323 interim commits) — recurring
+  pattern in concurrent-agent sessions; ff stays clean.
+- Concurrent-agent discipline: brief warned trip-detail/auth/sync/migrations
+  were being edited live, but fresh status showed ONLY the two manifest
+  files dirty — staged by explicit path as always.
+- Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate
+  7/7 GO. S1 device smoke STILL owed.
+
 ## Leftover artifacts — RESOLVED 2026-06-10 in 7572d32
 
 `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`
