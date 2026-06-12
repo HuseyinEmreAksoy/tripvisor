@@ -11,9 +11,13 @@
  * local dev — expo-sqlite's synchronous web API needs cross-origin
  * isolation (see src/sync/persistence.web.ts). COEP is `credentialless`,
  * not `require-corp`: map tiles, fonts, and other cross-origin subresources
- * keep loading without CORP headers. Production (Cloudflare Pages) needs
- * the same pair via a `_headers` file — until then the web store degrades
- * to in-memory per the R5 contract, which is fine.
+ * keep loading without CORP headers. Production (Cloudflare Pages) gets the
+ * SAME pair via `public/_headers` (S2.8.10) — `expo export --platform web`
+ * copies public/ verbatim into dist/, and Pages applies the rules on deploy.
+ * The Pages `_headers` format has no comment syntax (non-indented lines are
+ * parsed as URL patterns), so this block is the rationale for both files.
+ * Safari has no `credentialless` support and stays on the in-memory degrade
+ * path per the R5 contract — surfaced honestly by the sync-status sheet.
  */
 const { getDefaultConfig } = require('expo/metro-config');
 

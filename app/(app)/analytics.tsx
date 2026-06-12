@@ -119,6 +119,13 @@ export default function AnalyticsScreen() {
           .from('trip_places')
           .select('*')
           .eq('trip_id', trip.id)
+          // v2 S2.8.1: exclude soft-delete tombstones (migration 0027).
+          // MUST stay byte-identical to the useTripPlaces queryFn in
+          // src/api/trip-places.ts — both populate the same
+          // tripPlacesKeys.forTrip(id) cache entry, so a filter mismatch
+          // would make the cached shape depend on which screen fetched
+          // first.
+          .eq('deleted', false)
           .order('day_index', { ascending: true, nullsFirst: true })
           .order('order_in_day', { ascending: true, nullsFirst: true });
         if (error) throw error;

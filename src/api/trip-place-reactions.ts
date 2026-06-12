@@ -136,6 +136,12 @@ export function useTripReactions(tripId: Uuid | undefined) {
         .from('trip_place_reactions')
         .select(`${REACTION_SELECT_FIELDS}, trip_places!inner(trip_id)`)
         .eq('trip_places.trip_id', tripId)
+        // v2 S2.8.1: the !inner join means this embedded filter drops
+        // reactions whose parent place is a soft-delete tombstone
+        // (trip_places.deleted, migration 0027) — tombstoning doesn't
+        // cascade to reactions, so without this a deleted place would
+        // resurface through its companions' likes.
+        .eq('trip_places.deleted', false)
         .order('created_at', { ascending: true });
       if (error) throw error;
       // Strip the embedded `trip_places` field before validation — Zod's

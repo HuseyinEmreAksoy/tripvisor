@@ -561,6 +561,10 @@ async function loadTripContext(
     .from('trip_places')
     .select('id, user_title, google_place_id, day_index, visit_duration_minutes, lat, lng')
     .eq('trip_id', tripId)
+    // v2 S2.8.1: exclude soft-delete tombstones (migration 0027) — a
+    // user-deleted place must not feed the LLM context or be edited/
+    // referenced by an AI draft.
+    .eq('deleted', false)
     .order('day_index', { ascending: true, nullsFirst: false })
     .order('order_in_day', { ascending: true });
   if (placesErr) {

@@ -22,16 +22,27 @@
 //     6. Write day_index / order_in_day via apply_optimization (atomic).
 //     7. For each day, call directions-polyline and upsert into trip_legs.
 //
-//   'manual' — keep current (day_index, order_in_day) untouched; only
-//              recompute trip_legs against the existing per-day chain.
+//   'manual' — render the user's hand-ordered chain and recompute trip_legs
+//              against it. day_index is never reassigned.
 //     1. Auth (JWT, RLS-scoped). Same row-mutex.
-//     2. Load places already grouped by day_index. Skip places with
-//        day_index = null (unscheduled).
-//     3. NO clustering, NO 2-opt, NO trip_places writes.
+//     2. Load live (deleted = false) places grouped by day_index. Skip
+//        places with day_index = null (unscheduled).
+//     3. NO clustering, NO 2-opt. Within each day the chain is ordered by
+//        manual_rank (v2 S2.8.2 — base-62 fractional index, plain string
+//        compare; see src/sync/rank.ts) with a per-day fallback to the
+//        legacy order_in_day order when ranks are absent. The derived
+//        order_in_day is persisted back via apply_optimization (C1: the
+//        server stays the sole WRITER of day_index/order_in_day; the
+//        client-owned manual_rank is what the server derives them FROM).
 //     4. For each day with >=2 places, call directions-polyline along the
-//        existing chain and upsert the resulting trip_legs row.
-//     5. stateHash is computed from the pre-existing assignments (so
-//        consumers that branch on it continue to work).
+//        chain and upsert the resulting trip_legs row.
+//     5. stateHash is computed from the rank-derived assignments (so
+//        consumers that branch on it continue to work). NOTE (plan S2.8.2
+//        risk): for trips that already carry ranks whose order disagrees
+//        with order_in_day, the first post-S2.8.2 hash differs once —
+//        one spurious manual recompute per such trip is the accepted
+//        one-time cost. All-NULL-rank trips (every v1 trip) hash and
+//        behave byte-identically to the pre-rank implementation.
 //
 // Both modes share:
 //   - the row-mutex (Phase 13 fix preserved),
@@ -87,6 +98,12 @@ interface TripPlaceRow {
   // 'manual' mode (we trace the existing chain).
   day_index: number | null;
   order_in_day: number | null;
+  // v2 S2.8.2: user-authored fractional-index order key (migration 0027).
+  // Lexicographic base-62 text — plain string comparison yields the user's
+  // hand-ordered sequence (src/sync/rank.ts). NULL = never hand-ordered.
+  // CONSUMED by the manual branch to derive order_in_day; NEVER written
+  // here (manual_rank is client-owned per C1).
+  manual_rank: string | null;
 }
 
 interface TripLegRow {
@@ -219,11 +236,17 @@ export async function handler(req: Request): Promise<Response> {
 
   try {
     // Load places. Both modes need them; the 'manual' mode additionally
-    // relies on day_index/order_in_day already being set by the user.
+    // relies on day_index being set by the user and orders within each day
+    // by manual_rank (falling back to order_in_day — see runManualMode).
+    // v2 S2.8.1: `deleted = false` — tombstoned rows (soft-delete, migration
+    // 0027; the column is NOT NULL DEFAULT false) must never be clustered,
+    // routed, or counted against MAX_PLACES. A tombstone that slipped in
+    // here would resurrect a user-deleted place in the optimized layout.
     const { data: places, error: placesErr } = await user
       .from('trip_places')
-      .select('id, lat, lng, visit_duration_minutes, day_index, order_in_day')
+      .select('id, lat, lng, visit_duration_minutes, day_index, order_in_day, manual_rank')
       .eq('trip_id', body.tripId)
+      .eq('deleted', false)
       .returns<TripPlaceRow[]>();
     if (placesErr) {
       return errorResponse('db_error', placesErr.message, 500, origin);
@@ -504,15 +527,23 @@ export async function handler(req: Request): Promise<Response> {
 // Phase 23 Step 23.2: manual-mode renderer.
 // ============================================================
 // Skips k-means + 2-opt entirely. The user has hand-arranged places into
-// (day_index, order_in_day) groups; this function only refreshes
-// trip_legs against that existing chain so the polyline traces what the
+// days; this function orders each day's chain by the user-owned
+// manual_rank (v2 S2.8.2 — C1 loop closure), persists the derived
+// order_in_day, and refreshes trip_legs so the polyline traces what the
 // user laid out.
 //
 // Invariants
 // ----------
-// * NEVER mutates trip_places. The caller's ordering is authoritative.
+// * day_index is NEVER written here (manual mode never reassigns days),
+//   and manual_rank is NEVER written anywhere server-side (client-owned,
+//   LWW-synced — see migration 0027 + docs/v2/risks-and-decisions.md C1).
+//   order_in_day IS written (v2 S2.8.2): it is server-DERIVED from
+//   manual_rank via apply_optimization, keeping the server the sole owner
+//   of optimizer-domain columns while user intent stays in manual_rank.
 // * Skips places with day_index = null (unscheduled). This is not an
 //   error — it is the documented edge case from the planner brief.
+// * Tombstoned places (deleted = true) never reach this function — the
+//   parent handler's select filters them (v2 S2.8.1).
 // * Replaces trip_legs for the trip atomically: delete-then-insert under
 //   the admin client (RLS already authorized the caller via the parent
 //   handler; admin is used only to bypass the per-row eq filter that
@@ -526,7 +557,10 @@ export async function handler(req: Request): Promise<Response> {
 //   - days                : grouped {dayIndex, orderedPlaceIds, totalMinutes}
 //                          where totalMinutes is the sum of visit_duration_minutes
 //                          (no travel-time reflow happens in manual mode)
-//   - placesUpdated       : 0 (we never wrote)
+//   - placesUpdated       : rows whose order_in_day was rewritten from
+//                          manual_rank (0 for all-NULL-rank trips — i.e.
+//                          every v1 trip — and for re-runs on an
+//                          unchanged layout)
 //   - legsWritten         : count of new trip_legs rows
 //   - cacheHit            : false (we always re-call directions-polyline; the
 //                          user is asking for a fresh render)
@@ -553,14 +587,42 @@ async function runManualMode(args: {
     else byDay.set(p.day_index, [p]);
   }
 
-  // 2. Sort each day's places by order_in_day. NULLs sort last (defensive
-  //    — should not happen for scheduled rows, but tolerate).
+  // 2. Order each day's chain (v2 S2.8.2 — C1 loop closure).
+  //
+  //    Per-day fallback rule (deterministic; plan S2.8.2):
+  //      - ALL rows in the day have manual_rank = NULL → legacy
+  //        order_in_day order (NULLs last). Byte-identical to the
+  //        pre-rank behavior — every v1 trip takes this path, and step 5
+  //        below writes nothing for such days.
+  //      - At least one row has a rank → ranked rows FIRST, sorted by
+  //        plain string comparison of manual_rank (base-62 fractional
+  //        index: JS '<' and Postgres text agree — src/sync/rank.ts),
+  //        then NULL-rank rows AFTER, preserving their legacy
+  //        order_in_day order. This covers the mixed window ("dragged in
+  //        v1 yesterday — ranks NULL; drags flag-on today — ranks set").
+  //    Rank ties (two clients generating the same key offline) keep the
+  //    legacy base order — Array.prototype.sort is stable in Deno's V8.
   for (const list of byDay.values()) {
+    // Legacy base order: order_in_day asc, NULLs last (defensive —
+    // should not happen for scheduled rows, but tolerate).
     list.sort((a, b) => {
       const ao = a.order_in_day ?? Number.MAX_SAFE_INTEGER;
       const bo = b.order_in_day ?? Number.MAX_SAFE_INTEGER;
       return ao - bo;
     });
+    // `typeof === 'string'` (not `!== null`) so a row that somehow arrives
+    // WITHOUT the manual_rank key (undefined) is treated as unranked
+    // rather than poisoning the rank sort. PostgREST always materializes
+    // selected columns as null, so this only matters for malformed input.
+    const ranked = list.filter(
+      (p): p is TripPlaceRow & { manual_rank: string } => typeof p.manual_rank === 'string',
+    );
+    if (ranked.length === 0) continue; // all-NULL day → legacy order stands
+    const unranked = list.filter((p) => typeof p.manual_rank !== 'string');
+    ranked.sort((a, b) =>
+      a.manual_rank < b.manual_rank ? -1 : a.manual_rank > b.manual_rank ? 1 : 0,
+    );
+    list.splice(0, list.length, ...ranked, ...unranked);
   }
 
   const sortedDays = Array.from(byDay.keys()).sort((a, b) => a - b);
@@ -585,7 +647,52 @@ async function runManualMode(args: {
     .join('|');
   const stateHash = await sha256Hex(layoutSig);
 
-  // 5. Wipe existing trip_legs for this trip. We overwrite per-day, but
+  // 5. Persist the derived order_in_day back (v2 S2.8.2). C1: day_index /
+  //    order_in_day are SERVER-owned; the manual branch derives them from
+  //    the user-owned manual_rank rather than letting the client write
+  //    them. Scope of the write:
+  //      - Only days where at least one row carries a rank (all-NULL days
+  //        are legacy-authoritative — zero writes, byte-identical v1
+  //        behavior).
+  //      - Only rows whose stored order_in_day differs from the derived
+  //        position (idempotent: a re-run on an unchanged layout writes 0
+  //        rows and causes no updated_at churn for the sync pull).
+  //    day_index is passed through UNCHANGED — manual mode never
+  //    reassigns days; apply_optimization just needs it in the payload.
+  //
+  //    Sequenced BEFORE the trip_legs wipe so a persistence failure exits
+  //    with the previous legs intact instead of leaving the trip leg-less.
+  const assignments: Array<{ id: string; day_index: number; order_in_day: number }> = [];
+  for (const dayIndex of sortedDays) {
+    const chain = byDay.get(dayIndex)!;
+    if (!chain.some((p) => typeof p.manual_rank === 'string')) continue;
+    chain.forEach((p, i) => {
+      if (p.order_in_day !== i) {
+        assignments.push({ id: p.id, day_index: dayIndex, order_in_day: i });
+      }
+    });
+  }
+  let placesUpdated = 0;
+  if (assignments.length > 0) {
+    const { error: rankRpcErr } = await admin.rpc('apply_optimization', {
+      p_trip_id: tripId,
+      p_assignments: assignments,
+    });
+    if (rankRpcErr) {
+      log({
+        requestId,
+        fn: 'optimize-trip',
+        level: 'error',
+        mode: 'manual',
+        stage: 'apply_rank_order',
+        err: rankRpcErr.message,
+      });
+      return errorResponse('rpc_failed', 'apply_optimization failed', 500, origin);
+    }
+    placesUpdated = assignments.length;
+  }
+
+  // 6. Wipe existing trip_legs for this trip. We overwrite per-day, but
   //    the prior layout might have had MORE days than the manual layout
   //    (e.g. user merged days 2 and 3 into day 2); a delete-first ensures
   //    no stale day's leg leaks into the rendered route.
@@ -605,7 +712,7 @@ async function runManualMode(args: {
     return errorResponse('db_error', delErr.message, 500, origin);
   }
 
-  // 6. For each day with >=2 places, fetch a polyline along the existing
+  // 7. For each day with >=2 places, fetch a polyline along the existing
   //    chain. Best-effort: if Routes API returns null (transit) or
   //    upstream errors, skip that day's leg row but keep going. The UI
   //    falls back to dashed straight-lines when polyline is missing.
@@ -676,6 +783,7 @@ async function runManualMode(args: {
     tripId,
     places: places.length,
     days: responseDays.length,
+    placesUpdated,
     legsWritten: legsToInsert.length,
     polylineDays,
   });
@@ -684,7 +792,7 @@ async function runManualMode(args: {
     {
       stateHash,
       days: responseDays,
-      placesUpdated: 0,
+      placesUpdated,
       legsWritten: legsToInsert.length,
       cacheHit: false,
       polylineDays,

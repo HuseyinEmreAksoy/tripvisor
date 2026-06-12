@@ -81,6 +81,9 @@ async function fetchTripBundle(tripId: Uuid): Promise<{
       .from('trip_places')
       .select('*')
       .eq('trip_id', tripId)
+      // v2 S2.8.1: exclude soft-delete tombstones (migration 0027) — a
+      // user-deleted place must not reappear as a calendar event.
+      .eq('deleted', false)
       .order('day_index', { ascending: true, nullsFirst: true })
       .order('order_in_day', { ascending: true, nullsFirst: true }),
     supabase.from('trip_legs').select('*').eq('trip_id', tripId),

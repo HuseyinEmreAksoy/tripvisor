@@ -232,6 +232,11 @@ async function handleRead(
       .from('trip_places')
       .select(PLACE_FIELDS)
       .eq('trip_id', share.trip_id)
+      // v2 S2.8.1: soft-delete tombstones (migration 0027, NOT NULL DEFAULT
+      // false) must never surface on a share link — this read runs under the
+      // admin client, so the filter is the only thing standing between a
+      // user-deleted place and an anonymous viewer.
+      .eq('deleted', false)
       .order('day_index', { ascending: true, nullsFirst: true })
       .order('order_in_day', { ascending: true, nullsFirst: true }),
     admin

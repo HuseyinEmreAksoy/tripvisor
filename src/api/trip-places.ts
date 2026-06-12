@@ -30,6 +30,13 @@ export function useTripPlaces(tripId: Uuid | undefined) {
         .from('trip_places')
         .select('*')
         .eq('trip_id', tripId)
+        // v2 S2.8.1: exclude soft-delete tombstones (deleted = true,
+        // migration 0027 — NOT NULL DEFAULT false). Once flag-on web
+        // clients tombstone instead of hard-deleting, this filter is what
+        // keeps flag-off / fallback readers from resurrecting deleted
+        // places. Keep in lockstep with the analytics useQueries queryFn
+        // (app/(app)/analytics.tsx) — it shares this exact query key.
+        .eq('deleted', false)
         .order('day_index', { ascending: true, nullsFirst: true })
         .order('order_in_day', { ascending: true, nullsFirst: true });
       if (error) throw error;
@@ -173,7 +180,11 @@ export function useMoveToDay() {
           .from('trip_places')
           .select('order_in_day')
           .eq('trip_id', tripId)
-          .eq('day_index', toDayIndex);
+          .eq('day_index', toDayIndex)
+          // v2 S2.8.1: tombstoned rows must not inflate the appended
+          // position — the moved place should land right after the last
+          // LIVE place of the target day.
+          .eq('deleted', false);
         const max = (existing ?? []).reduce<number>(
           (m, r) => Math.max(m, (r as { order_in_day: number | null }).order_in_day ?? -1),
           -1,

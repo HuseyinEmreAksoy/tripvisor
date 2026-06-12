@@ -1,7 +1,7 @@
 # Tripvisor — Roadmap & Status
 
-**Current phase**: Phase 26 — Verification sweep: test restoration + first live smoke of Phase 21-25 surfaces
-**Last updated**: 2026-06-05
+**Current phase**: Phase S2.8 (v2) — Tier-1 sync flag flip: offline engine goes live for trips + trip_places (web-first)
+**Last updated**: 2026-06-12
 
 ## Status by phase
 
@@ -34,6 +34,8 @@
 | 24 | Analytics + place reactions + use-my-location routing | ✅ Code complete 2026-04-26 — automated tests (24.15) + live smoke (24.14) explicitly skipped per user direction (same as Phases 21–23); reviewer pass (24.13) skipped per user direction; platforms unverified | backend + ui + docs |
 | 25 | Editor unblock + travel-product polish + carryover sweep | ✅ Code complete 2026-04-26 — automated tests + live smoke explicitly skipped per user direction (same as Phases 21–24); reviewer pass skipped per user direction; platforms unverified. Steps 25.1–25.12 shipped; Step 25.13 (delete `useCollaboratedTrips`) NOT executed — carried to Phase 26 candidates. | backend + ui + docs |
 | 26 | Verification sweep: test restoration + first live smoke of Phase 21-25 surfaces | 🚧 In progress — web smoke green 2026-06-05; native + remaining feature smoke pending | test + docs |
+| v2 (0 → S2.7, N1–N5, P1–P3, T1, GO-LIVE) | v2 rewrite track — tracked canonically in `docs/v2/BUILD-LOG.md`, not in this table | ✅ through S2 Wave 3 (2026-06-12); flag still OFF | all |
+| v2 S2.8 | Tier-1 sync flag flip — offline engine live for trips + trip_places (web-first) | 📋 Planned 2026-06-12 — see "Phase S2.8" section at the bottom of this file | backend + ui + docs |
 
 Legend: 📋 Planned · 🚧 In progress · ✅ Done · ⚠ Blocked
 
@@ -3443,3 +3445,226 @@ The following items are acknowledged follow-ups or explicit deferrals from prior
 6. **Chart library upgrade** — `victory-native@41` requires `@shopify/react-native-skia >= 1.2.3` + React 19. The hand-rolled SVG charts can be replaced once the project upgrades to React 19.
 7. **Per-collaborator reaction views** — `trip_place_reactions` data layer already stores reactions per `user_id`; cross-collaborator visibility UI ("your travel partner liked this too") was deferred from Phase 24.
 8. **Email-change confirmation deep-link** — Supabase sends the confirmation link; routing that link click back into the app (universal links / custom scheme) was deferred from Phase 25.
+
+---
+
+## Phase S2.8 (v2) — Tier-1 sync flag flip: trips + trip_places go live on the offline engine (web-first)
+
+**Goal**: the Legend-State Tier-1 sync store becomes the live read/write path for `trips` + `trip_places` behind the existing flag, then the flag flips ON for web.
+**Status**: 📋 Planned (2026-06-12)
+**Entry criteria**:
+- S2 Waves 1–3 shipped (S2.1–S2.7, S2.9 abort gate = GO 7/7) — `src/sync/` engine, mutations, undo stack, rank, drag semantics, SyncStatusPill all on disk, flag OFF
+- Gates green at HEAD: tsc baseline **1341**, jest 28 suites / 346 tests, `npx expo export --platform web` clean, `npm run sync:validate` 7/7
+- Local Supabase stack with migrations through 0027 applied (the `handle_times()` / `manual_rank` / tombstone foundation)
+
+**Phase exit criteria** (all verifiable; "works well" is banned):
+- Flag-on web golden path runs entirely on Tier-1 reads/writes for trips + trip_places: sign in → trips list → open trip → add place → drag reorder → legs recompute → edit place → tombstone-delete + Undo → archive trip + Undo — recorded in `docs/smoke/s2-8.md`
+- Offline web (un-degraded browser, COOP/COEP active): airplane-mode drag + place edit + delete **survive a full page reload** (OPFS persistence) and sync on reconnect; manual order never reverts; legs recompute lands after reconnect
+- v1-user migration simulation passes: seed a flag-off TanStack-persisted cache → flip the flag → no data loss, no duplicate rows, and an **offline cold start before first hydration still shows cached trips** (facade fallback)
+- Flag-off clients (native, kill-switched web) are byte-identical to today AND never render tombstoned rows (`deleted=false` filters live on every remaining direct `trip_places` read, client + Edge)
+- `trip_legs` provably never enters the Tier-1 store (allowlist unchanged; grep + validate-script assertion)
+- `dist/_headers` present after web export; deployed site reports `crossOriginIsolated === true` in Chrome/Firefox; map tiles (OpenFreeMap), fonts, Supabase REST + realtime websocket, place-photo Edge fetches, OAuth redirect all functional under `COEP: credentialless`
+- Kill-switch drill recorded: `app_config` row `sync_tier1='off'` disables the engine on next app load of the env-baked web build
+- Gates re-verified at phase end: tsc 1341 baseline-identical · jest green · web export clean · `sync:validate` all checks pass (7/7 + the new ones from Step S2.8.12)
+- Platforms: web live-verified; **iOS/Android explicitly stay flag-OFF this phase** (justification: S1.3 device smoke + dev-client rebuild still user-owed; native flip is a P4 entry item). Native flag-off parity is covered by the byte-identical criterion above.
+
+**Critical path**: S2.8.1 → S2.8.5 → S2.8.6 → S2.8.7 → S2.8.12 → S2.8.13 → S2.8.14
+(S2.8.2 → S2.8.7 and S2.8.3 → S2.8.4 → S2.8.12 are secondary chains; S2.8.8/9/10/11 are fully off the critical path until the S2.8.12 fan-in.)
+
+### Decisions made in this plan (user veto window — flag any objection before Step S2.8.1 starts)
+- **D1 — Sign-out `clearPersist` policy (scope item 4): plain sign-out NEVER clears the write-enabled Tier-1 stores.** The beta engine has no detach; clearing observables diffs as mass tombstone-deletes and the attached engine would sync them = real data loss. Privacy boundary = per-user persist namespace (`tier1/<userId>/<table>`) + OS app sandbox / per-origin OPFS. **Account deletion** (the existing delete-account flow) additionally gets a best-effort raw storage wipe through the persistence layer directly (never through the engine), after teardown. Codified in Step S2.8.11 + ADR-0010.
+- **D2 — v1-user migration (scope item 6): no data migration script.** The repointed read hooks fall back to the restored TanStack cache until each Tier-1 root's first hydration completes (telemetry `lastSyncAt` / syncState loaded); the persister allowlist goes flag-aware so trips/trip-places stop dehydrating; stale persisted entries self-clean on the persister's next write cycle. Exactly one source renders at a time → no duplicates, no loss. ADR-0010.
+- **D3 — Rollout (scope item 8): web-first via env-baked flag; `app_config` reserved as the global kill-switch.** Bake `EXPO_PUBLIC_SYNC_TIER1=1` into the web export only (web deploys are direct-upload `expo export` artifacts; native builds/OTA never receive the var → native stays OFF). The `app_config` `sync_tier1` row stays ABSENT in normal operation; writing **'off'** force-disables every client including env-baked web (flags.ts: any present value ≠ 'on' wins over env). **Never write 'on' until native clears P4** — 'on' is platform-global. ADR-0010.
+- **D4 — Flag-on drag while in "Best route" mode auto-switches the trip to "My order"** (`route_render_mode='manual'`, written through the sync mutations, undoable, with a toast). Rationale: with `manual_rank` as the single user-order source, keeping the v1 behavior (drag silently rewrites optimizer-owned `order_in_day`) is exactly the C1 bug; a drag IS an assertion of manual order. Fallback if vetoed: keep the session-local `dayOrderOverrides` machinery for optimized-mode drags. **This is the one user-visible behavior change in the phase — veto here if unwanted.**
+- **D5 — Trip hard-delete + duplicate + move-to-day stay on the legacy PostgREST/RPC path flag-on.** Delete/duplicate are online-only destructive ops (trips have no tombstone by design — 0027); `day_index` is server-domain (C1) so `useMoveToDay` cannot route through `mutations.ts`. After a hard-delete ack the trips row is pruned from the local store (verified no-network no-op in Step S2.8.12 — the plugin skips deletes when neither `fieldDeleted` nor a delete action is configured for trips); after duplicate, `resyncTier1()` pulls the new rows promptly. Flag-on + offline: move-to-day affordances disable with a hint (Step S2.8.7).
+
+### Step S2.8.1 — Tombstone hygiene on every remaining direct `trip_places` read (binding beta finding)
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Add `deleted = false` filtering to every direct `trip_places` read that survives the repoint, client and server: `useTripPlaces` queryFn (`src/api/trip-places.ts`), the analytics `useQueries` queryFn (`app/(app)/analytics.tsx` if it owns its own fetch), and Edge Functions — `optimize-trip` places select (line ~223), `share-trip`, `ai-edit` / `ai-itinerary` place-context reads, `export-account`. Grep `from('trip_places')` repo-wide for completeness. Confirm 0027 made `deleted` NOT NULL DEFAULT false (else use `or(deleted.is.null,deleted.eq.false)`).
+- **Inputs**: migration 0027; BUILD-LOG line 111 beta findings; `supabase/functions/**`
+- **Expected output**: no surviving read path can return a tombstoned place; flag-off behavior unchanged (no tombstones exist yet for v1 users); deno tests updated where Edge Fns have suites
+- **Depends on**: None
+- **Parallel with**: S2.8.3, S2.8.8, S2.8.9, S2.8.10, S2.8.11
+- **Risks**:
+  - [High] A missed read path resurrects "deleted" places for flag-off native users once web starts tombstoning — Mitigation: the grep is the gate; Step S2.8.12 adds a validate-script check (tombstone a row, assert absent from `useTripPlaces`-shaped select + optimize-trip chain)
+  - [Low] `deleted` column nullable on old rows — Mitigation: verify 0027 DDL before choosing the filter form
+- **Verification**: grep shows every `from('trip_places').select` carries the filter; jest + deno suites green; independently committable
+
+### Step S2.8.2 — `optimize-trip` manual branch orders by `manual_rank` (C1 loop closure)
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: In `runManualMode`, order each day's chain by `manual_rank` (base-62 lexicographic, matching `src/sync/rank.ts`) with per-day fallback to `order_in_day` when any live row in that day lacks a rank; persist the derived `order_in_day` back (server-derived from user intent — C1's "manual branch recomputes legs from manual_rank"); include `manual_rank` in the places select. `day_index` stays untouched in manual mode. stateHash must incorporate rank-derived order so dedupe still works.
+- **Inputs**: Step S2.8.1's edited `optimize-trip/index.ts`; `rank.ts` ordering semantics (plain string compare); C1 in `docs/v2/risks-and-decisions.md`
+- **Expected output**: deno tests for rank ordering + mixed-rank fallback + tombstone exclusion; with all-NULL ranks (every v1 trip) behavior is byte-identical to today — independently committable before the UI repoint
+- **Depends on**: S2.8.1 (same file)
+- **Parallel with**: S2.8.3, S2.8.4
+- **Risks**:
+  - [Medium] Rank-vs-order disagreement window (user dragged in v1 yesterday, ranks NULL; drags flag-on today) — Mitigation: per-day fallback rule + `ensureDayRanks` backfill at first flag-on drag (already in `dragRank.ts`)
+  - [Medium] stateHash change re-triggers one spurious manual recompute per trip — Mitigation: acceptable one-time cost; document in fn header
+- **Verification**: `deno test` optimize-trip suite green incl. new cases; local curl of manual mode on a ranked trip returns legs in rank order
+
+### Step S2.8.3 — Trips read facade: `useTrips` / `useTrip` branch to the Tier-1 store
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Inside `src/api/trips.ts` (no consumer files change): always-call pattern — the existing `useQuery` (gated `enabled` when Tier-1 serves) plus a Legend-State selector (`use$`/`useSelector` from `@legendapp/state/react`) over `tier1Store$.trips`. Tier-1 branch reproduces the contract: archived filter on `archived_at`, owner-first `created_at` desc (locally-created rows missing `created_at` sort newest), `isOwner` derived from session user id, `collaboratorRole` joined from the existing `trip_collaborators` TanStack query (stays Tier-2; offline-unknown role degrades to viewer-safe null). **Hydration-aware fallback (D2)**: until the trips root's first hydration completes (telemetry `lastSyncAt` non-null or syncState persist-loaded with rows), return the TanStack result — this is the v1-user no-data-loss guarantee and the degraded-web offline path.
+- **Inputs**: `src/sync/store.ts`, `telemetry.ts`, `hydrate.ts` (`isTier1SyncActive`); `useTrips` contract above (lines 41–141 of trips.ts)
+- **Expected output**: flag-off byte-identical (selector reads an empty inert store); flag-on trips list/detail render from the store and update live on realtime merges; `useTripRole`, packing, print, expenses consumers work unchanged
+- **Depends on**: None
+- **Parallel with**: S2.8.1, S2.8.2
+- **Risks**:
+  - [High] Rules-of-hooks breakage from conditional sourcing — Mitigation: both hooks always called; only the returned value branches; `tier1Active` re-evaluated per render
+  - [Medium] Shape drift (`isOwner`/`collaboratorRole` are view-model fields absent from store rows) — Mitigation: facade derives them; jest test compares flag-on vs flag-off result shape for the same fixture
+- **Verification**: new jest suite for the facade (flag on/off/fallback states); tsc baseline-identical
+
+### Step S2.8.4 — Trips write repoint + delete/duplicate handling
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: In `src/api/trips.ts` mutation hooks, branch the mutationFns on `isTier1SyncActive()`: `useCreateTrip`→`mutations.createTrip`, `useUpdateTrip`/`useUpdateTripBudget`/`useUpdateRouteRenderMode`→`updateTrip`, `useArchiveTrip`→`tombstoneTrip` (push `UndoEntry` to the session stack), `useUnarchiveTrip`→`updateTrip({archived_at:null})`. Per D5: `useDeleteTrip` stays legacy + on ack prune `tier1Store$.trips[id]` locally; `useDuplicateTrip` stays legacy + `resyncTier1()` on success. Keep TanStack invalidations firing (harmless flag-on; required flag-off). NEVER set `created_at` client-side (plugin discriminator).
+- **Inputs**: S2.8.3's facade structure; `src/sync/mutations.ts`, `undo.ts`
+- **Expected output**: flag-on trip create/edit/archive work offline and return minted ids synchronously; archive shows in the undo stack; AI plan-commit (`useAiDraftCommit`) and sample trip ride the repointed hooks with zero changes
+- **Depends on**: S2.8.3 (same file)
+- **Parallel with**: S2.8.5
+- **Risks**:
+  - [High] Store prune after hard-delete echoes a network write — Mitigation: verified as a no-op in Step S2.8.12's validate script BEFORE the flip; fallback = facade-level deleted-ids session set
+  - [Medium] An update racing its own unacked create no-ops (beta finding) — Mitigation: `mutations.ts` creates are already COMPLETE rows; keep it that way
+- **Verification**: jest mutation-branch tests; flag-off paths byte-identical (snapshot the PostgREST payloads)
+
+### Step S2.8.5 — trip_places read facade
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Same always-call facade pattern in `src/api/trip-places.ts`: Tier-1 branch selects the trip's live rows (`deleted !== true`), sorted `day_index` nulls-first then `order_in_day` (today's contract — rank-aware *display* ordering stays a pure helper applied in Step S2.8.7, since this hook doesn't know `route_render_mode`). Same hydration-aware fallback as S2.8.3. Export a pure `orderPlacesForDisplay(places, renderMode, tier1Active)` helper (per-day: manual mode + all-ranked → rank order; else `order_in_day`) for the UI + auto-optimize key.
+- **Inputs**: S2.8.1 (queryFn now filters `deleted`); S2.8.3 pattern; `rank.ts`
+- **Expected output**: all 7 consumers (route shell, add, packing, print, CoverPickerModal, SettingsTab, analytics-via-useQueries-unaffected) work unchanged; flag-on rows update instantly on local mutation
+- **Depends on**: S2.8.1; S2.8.3 (pattern, soft)
+- **Parallel with**: S2.8.4
+- **Risks**:
+  - [Medium] Sorting divergence between store branch and SQL branch — Mitigation: shared comparator + jest property test (fast-check is already a devDep) comparing both branches on random fixtures
+- **Verification**: jest facade suite; tsc baseline-identical
+
+### Step S2.8.6 — trip_places write repoint (tombstones live)
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: Branch mutationFns in `trip-places.ts`: `useCreateTripPlace`→`mutations.createPlace`, `useUpdateTripPlace`→`updatePlace` (duration/notes/windows/pinned_start/title — push undo for destructive-ish edits per the five-case catalog), `useDeleteTripPlace`→`tombstonePlace` + undo push (the binding hard-delete→tombstone flip for repointed paths; flag-off keeps the v1 hard delete). Per D5 `useMoveToDay` and `useReorderDay` stay legacy (server-domain `day_index`/RPC); flag-on `useMoveToDay.onSuccess` adds `resyncTier1()` so the store reflects the day change promptly.
+- **Inputs**: S2.8.5; `mutations.ts`, `undo.ts`
+- **Expected output**: flag-on add/edit/delete place work offline; delete is undoable; PlaceActionsSheet + add flow + AI edit-apply (`useAiEditApply` uses these hooks) unchanged at call sites
+- **Depends on**: S2.8.5 (same file)
+- **Parallel with**: S2.8.8, S2.8.9
+- **Risks**:
+  - [Medium] Add-flow dedupe reads (`add.tsx` uses `useTripPlaces`) must see optimistic creates — Mitigation: they do by construction (store-sourced); assert in smoke
+  - [Low] Undo of a delete after remote prune — Mitigation: `tombstonePlace` inverse already re-seeds from snapshot
+- **Verification**: jest mutation-branch tests green; flag-off payload snapshots unchanged
+
+### Step S2.8.7 — ItineraryTab dual-path retirement + rank-aware display + auto-optimize key
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: In `src/components/trip-detail/ItineraryTab.tsx` + `app/(app)/trip/[id]/index.tsx`: (a) flag-on drag drops the legacy `reorderDay.mutate` fire entirely — ranks via `commitDragRanks` + undo push remain; (b) apply `orderPlacesForDisplay` so manual-mode display follows `manual_rank` (kills `dayOrderOverrides`; keep the `pendingRecompute` pill — legs still lag offline); (c) route-shell `stateKey` manual-layout component derives from the same helper so a flag-on drag re-triggers `optimize-trip mode:'manual'` (which now reads ranks, per S2.8.2); (d) D4: flag-on drag in 'optimized' mode writes `route_render_mode='manual'` through the repointed hook, with toast + undo; (e) flag-on + offline disables move-to-day affordances (IdeasAddToDayRow, PlaceActionsSheet MoveToDay) with a one-line hint.
+- **Inputs**: S2.8.2, S2.8.5, S2.8.6; existing `dragRank.ts` contract (S2.6)
+- **Expected output**: flag-off drag path byte-identical (v1 `reorderDay` only); flag-on online drag = rank write → auto-optimize recomputes legs; flag-on offline drag = never reverts, pill until reconnect recompute
+- **Depends on**: S2.8.2, S2.8.5, S2.8.6
+- **Parallel with**: S2.8.10
+- **Risks**:
+  - [High] Auto-optimize loop regression (the stateKey effect has a history of loops — see the 2026-06-11 bug note in the shell) — Mitigation: key stays order-insensitive in optimized mode exactly as today; manual-mode key uses sorted entries; smoke includes a drag-burst check
+  - [Medium] D4 surprises users — Mitigation: toast copy "Switched to My order — Undo"; decision flagged for veto above
+- **Verification**: jest component tests for both flag branches; manual drag on local web recomputes legs within one debounce cycle
+
+### Step S2.8.8 — Undo toast/button surface
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: New shared `UndoToast` component mounted once in `app/(app)/_layout.tsx`: subscribes via `useUndo()`; on stack growth shows entry label + "Undo" action; ~6s auto-dismiss; a11y live-region announce; `useReducedMotion`-gated animation; desktop web placement (bottom-left, not stretched); safe-area aware on native codepaths. Tapping Undo runs `undoLast()` and toasts `Undid: <label>` (failures surface as a friendly error toast — a throwing inverse stays popped by design).
+- **Inputs**: `src/sync/undo.ts` (UndoStack, capacity 20, eviction already tested); pushes wired by S2.8.4/6/7
+- **Expected output**: toast appears after archive / place delete / reorder / D4 mode-switch; renders nothing flag-off (stack only receives pushes flag-on)
+- **Depends on**: None to build (stack exists); end-to-end visible after S2.8.4/6/7
+- **Parallel with**: S2.8.1–S2.8.6, S2.8.9
+- **Risks**:
+  - [Low] Distinguishing push vs undo/clear on the version counter — Mitigation: track `stack.size` delta, not version alone
+- **Verification**: jest render test (push → visible → undo → label); included in S2.8.13 smoke
+
+### Step S2.8.9 — Issues sheet on SyncStatusPill
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Make `src/components/SyncStatusPill.tsx` tappable → bottom sheet listing `useSyncStatus()` problems: per-entity `writeErrorCount` (dead-letter proxy — queue depth honestly unavailable), `degraded` + reason with platform-specific copy (web: "offline changes won't survive a reload in this browser"; native: "update your app build"), `tosViolations` (dev-leaning copy), last-sync age. Resolver actions where possible: "Retry now" → `resyncTier1()`; "Refresh data" → resync + invalidate trips/places queries. Renders null flag-off (existing contract).
+- **Inputs**: `telemetry.ts` snapshot shape; `hydrate.ts` `resyncTier1`
+- **Expected output**: sheet opens from the trips-header pill on all three platform codepaths; zero flag-off change
+- **Depends on**: None
+- **Parallel with**: S2.8.8
+- **Risks**: [Low] Action expectations exceed what the beta exposes — Mitigation: copy stays honest ("retry" not "fix"); documented limitation already in S2.7 notes
+- **Verification**: jest render test against mocked snapshots (healthy / degraded / write-errors); smoke ticks it live
+
+### Step S2.8.10 — [Web-only] `public/_headers` COOP/COEP for Cloudflare Pages
+- **Agent**: ui-specialist
+- **Size**: S
+- **Task**: Create `public/_headers` applying to `/*`: `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: credentialless` (NOT `require-corp` — it would break cross-origin tiles/fonts). Verify `npx expo export --platform web` copies it to `dist/_headers` (Expo copies `public/` verbatim). Audit under the headers (local prod-serve or preview deploy): OpenFreeMap tiles, fonts (Hanken Grotesk is bundled via expo-font — same-origin), Supabase REST + realtime websocket, place-photo Edge fetches, Sentry, Google OAuth (full-page redirect — COOP-safe; confirm no `window.opener` popup flows exist). Web-only by nature: headers are a Pages artifact; native unaffected; dev parity already exists via `metro.config.js` middleware.
+- **Inputs**: metro.config.js precedent (credentialless chosen there for the same reason); R5
+- **Expected output**: deployed web gets `crossOriginIsolated === true` in Chrome/Firefox → SharedArrayBuffer → OPFS persistence un-degrades; independently committable
+- **Depends on**: None
+- **Parallel with**: everything
+- **Risks**:
+  - [Medium] Safari does not support `credentialless` → stays degraded (in-memory) there — Mitigation: accepted per R5; issues sheet (S2.8.9) explains it; never regress below v1 because of S2.8.11's degraded-aware persister rule
+  - [Medium] A cross-origin resource breaks under COEP — Mitigation: the audit list above runs BEFORE the flip; rollback = delete the file (headers gone next deploy)
+- **Verification**: `dist/_headers` exists post-export; preview deploy console shows `crossOriginIsolated === true`; tile/font/auth audit recorded in the smoke log
+
+### Step S2.8.11 — Flag-aware persister retirement + persistence lifecycle codification
+- **Agent**: backend-specialist
+- **Size**: M
+- **Task**: (a) `src/api/offline.web.ts` + `offline.native.ts`: `shouldDehydrateQuery` excludes `trips` + `trip-places` ONLY when `isTier1SyncEnabled() && !getSyncTelemetry().degraded` — on the degraded path (Safari, pre-rebuild native) TanStack keeps dehydrating so offline cold-start reads never regress below v1 (`trip-legs` keeps persisting unconditionally — Tier-2 forever per R4). Old persisted entries self-clean on the persister's next write cycle (D2 — verify, no migration script). (b) Codify D1: document the no-clear-on-sign-out policy at the teardown site; add `wipeTier1Persistence(userId)` to the persistence layer (raw storage deletion, never through the engine) and call it best-effort from the existing delete-account flow only.
+- **Inputs**: `flags.ts` sync read; `telemetry.ts` degraded state; `app/_layout.tsx` persister config (unchanged); delete-account flow
+- **Expected output**: flag-on un-degraded clients stop double-persisting trips/places; flag-off + degraded behavior identical to today; account deletion leaves no Tier-1 rows on disk (best-effort, restart-tolerant)
+- **Depends on**: None hard (flag is off by default; safe to land any time before the flip)
+- **Parallel with**: S2.8.1–S2.8.9
+- **Risks**:
+  - [Medium] `app_config`-driven flip changes dehydration only after restart (flags load async) — Mitigation: harmless either direction (extra dehydration is wasted bytes, not corruption); env-baked web is deterministic at boot
+  - [Medium] Raw wipe racing the attached engine re-persisting — Mitigation: wipe only in delete-account (session is ending; engine torn down first); document restart requirement
+- **Verification**: existing `offline.test.ts` / `offline.dehydration.test.ts` extended for the three flag×degraded states; jest green
+
+### Step S2.8.12 — Validate-script extension + full gate run (flag forced on locally)
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Extend `scripts/validate-sync-roundtrip.mjs` with: (a) trips local store prune after hard-delete emits NO network write (D5 proof); (b) tombstoned place absent from the S2.8.1-filtered select shape; (c) `manual_rank`-ordered manual optimize chain (against the local stack with S2.8.2 deployed locally); (d) standing assertion that no `trip_legs` key exists in the Tier-1 store/allowlist. Then run the full gate with `EXPO_PUBLIC_SYNC_TIER1=1`: tsc (1341 baseline-identical), jest, web export, `sync:validate`.
+- **Inputs**: all code steps S2.8.1–S2.8.7, S2.8.11
+- **Expected output**: `npm run sync:validate` all-pass (7 original + new checks); gates green; any failure loops back to the owning step BEFORE smoke
+- **Depends on**: S2.8.1–S2.8.7, S2.8.11
+- **Parallel with**: (none — fan-in)
+- **Risks**: [Medium] D5's prune assumption proves false (plugin networks the delete) — Mitigation: documented fallback in S2.8.4 (facade-level deleted-ids set); re-plan only this seam
+- **Verification**: script exit 0; gate numbers recorded in the BUILD-LOG entry draft
+
+### Step S2.8.13 — Live web smoke, flag ON (verification gate replaces the disabled test-specialist)
+- **Agent**: ui-specialist
+- **Size**: M
+- **Task**: Scripted browser smoke on local web (`npm run web`, dev COOP/COEP middleware active) + local Supabase, flag forced on. Walk: golden path (exit-criteria list) · offline drag/edit/delete → reload (persistence) → reconnect (sync + legs recompute + pill clears) · undo toast on every destructive/reorder op · issues sheet states (force a write error via RLS-denied edit) · v1-migration simulation (seed flag-off cache → flip → fallback → hydration handover; no dupes/loss) · AI plan-commit + sample trip on repointed hooks · D4 mode-switch toast · degraded simulation (strip COOP/COEP) confirming the v1-parity read path. Record every tick + console errors in `docs/smoke/s2-8.md`. **Any blocker stops Step S2.8.14** — loop back to the owning specialist.
+- **Inputs**: S2.8.8–S2.8.10, S2.8.12 green
+- **Expected output**: `docs/smoke/s2-8.md` with pass/fail per item; zero new console/runtime errors
+- **Depends on**: S2.8.8, S2.8.9, S2.8.10, S2.8.12
+- **Parallel with**: (none)
+- **Risks**: [High] Golden-path breakage only visible live (the G6 lesson: green gates ≠ working product) — Mitigation: this step exists; smoke uses the REAL local stack, not mocks
+- **Verification**: smoke log committed; blocker count = 0
+
+### Step S2.8.14 — The flip: deploy web with the flag baked + kill-switch drill
+- **Agent**: backend-specialist
+- **Size**: S
+- **Task**: Deploy touched Edge Functions (`optimize-trip`, `share-trip`, `ai-edit`, `ai-itinerary`, `export-account` as edited) to cloud; build web with cloud env + `EXPO_PUBLIC_SYNC_TIER1=1` (verify the literal `process.env.EXPO_PUBLIC_SYNC_TIER1` read inlines — the G6 env-inlining lesson; `flags.ts` already uses the literal form); `npx wrangler pages deploy dist` with `_headers` included. Post-deploy: `crossOriginIsolated === true` on tripvisor.pages.dev, abbreviated golden path on the live site, then the kill-switch drill — insert `app_config ('sync_tier1','off')`, confirm a fresh load runs flag-off, delete the row. Native remains OFF (D3).
+- **Inputs**: S2.8.13 clean smoke; `supabase/.env` cloud creds; deployment.md runbook
+- **Expected output**: live web on Tier-1 for trips+trip_places; rollback story proven (kill-switch row + redeploy-without-env as the deep fallback)
+- **Depends on**: S2.8.13
+- **Parallel with**: (none)
+- **Risks**:
+  - [High] Cloud has migrations only through 0027? — verify `supabase migration list --linked` BEFORE deploy; 0027 must be applied to cloud (it was applied locally in S2.1; cloud push not recorded in BUILD-LOG) — if absent this becomes the step's first action
+  - [Medium] Live-only failures (CORS, realtime under COEP) — Mitigation: kill-switch row is a <60s mitigation; smoke immediately post-deploy
+- **Verification**: live golden path ticks appended to `docs/smoke/s2-8.md`; kill-switch drill recorded
+
+### Step S2.8.15 — Docs close-out
+- **Agent**: docs-specialist
+- **Size**: S
+- **Task**: BUILD-LOG S2.8 record (gate numbers, decisions D1–D5 outcome, native-deferred note); update `docs/v2/risks-and-decisions.md` statuses (C1 loop closed, R5 partially closed — Safari caveat, R7 resolved via D2); feature-doc note for the offline/undo/issues surfaces; tick this phase in plan.md's status table; ADR-0010 cross-link.
+- **Inputs**: everything above shipped
+- **Expected output**: docs reflect shipped reality; S2 marked complete in the BUILD-LOG except the native flip (P4)
+- **Depends on**: S2.8.14
+- **Parallel with**: (none — final step)
+- **Risks**: no material risks identified
+- **Verification**: BUILD-LOG entry present; plan.md table row flipped to ✅
+
+## ⚠ Blockers (Phase S2.8)
+
+None hard. Two veto windows, not blockers:
+1. **D4** (drag in "Best route" mode auto-switches to "My order") is a deliberate behavior change — veto before S2.8.7 if v1 semantics must be preserved (fallback documented).
+2. **Cloud migration state**: 0027 was verified applied LOCALLY only; S2.8.14 verifies/pushes it to cloud before deploying. If cloud push surfaces conflicts, that becomes a stop-and-report.

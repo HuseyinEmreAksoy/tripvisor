@@ -154,6 +154,11 @@ export async function handler(req: Request): Promise<Response> {
         .from('trip_places')
         .select('*')
         .in('trip_id', tripIds)
+        // v2 S2.8.1: soft-delete tombstones (migration 0027) are
+        // user-deleted content kept only so offline replicas converge on
+        // the deletion — exporting them would resurrect places the user
+        // already removed.
+        .eq('deleted', false)
         .order('id', { ascending: true }),
       admin
         .from('trip_legs')
