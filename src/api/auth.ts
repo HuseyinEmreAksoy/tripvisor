@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { useEffect } from 'react';
 import * as Linking from 'expo-linking';
 import { supabase } from './supabase';
+import { initTier1Sync, teardownTier1Sync } from '@/sync/hydrate';
 
 const SESSION_KEY = ['auth', 'session'] as const;
 
@@ -12,6 +13,18 @@ export function useSession() {
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       qc.setQueryData(SESSION_KEY, session ?? null);
+      // v2 S2.8: the Tier-1 offline engine follows the auth lifecycle from
+      // this single seam (covers magic link, OAuth, session restore, and
+      // sign-out alike). Inert when the sync flag is off — initTier1Sync
+      // resolves to a no-op — and never blocks the auth callback.
+      if (session?.user?.id) {
+        void initTier1Sync({ userId: session.user.id }).catch(() => {
+          // Engine boot failures are telemetered inside src/sync — auth
+          // must never fail because offline sync couldn't start.
+        });
+      } else {
+        teardownTier1Sync();
+      }
     });
     return () => data.subscription.unsubscribe();
   }, [qc]);

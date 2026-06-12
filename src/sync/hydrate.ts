@@ -102,6 +102,7 @@ import { TABLE_FOR_KEY, TIER1_STORE_KEYS, tier1Store$, type Tier1StoreKey } from
 import {
   markSyncDegraded,
   markSyncEnabled,
+  markSyncStopped,
   recordDroppedField,
   recordEntityHydrated,
   recordHydrationFailure,
@@ -317,16 +318,26 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
   const enabled = await loadTier1SyncFlag();
   if (!enabled) return { started: false, degraded: false };
 
-  if (initializedForUser !== null) {
-    // Same user re-init is a resync; a DIFFERENT user requires an app
-    // restart (sign-out teardown/clearPersist is a Wave 3 task — per-user
-    // persist names already prevent cross-account reads).
-    if (initializedForUser === opts.userId) resyncTier1();
+  // syncObservable attachments are permanent for the process lifetime (the
+  // beta exposes no unsubscribe) — track which user they were built for
+  // separately from whether the engine is currently ACTIVE (teardown gates
+  // activity without detaching).
+  if (attachedForUser !== null) {
+    if (attachedForUser === opts.userId) {
+      // Same user re-init (or sign-in after sign-out): resume + resync.
+      initializedForUser = opts.userId;
+      resyncTier1();
+      return { started: true, degraded: lastPersistenceDegraded };
+    }
+    // A DIFFERENT user in the same process requires an app restart — the
+    // engine's per-table sync state is bound to the first user's persist
+    // namespace (which already prevents cross-account disk reads).
     return { started: false, degraded: false };
   }
 
   const persistence = createSyncPersistence();
   persistencePlugin = persistence.plugin;
+  lastPersistenceDegraded = persistence.degraded;
   if (persistence.degraded) {
     markSyncDegraded(persistence.reason ?? 'unknown');
   }
@@ -335,7 +346,34 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
     attachEntity(key, opts.userId);
   }
   attachReconnectResync();
+  attachedForUser = opts.userId;
   initializedForUser = opts.userId;
   markSyncEnabled();
   return { started: true, degraded: persistence.degraded };
+}
+
+let attachedForUser: string | null = null;
+let lastPersistenceDegraded = false;
+
+/** Is the engine the ACTIVE write path right now? (mutations.ts gates on this.) */
+export function isTier1SyncInitialized(): boolean {
+  return initializedForUser !== null;
+}
+
+/**
+ * Sign-out teardown (S2.8 partial). HONESTY: the beta plugin has no clean
+ * detach — syncObservable attachments live until the process dies. What this
+ * CAN safely do is gate the engine off: `initializedForUser = null` makes
+ * isTier1SyncActive() false, so the mutation layer throws `sync_inactive`
+ * and callers fall back to the v1 hooks. We deliberately do NOT clear the
+ * store observables: on the write-enabled roots a `.set({})` would diff as
+ * mass tombstone-deletes and the attached engine would happily sync them.
+ * Cross-account safety comes from the per-user persist namespace + RLS; a
+ * different-user sign-in in the same process returns started:false
+ * (restart required), documented in initTier1Sync.
+ */
+export function teardownTier1Sync(): void {
+  if (initializedForUser === null) return;
+  initializedForUser = null;
+  markSyncStopped();
 }

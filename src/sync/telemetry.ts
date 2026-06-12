@@ -1,18 +1,30 @@
 /**
- * telemetry.ts — sync-engine observability (v2 S2.2; full status UI is
- * S2.7, this is the data layer it will read).
+ * telemetry.ts — sync-engine observability (v2 S2.2 data layer; S2.7 partial
+ * adds the subscribable SyncStatus surface the status pill consumes).
  *
- * Plain module state + snapshot getter (no observables: nothing reactive
- * consumes this yet, and keeping it dependency-free means the allowlist
- * guard can report violations without importing Legend-State).
+ * Plain module state + snapshot getter (no observables: keeping this module
+ * dependency-free — no Legend-State, no React — means the allowlist guard
+ * can report violations from anywhere, including the node validate script).
+ * The React hook lives in status.ts; this module only exposes the
+ * framework-free core: getSyncStatus / subscribeSyncStatus /
+ * refreshSyncStatus.
  *
- * Sentry: hydration failures and ToS-violation strips emit breadcrumbs (not
- * events — breadcrumbs are free context attached to whatever error surfaces
- * next; promoting to captured events is an S2.7 decision once volume is
- * known). All Sentry calls are wrapped — initSentry() is a no-op without a
- * DSN and telemetry must never be the thing that crashes sync.
+ * Sentry: degrade events, hydration failures, WRITE failures, and
+ * ToS-violation strips all emit breadcrumbs (not events — breadcrumbs are
+ * free context attached to whatever error surfaces next; promoting to
+ * captured events is a later decision once volume is known). All Sentry
+ * calls are wrapped — initSentry() is a no-op without a DSN
+ * (src/lib/sentry.ts) and addBreadcrumb before/without init is itself a
+ * no-op in @sentry/react-native, so telemetry can never crash sync.
+ *
+ * pendingWrites: the count comes from the sync engine
+ * (syncState(...).getPendingChanges()), but importing hydrate.ts here would
+ * create a cycle (hydrate → telemetry). hydrate.ts therefore REGISTERS a
+ * provider callback at init and unregisters it at teardown; while no
+ * provider is registered (engine off) pendingWrites is honestly `undefined`.
  */
 
+import { useSyncExternalStore } from 'react';
 import { Sentry } from '../lib/sentry';
 import type { Tier1Table, Tier1WriteDropKind } from './allowlist';
 import { TIER1_TABLES } from './allowlist';
@@ -86,14 +98,62 @@ function breadcrumb(message: string, data?: Record<string, unknown>): void {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Reactive status surface (S2.7) — powers the sync-status pill.
+// Same useSyncExternalStore shape as UndoStack: subscribers + a monotonic
+// version counter as the (referentially stable) snapshot; components derive
+// the actual data via getSyncTelemetry() per render.
+// ───────────────────────────────────────────────────────────────────────────
+
+const statusListeners = new Set<() => void>();
+let statusVersion = 0;
+
+function refreshSyncStatus(): void {
+  statusVersion++;
+  for (const listener of statusListeners) listener();
+}
+
+/** Subscribe to any telemetry change; returns the unsubscribe function. */
+export function subscribeSyncStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => {
+    statusListeners.delete(listener);
+  };
+}
+
+/** Monotonic change counter — the useSyncExternalStore snapshot. */
+export function getSyncStatusVersion(): number {
+  return statusVersion;
+}
+
+/**
+ * React hook for the Wave-3b status pill: re-renders on every telemetry
+ * change and returns a fresh snapshot. `pendingWrites` is NOT included —
+ * the beta plugin does not expose its queue depth (documented limitation;
+ * `writeErrorCount` per entity is the available proxy).
+ */
+export function useSyncStatus(): SyncTelemetrySnapshot {
+  useSyncExternalStore(subscribeSyncStatus, getSyncStatusVersion, getSyncStatusVersion);
+  return getSyncTelemetry();
+}
+
 export function markSyncEnabled(): void {
   state.enabled = true;
+  refreshSyncStatus();
+}
+
+/** Teardown (sign-out) — the engine is no longer attached/active. */
+export function markSyncStopped(): void {
+  state.enabled = false;
+  breadcrumb('tier-1 sync stopped (teardown)');
+  refreshSyncStatus();
 }
 
 export function markSyncDegraded(reason: string): void {
   state.degraded = true;
   state.degradedReason = reason;
   breadcrumb('sync persistence degraded to in-memory', { reason });
+  refreshSyncStatus();
 }
 
 export function recordEntityHydrated(table: Tier1Table, rowCount: number): void {
@@ -101,6 +161,7 @@ export function recordEntityHydrated(table: Tier1Table, rowCount: number): void 
   e.rowCount = rowCount;
   e.lastSyncAt = Date.now();
   e.errorCount = 0;
+  refreshSyncStatus();
 }
 
 export function recordHydrationFailure(table: Tier1Table, error: unknown): void {
@@ -110,6 +171,7 @@ export function recordHydrationFailure(table: Tier1Table, error: unknown): void 
     message: error instanceof Error ? error.message : String(error),
     consecutiveFailures: state.entities[table].errorCount,
   });
+  refreshSyncStatus();
 }
 
 export function recordWriteFailure(table: Tier1Table, error: unknown): void {
@@ -119,6 +181,7 @@ export function recordWriteFailure(table: Tier1Table, error: unknown): void {
     message: error instanceof Error ? error.message : String(error),
     writeErrorCount: state.entities[table].writeErrorCount,
   });
+  refreshSyncStatus();
 }
 
 /**
@@ -155,6 +218,7 @@ export function recordWriteSanitizedDrop(
     return;
   }
   state.droppedUnknownFields += 1;
+  refreshSyncStatus();
 }
 
 export function recordDroppedField(table: Tier1Table, field: string, restricted: boolean): void {
@@ -170,6 +234,7 @@ export function recordDroppedField(table: Tier1Table, field: string, restricted:
   } else {
     state.droppedUnknownFields += 1;
   }
+  refreshSyncStatus();
 }
 
 /** Immutable snapshot for debug surfaces / the future S2.7 status UI. */
