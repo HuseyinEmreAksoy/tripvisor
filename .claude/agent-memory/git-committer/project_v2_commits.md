@@ -622,6 +622,27 @@ v1 records (Phases 3-26) live in [[phase3-through-phase26-commits]]
 - Gates unchanged: tsc 1341 baseline-exact, jest 28/346, sync:validate 7/7 GO,
   web export clean with dist/_headers. S1 device smoke STILL owed.
 
+## S2.8.12 round-trip validation checkpoint committed + pushed 2026-06-12 (1 commit)
+
+- `2c58cf4` — feat(sync): S2.8.12 — round-trip validation extended to 16
+  assertions
+  (1 file, 387 ins/5 del: scripts/validate-sync-roundtrip.mjs only —
+   h1-h3 D5 prune no-echo, i1-i3 rank chain, j1-j2 tombstonePlace
+   UndoEntry, k R4 trip_legs firewall. Body finding worth knowing: a
+   too-early prune can be resurrected by the row's own realtime INSERT
+   echo — unreachable in prod since S2.8.4 prunes only after server
+   DELETE ack; script pre-settles 2s.)
+- Pushed origin/master fast-forward e895744..2c58cf4. Remote tip was again
+  ahead of my last record (80048bd -> e895744 interim commits) — the
+  recurring concurrent-session pattern; ff clean.
+- sync:validate gate is now 16/16 PASS run twice (flake check), up from
+  7/7 GO. Other gates unchanged: tsc 1341, jest 28/346. S1 device smoke
+  STILL owed.
+- Brief warned a UI smoke agent might create docs/smoke/s2-8.md — fresh
+  status showed only the manifest file dirty; explicit-path staging held.
+  My prior memory-file edits had again ridden into an interim commit
+  (tree clean of them at session start despite stale snapshot).
+
 ## Leftover artifacts — RESOLVED 2026-06-10 in 7572d32
 
 `*-fresh.txt`, `e2e-final.txt`, `tsc-output.txt`, `.claude/scheduled_tasks.lock`
