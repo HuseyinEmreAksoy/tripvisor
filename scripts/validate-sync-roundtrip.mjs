@@ -15,6 +15,28 @@
  *   f. tombstone (deleted=true) → fresh store instance excludes the row
  *   g. LWW: later server-side edit wins after resync
  *
+ * S2.8.12 Wave B/C contract proofs (appended; NOT R6 abort ids — a failure
+ * here routes back to the owning step, see plan.md S2.8.12):
+ *   h1–h3. D5 prune no-echo: pruneTripFromLocalStore drops the local row,
+ *          emits ZERO network writes (server row + updated_at intact after a
+ *          settle window), and a fresh instance re-hydrates the trip. The
+ *          dev-console '[legend-state] missing delete function' warn is the
+ *          EXPECTED no-op branch signature — captured and reported, never a
+ *          failure.
+ *   i1–i3. Rank chain: setPlaceManualRank (rankBetween append + between, the
+ *          UI sequence) persists to the server; server-owned
+ *          day_index/order_in_day stay untouched (C1 write strip, observed
+ *          via telemetry); a fresh-instance hydration ordered with
+ *          orderPlacesForDisplay(…, 'manual', true) reproduces the exact id
+ *          sequence.
+ *   j1–j2. Mutation-layer tombstonePlace → server deleted=true + fresh
+ *          hydration excludes the place (extends f to the mutation path);
+ *          the captured UndoEntry.inverse() revives it server-side and it
+ *          rehydrates.
+ *   k.     R4 firewall: trip_legs appears in NO allowlist export
+ *          (TIER1_FIELDS/TIER1_TABLES/TIER1_WRITE_*) and NO store-namespace
+ *          key — static check against the real imported modules.
+ *
  * If a FAILURE traces to the beta plugin's write path itself, the verdict is
  * "ABORT GATE TRIPPED" (R6): stop, fall back to the named hand-rolled
  * expo-sqlite sync plan. Sanitize bugs (our code) are NOT abort verdicts.
@@ -56,11 +78,38 @@ function check(id, desc, pass, detail = '') {
   console.log(`${pass ? 'PASS' : 'FAIL'} [${id}] ${desc}${detail ? ` — ${detail}` : ''}`);
 }
 
-/** Engine-write-path assertion ids — a FAIL here is the R6 abort signal. */
+/** Engine-write-path assertion ids — a FAIL here is the R6 abort signal.
+ * Deliberately UNCHANGED by S2.8.12: the h/i/j/k proofs are Wave B/C
+ * contract checks whose failures route to their owning step, not to the
+ * R6 abort verdict. */
 const ENGINE_PATH_IDS = new Set(['b', 'c', 'd', 'f', 'g']);
 
 function fail(id, desc, err) {
   check(id, desc, false, err instanceof Error ? err.message : String(err));
+}
+
+/** Canonical descriptions for the S2.8.12 assertions — used both at the
+ * check site and by failRemaining so a thrown error fails every not-yet-run
+ * assertion of its block exactly once (no double-registration). */
+const S2812_DESC = {
+  h1: 'D5 prune: pruneTripFromLocalStore removes the row from the local store',
+  h2: 'D5 prune: NO network echo — server row + updated_at/archived_at intact after settle window',
+  h3: 'D5 prune: fresh-instance hydration restores the trip',
+  i1: 'rank chain: setPlaceManualRank append/between sequence persists to server',
+  i2: 'rank chain: server-owned day_index/order_in_day untouched by rank writes (C1 strip live)',
+  i3: "rank chain: fresh hydration + orderPlacesForDisplay(…,'manual',true) reproduces the exact id sequence",
+  j1: 'mutation tombstone: server deleted=true + fresh hydration excludes the place',
+  j2: 'undo inverse: place live again server-side (deleted=false) and rehydrates',
+  k: 'no-legs firewall (R4): trip_legs absent from allowlist exports + store namespace',
+};
+
+/** Fail every id in `ids` that has not produced a result yet (block-level
+ * catch handler — sub-assertions that already ran keep their verdict). */
+function failRemaining(err, ids) {
+  const done = new Set(results.map((r) => r.id));
+  for (const id of ids) {
+    if (!done.has(id)) fail(id, S2812_DESC[id], err);
+  }
 }
 
 async function waitFor(label, fn, timeoutMs = 20000, intervalMs = 250) {
@@ -188,6 +237,13 @@ function loadSyncModules() {
     hydrate: require(path.join(ROOT, 'src', 'sync', 'hydrate.ts')),
     store: require(path.join(ROOT, 'src', 'sync', 'store.ts')),
     telemetry: require(path.join(ROOT, 'src', 'sync', 'telemetry.ts')),
+    // S2.8.12 — the Wave-3 mutation layer + ordering/rank helpers, loaded
+    // from the SAME require-cache generation as hydrate/store so the
+    // UndoEntry closures and store writes bind to the live instance.
+    mutations: require(path.join(ROOT, 'src', 'sync', 'mutations.ts')),
+    order: require(path.join(ROOT, 'src', 'sync', 'order.ts')),
+    rank: require(path.join(ROOT, 'src', 'sync', 'rank.ts')),
+    allowlist: require(path.join(ROOT, 'src', 'sync', 'allowlist.ts')),
   };
 }
 
@@ -230,6 +286,26 @@ async function main() {
   const tripId = randomUUID();
   const placeId = randomUUID();
   const runTag = `SYNC-VALIDATE ${new Date().toISOString()}`;
+
+  // S2.8.12 rows — declared here so the finally-cleanup can always see them.
+  const pruneTripId = randomUUID();
+  let rankTripId = null; // minted by mutations.createTrip inside block i
+
+  /** Purge + reload the real src/sync modules and boot a brand-new engine
+   * instance (the "fresh instance" the hydration proofs need). The previous
+   * instances stay attached for the process lifetime (the beta has no
+   * detach) — their realtime merges only ever touch their OWN observables. */
+  async function freshInstance(label) {
+    const { syncState } = require('@legendapp/state');
+    purgeSyncModules();
+    const sync = loadSyncModules();
+    const boot = await sync.hydrate.initTier1Sync({ userId });
+    if (!boot.started) throw new Error(`${label}: fresh engine instance failed to start`);
+    const store = sync.store.tier1Store$;
+    await waitFor(`${label}: fresh instance trips loaded`, () => syncState(store.trips).isLoaded.get());
+    await waitFor(`${label}: fresh instance places loaded`, () => syncState(store.tripPlaces).isLoaded.get());
+    return { sync, store };
+  }
 
   try {
     // ── a. engine boots in node ─────────────────────────────────────────
@@ -353,6 +429,9 @@ async function main() {
     }
 
     // ── f. tombstone → fresh store instance excludes the row ────────────
+    // sync2/store2 hoisted: the S2.8.12 h-block reuses this live instance.
+    let sync2 = null;
+    let store2 = null;
     try {
       store1.tripPlaces[placeId].deleted.set(true);
       await waitFor('tombstone on server', async () => {
@@ -361,10 +440,10 @@ async function main() {
       });
 
       purgeSyncModules();
-      const sync2 = loadSyncModules();
+      sync2 = loadSyncModules();
       const boot2 = await sync2.hydrate.initTier1Sync({ userId });
       if (!boot2.started) throw new Error('fresh engine instance failed to start');
-      const store2 = sync2.store.tier1Store$;
+      store2 = sync2.store.tier1Store$;
       await waitFor('fresh instance hydrates the trip', () => store2.trips[tripId].get());
       // Places hydration: wait for the root to load, then assert exclusion.
       await waitFor('fresh instance places loaded', () => syncState(store2.tripPlaces).isLoaded.get());
@@ -393,11 +472,307 @@ async function main() {
       fail('f', 'tombstone exclusion on fresh hydration', err);
       check('g', 'LWW resync convergence', false, 'skipped — fresh instance unavailable (see f)');
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // S2.8.12 — Wave B/C contract proofs (h–k). Failures here are NOT R6
+    // abort signals; they route to the owning step (S2.8.4 / S2.8.2+S2.8.6 /
+    // S2.8.1 / R4). See the header for what each block proves.
+    // ════════════════════════════════════════════════════════════════════
+
+    console.log('── S2.8.12 Wave B/C proofs ──');
+
+    // ── h. D5 prune no-echo (pruneTripFromLocalStore) ────────────────────
+    let sync3 = null; // live mutation instance for blocks i/j (set by h3)
+    let store3 = null;
+    try {
+      // Live writable instance: reuse the f/g one when its boot succeeded.
+      let live = store2 ? { sync: sync2, store: store2 } : null;
+      if (!live) live = await freshInstance('h: live instance');
+
+      live.store.trips[pruneTripId].set({ id: pruneTripId, title: `${runTag} prune` });
+      await waitFor(`trips/${pruneTripId} on server`, async () => {
+        const { data } = await service.from('trips').select('id').eq('id', pruneTripId).maybeSingle();
+        return data;
+      });
+      await waitFor('prune trip gains created_at (create-ack)', () => live.store.trips[pruneTripId].created_at.get());
+      // Let the row's OWN realtime INSERT echo land before pruning. In
+      // production a pruned trip is minutes-to-months old (its create echo
+      // is long gone); in this script the create is seconds old, and a late
+      // echo merging after the prune would re-add the row — a scenario
+      // artifact, not a D5 violation (here the server row deliberately
+      // still exists; in the real S2.8.4 flow the server DELETE precedes
+      // the prune, so no pull can resurrect it).
+      await new Promise((r) => setTimeout(r, 2000));
+      const beforeRes = await service
+        .from('trips')
+        .select('updated_at,archived_at')
+        .eq('id', pruneTripId)
+        .single();
+      if (beforeRes.error) throw new Error(beforeRes.error.message);
+      const before = beforeRes.data;
+
+      // Capture the EXPECTED no-op signature ('[legend-state] missing delete
+      // function' — hydrate.ts pruneTripFromLocalStore docs) so it is
+      // reported as proof, never mistaken for a failure.
+      const warns = [];
+      const origWarn = console.warn;
+      console.warn = (...args) => {
+        warns.push(args.map(String).join(' '));
+        origWarn.apply(console, args);
+      };
+      // The observable delete applies SYNCHRONOUSLY — gate on the immediate
+      // state. A synchronous engine REVERT here would be the real D5
+      // disproof (warn branch undoing local deletes); a later async re-add
+      // is the scenario artifact documented above, reported not gated.
+      let goneImmediately = false;
+      let goneAt500 = false;
+      let goneAfterSettle = false;
+      try {
+        live.sync.hydrate.pruneTripFromLocalStore(pruneTripId);
+        goneImmediately = live.store.trips[pruneTripId].get() === undefined;
+        // Let the engine process the store-level delete (warn branch)…
+        await new Promise((r) => setTimeout(r, 500));
+        goneAt500 = live.store.trips[pruneTripId].get() === undefined;
+        // …then a settle window: on the local stack a networked echo (hard
+        // DELETE or tombstone-style UPDATE) would land in well under 4s.
+        await new Promise((r) => setTimeout(r, 4000));
+        goneAfterSettle = live.store.trips[pruneTripId].get() === undefined;
+      } finally {
+        console.warn = origWarn;
+      }
+      const warnSeen = warns.some((w) => w.includes('missing delete function'));
+      check(
+        'h1',
+        S2812_DESC.h1,
+        goneImmediately,
+        `gone: immediate=${goneImmediately} +500ms=${goneAt500} +settle=${goneAfterSettle}; no-op warn ${
+          warnSeen ? 'observed (expected branch signature)' : 'not observed'
+        }${
+          goneImmediately && !goneAfterSettle
+            ? ' — re-added by an async echo/pull (server row still live in THIS scenario only)'
+            : ''
+        }`,
+      );
+
+      const afterRes = await service
+        .from('trips')
+        .select('id,updated_at,archived_at')
+        .eq('id', pruneTripId)
+        .maybeSingle();
+      const after = afterRes.data;
+      check(
+        'h2',
+        S2812_DESC.h2,
+        after != null && after.updated_at === before.updated_at && after.archived_at === before.archived_at,
+        after
+          ? `updated_at before=${before.updated_at} after=${after.updated_at} archived_at=${after.archived_at}`
+          : 'server row GONE — the prune echoed a DELETE (D5 disproved)',
+      );
+
+      ({ sync: sync3, store: store3 } = await freshInstance('h3'));
+      const restored = store3.trips[pruneTripId].get();
+      check('h3', S2812_DESC.h3, restored?.title === `${runTag} prune`, `title=${restored?.title ?? 'ABSENT'}`);
+    } catch (err) {
+      failRemaining(err, ['h1', 'h2', 'h3']);
+    }
+
+    // ── i. Rank chain round-trip (i1/i2 on the live instance) ───────────
+    let rankIds = null; // [pA, pB, pC] in optimizer order_in_day order
+    let expectedSeq = null; // expected manual display order after the move
+    try {
+      if (!sync3) throw new Error('skipped — no live instance (see h3)');
+      const m = sync3.mutations;
+      rankTripId = m.createTrip({ title: `${runTag} rank` });
+      // Parent must exist server-side before child INSERTs (RLS WITH CHECK
+      // + FK both need it — the two roots queue independently).
+      await waitFor('rank trip on server', async () => {
+        const { data } = await service.from('trips').select('id').eq('id', rankTripId).maybeSingle();
+        return data;
+      });
+      await waitFor('rank trip create-ack', () => store3.trips[rankTripId].created_at.get());
+
+      const mk = (n) =>
+        m.createPlace({
+          trip_id: rankTripId,
+          google_place_id: `sync-validate-rank-${n}`,
+          lat: 41.001 + n / 1000,
+          lng: 28.97,
+          user_title: `${runTag} rank-${n}`,
+        });
+      const pA = mk(1);
+      const pB = mk(2);
+      const pC = mk(3);
+      rankIds = [pA, pB, pC];
+      for (const pid of rankIds) {
+        await waitFor(`rank place ${pid} on server`, async () => {
+          const { data } = await service.from('trip_places').select('id').eq('id', pid).maybeSingle();
+          return data;
+        });
+        // Acked rows carry created_at — later rank writes must classify as
+        // UPDATEs (mutations.ts header: update racing an unacked create).
+        await waitFor(`rank place ${pid} create-ack`, () => store3.tripPlaces[pid].created_at.get());
+      }
+
+      // Simulate the optimizer — the ONLY sanctioned day_index/order_in_day
+      // writer is server-side (C1), so write them with the service role.
+      for (let i = 0; i < rankIds.length; i++) {
+        const upd = await service
+          .from('trip_places')
+          .update({ day_index: 0, order_in_day: i })
+          .eq('id', rankIds[i]);
+        if (upd.error) throw new Error(upd.error.message);
+      }
+      sync3.hydrate.resyncTier1();
+      await waitFor('store reflects optimizer day_index after resync', () =>
+        rankIds.every((pid) => store3.tripPlaces[pid].day_index.get() === 0),
+      );
+
+      // UI-like rank sequence: append A, B, C, then drag C between A and B.
+      const { rankBetween } = sync3.rank;
+      const rA = rankBetween(null, null); // 'V'
+      const rB = rankBetween(rA, null); //   append
+      const rC0 = rankBetween(rB, null); //  append
+      m.setPlaceManualRank(pA, rA);
+      m.setPlaceManualRank(pB, rB);
+      m.setPlaceManualRank(pC, rC0);
+      const stripsBefore = sync3.telemetry.getSyncTelemetry().strippedServerOnlyWriteFields;
+      const rC = rankBetween(rA, rB); // the between-move (drag)
+      m.setPlaceManualRank(pC, rC);
+      expectedSeq = [pA, pC, pB];
+
+      const want = { [pA]: rA, [pB]: rB, [pC]: rC };
+      const rows = await waitFor('final manual_rank values on server', async () => {
+        const { data } = await service
+          .from('trip_places')
+          .select('id,manual_rank,day_index,order_in_day')
+          .in('id', rankIds);
+        if (!data || data.length !== 3) return undefined;
+        return data.every((r) => r.manual_rank === want[r.id]) ? data : undefined;
+      });
+      check('i1', S2812_DESC.i1, true, `A=${rA} B=${rB} C=${rC0}→${rC} (moved between A and B)`);
+
+      // Full-row updates carried day_index/order_in_day/timestamps along —
+      // the C1 strip is what kept them off the wire. Values alone can't
+      // prove the strip (the store mirrors the server here), so also assert
+      // the strip TELEMETRY advanced for the post-capture rank write.
+      const orderIntact = rows.every((r) => r.day_index === 0 && r.order_in_day === rankIds.indexOf(r.id));
+      const strips = sync3.telemetry.getSyncTelemetry().strippedServerOnlyWriteFields;
+      check(
+        'i2',
+        S2812_DESC.i2,
+        orderIntact && strips > stripsBefore,
+        `day_index/order_in_day intact=${orderIntact}; strippedServerOnlyWriteFields ${stripsBefore} → ${strips}`,
+      );
+    } catch (err) {
+      failRemaining(err, ['i1', 'i2']);
+    }
+
+    // ── j-setup + shared fresh instance: i3 + j1 ─────────────────────────
+    let undoEntry = null; // tombstonePlace's UndoEntry (inverse run in j2)
+    let p4 = null;
+    try {
+      if (!sync3 || !rankTripId) throw new Error('skipped — live instance/rank trip unavailable');
+      const m = sync3.mutations;
+      p4 = m.createPlace({
+        trip_id: rankTripId,
+        google_place_id: 'sync-validate-rank-tombstone',
+        lat: 41.02,
+        lng: 28.99,
+        user_title: `${runTag} tombstone-undo`,
+      });
+      await waitFor(`tombstone-candidate ${p4} on server`, async () => {
+        const { data } = await service.from('trip_places').select('id').eq('id', p4).maybeSingle();
+        return data;
+      });
+      await waitFor('tombstone-candidate create-ack', () => store3.tripPlaces[p4].created_at.get());
+
+      undoEntry = m.tombstonePlace(p4); // capture the inverse BEFORE asserting
+      await waitFor('mutation-layer tombstone on server (deleted=true)', async () => {
+        const { data } = await service.from('trip_places').select('deleted').eq('id', p4).maybeSingle();
+        return data?.deleted === true;
+      });
+
+      // ONE fresh instance serves both i3 and j1.
+      const inst = await freshInstance('i3/j1');
+
+      if (expectedSeq && rankIds) {
+        // Feed the WHOLE trip's hydrated rows, exactly like the UI does, then
+        // compare the rank-trio subsequence (independent of j1's outcome).
+        const all = inst.store.tripPlaces.peek() ?? {};
+        const tripRows = Object.values(all).filter((r) => r && r.trip_id === rankTripId);
+        const ordered = inst.sync.order
+          .orderPlacesForDisplay(tripRows, 'manual', true)
+          .map((r) => r.id)
+          .filter((id) => rankIds.includes(id));
+        check(
+          'i3',
+          S2812_DESC.i3,
+          ordered.join(',') === expectedSeq.join(','),
+          `got=[${ordered.join(', ')}] want=[${expectedSeq.join(', ')}]`,
+        );
+      } else {
+        check('i3', S2812_DESC.i3, false, 'skipped — rank chain not established (see i1)');
+      }
+
+      const ghost = inst.store.tripPlaces[p4].get();
+      check('j1', S2812_DESC.j1, ghost === undefined, `fresh store row=${JSON.stringify(ghost) ?? 'undefined'}`);
+    } catch (err) {
+      failRemaining(err, ['i3', 'j1']);
+    }
+
+    // ── j2. UndoEntry.inverse() un-tombstones + rehydrates ──────────────
+    try {
+      if (!undoEntry) throw new Error('skipped — no UndoEntry captured (see j1)');
+      // The inverse closes over the ORIGIN instance's store + gate (sync3 is
+      // still attached and active — exactly how the in-app undo stack works).
+      await undoEntry.inverse();
+      await waitFor('undo inverse on server (deleted=false)', async () => {
+        const { data } = await service.from('trip_places').select('deleted').eq('id', p4).maybeSingle();
+        return data ? data.deleted === false : undefined;
+      });
+      const inst = await freshInstance('j2');
+      const revived = inst.store.tripPlaces[p4].get();
+      check(
+        'j2',
+        S2812_DESC.j2,
+        revived != null && revived.deleted !== true,
+        revived ? `rehydrated with deleted=${revived.deleted}` : 'ABSENT from fresh hydration',
+      );
+    } catch (err) {
+      failRemaining(err, ['j2']);
+    }
+
+    // ── k. No-legs firewall (R4) — static check on the real modules ─────
+    try {
+      const allow = require(path.join(ROOT, 'src', 'sync', 'allowlist.ts'));
+      const storeMod = require(path.join(ROOT, 'src', 'sync', 'store.ts'));
+      const allowClean =
+        !Object.prototype.hasOwnProperty.call(allow.TIER1_FIELDS, 'trip_legs') &&
+        !allow.TIER1_TABLES.includes('trip_legs') &&
+        !Object.prototype.hasOwnProperty.call(allow.TIER1_WRITE_FIELDS, 'trip_legs') &&
+        !allow.TIER1_WRITE_TABLES.includes('trip_legs');
+      const mappedTables = Object.values(storeMod.TABLE_FOR_KEY);
+      const namespaceKeys = [
+        ...storeMod.TIER1_STORE_KEYS,
+        ...Object.keys(storeMod.tier1Store$.peek() ?? {}),
+      ];
+      const storeClean = !mappedTables.includes('trip_legs') && !namespaceKeys.some((key) => /leg/i.test(key));
+      check(
+        'k',
+        S2812_DESC.k,
+        allowClean && storeClean,
+        `tables=[${allow.TIER1_TABLES.join(',')}] storeKeys=[${storeMod.TIER1_STORE_KEYS.join(',')}]`,
+      );
+    } catch (err) {
+      failRemaining(err, ['k']);
+    }
   } finally {
     // ── cleanup: this run's rows + any strays from prior runs ───────────
     try {
-      await service.from('trip_places').delete().eq('trip_id', tripId);
-      await service.from('trips').delete().eq('id', tripId);
+      for (const tid of [tripId, pruneTripId, rankTripId].filter(Boolean)) {
+        await service.from('trip_places').delete().eq('trip_id', tid);
+        await service.from('trips').delete().eq('id', tid);
+      }
       const stale = await service.from('trips').select('id').eq('user_id', userId).like('title', 'SYNC-VALIDATE%');
       for (const t of stale.data ?? []) {
         await service.from('trip_places').delete().eq('trip_id', t.id);
@@ -414,6 +789,13 @@ async function main() {
   const engineFailures = failed.filter((r) => ENGINE_PATH_IDS.has(r.id));
   console.log('──────────────────────────────────────────────');
   console.log(`${results.length - failed.length}/${results.length} assertions passed`);
+  if (failed.some((r) => String(r.id).startsWith('h'))) {
+    // The S2.8.12 plan risk: D5's "prune is a no-op" assumption disproved.
+    console.log(
+      'D5 NOTE: the prune no-echo contract did NOT hold — apply the S2.8.4 fallback ' +
+        '(facade-level deleted-ids session set) and re-plan only that seam (plan.md S2.8.12 risk).',
+    );
+  }
   if (engineFailures.length > 0) {
     console.log(
       `ABORT GATE TRIPPED (R6): beta plugin write path failed on [${engineFailures.map((r) => r.id).join(', ')}]. ` +
