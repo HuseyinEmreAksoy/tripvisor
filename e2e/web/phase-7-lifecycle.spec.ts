@@ -336,8 +336,8 @@ test.describe('Phase 7 — settings navigation', () => {
     await goToTrips(page);
     await skipIfNotAuthenticated(page);
 
-    // The trips list header has an "Open settings" button (accessibilityLabel).
-    const settingsBtn = page.getByRole('button', { name: /open settings/i });
+    // Settings lives in the Profile tab (bottom bar / desktop rail) since M4 X1.1.
+    const settingsBtn = page.getByTestId('tab-settings');
     await expect(settingsBtn).toBeVisible({ timeout: 5_000 });
     await settingsBtn.click();
 

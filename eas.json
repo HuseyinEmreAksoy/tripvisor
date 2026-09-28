@@ -1,18 +1,44 @@
 {
   "cli": {
-    "version": ">= 18.8.1"
+    "version": ">= 18.8.1",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      }
     },
     "preview": {
       "distribution": "internal",
+      "environment": "preview",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SYNC_TIER1": "1",
+        "EXPO_PUBLIC_MAP_PROVIDER": "maplibre",
+        "EXPO_PUBLIC_MAPLIBRE_STYLE_URL": "https://tiles.openfreemap.org/styles/liberty",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
+    "production": {
+      "environment": "production",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_MAP_PROVIDER": "maplibre",
+        "EXPO_PUBLIC_MAPLIBRE_STYLE_URL": "https://tiles.openfreemap.org/styles/liberty",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      }
+    }
+  },
+  "submit": {
     "production": {}
   }
 }

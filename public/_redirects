@@ -1,0 +1,23 @@
+# Cloudflare Pages rewrites (status 200 = serve the target, keep the URL).
+#
+# Expo static export (app.json web.output "static") emits one HTML shell per
+# dynamic route, named after the route file, e.g. dist/trip/[id].html. A real
+# URL like /trip/abc123 has no matching file, so without these rules a deep
+# link / refresh / shared link 404s. Rules are matched top to bottom, first
+# match wins: static routes first, then the most specific dynamic routes.
+
+# Static routes that live under a dynamic prefix — must not hit /trip/:id.
+/trip/new                       /trip/new.html                  200
+/trip/plan                      /trip/plan.html                 200
+
+# Nested trip routes.
+/trip/:id/add                   /trip/[id]/add.html             200
+/trip/:id/collaborators         /trip/[id]/collaborators.html   200
+/trip/:id/packing               /trip/[id]/packing.html         200
+/trip/:id/print                 /trip/[id]/print.html           200
+
+# Single-segment dynamic routes.
+/trip/:id                       /trip/[id].html                 200
+/place/:placeId                 /place/[placeId].html           200
+/share/:token                   /share/[token].html             200
+/invite/:token                  /invite/[token].html            200

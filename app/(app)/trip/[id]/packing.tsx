@@ -26,6 +26,7 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { BackButton, Button, Screen } from '@/components';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -56,6 +57,7 @@ const PACKING_MAX_WIDTH = 720;
 export default function PackingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useSafeBack(`/trip/${id}`);
   const t = useTheme();
   const isDesktop = useBreakpoint() === 'desktop';
 
@@ -184,7 +186,7 @@ export default function PackingScreen() {
           isDesktop && { maxWidth: PACKING_MAX_WIDTH, alignSelf: 'center', width: '100%' },
         ]}
       >
-        <BackButton onPress={() => router.back()} label="Trip" />
+        <BackButton onPress={goBack} label="Trip" />
 
         {/* ── Header: title + progress ─────────────────────────────────── */}
         <View style={{ gap: t.spacing.xs }}>

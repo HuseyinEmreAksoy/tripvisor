@@ -3,7 +3,11 @@
  *
  * Pill-shaped muted track; the active option is an elevated floating pill
  * with bold ink text (iOS-style), inactive options are quiet muted text.
- * Roles: radiogroup / radio with selected state — unchanged.
+ * Roles: radiogroup / radio with CHECKED state — `accessibilityState.checked`
+ * maps to `aria-checked` on web (the correct ARIA state for role="radio";
+ * `selected` mapped to `aria-selected`, which is invalid for radios and
+ * invisible to tests/AT — S2.8.13 testability fix). Same pattern as
+ * MapTab's RouteRenderModeControl. Visuals unchanged.
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
@@ -38,7 +42,7 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
             <Pressable
               key={opt.value}
               accessibilityRole="radio"
-              accessibilityState={{ selected: active }}
+              accessibilityState={{ checked: active }}
               accessibilityLabel={opt.label}
               onPress={() => onChange(opt.value)}
               style={({ pressed }) => [

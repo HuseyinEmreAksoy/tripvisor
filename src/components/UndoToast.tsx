@@ -3,9 +3,11 @@
  *
  * Mounted ONCE in app/(app)/_layout.tsx so it floats above every signed-in
  * screen on all three platforms. Subscribes to the session UndoStack
- * (src/sync/undo.ts): a PUSH — detected as stack-size GROWTH, because the
- * version counter alone also ticks on undo/clear (plan S2.8.8 risk note) —
- * shows the entry label plus an Undo pill for ~6 s. Pressing Undo runs
+ * (src/sync/undo.ts): a PUSH — detected as a version tick whose size did NOT
+ * shrink, because the version counter alone also ticks on undo/clear, while
+ * a strict size-growth check misses a push at capacity (oldest evicted →
+ * size flat) and a batched pop+push (S2.8.13 F3 hardening) — shows the
+ * entry label plus an Undo pill for ~6 s. Pressing Undo runs
  * `stack.undoLast()` and reports "Undid: <label>"; a throwing inverse stays
  * popped by design (see the undo.ts header — the world changed underneath
  * it), so the toast shows a brief "Couldn't undo" instead of blind-retrying.
@@ -72,8 +74,12 @@ export function UndoToast() {
   // 0 = hidden, 1 = shown. Native-driven opacity + translateY.
   const anim = useRef(new Animated.Value(0)).current;
   const prevSizeRef = useRef(stack.size);
+  const prevVersionRef = useRef(stack.getVersion());
   /** True while OUR undoLast() is in flight — its pop must not be mistaken
-   * for an external clear (sign-out) in the size-delta effect below. */
+   * for an external clear (sign-out) in the change-detection effect below.
+   * Belt-and-braces only since F3: the phase check there is the primary
+   * guard (this ref resets in a microtask, which can lose the race against
+   * React's passive-effect flush when an inverse resolves fast). */
   const undoInFlightRef = useRef(false);
 
   const animateIn = useCallback(() => {
@@ -107,23 +113,44 @@ export function UndoToast() {
     });
   }, [anim, reducedMotion]);
 
-  // Push detection. useUndo() re-renders on every stack change; comparing
-  // sizes distinguishes push (grow → show toast) from undo/clear (shrink).
+  // Push detection (S2.8.13 F3 hardening). useUndo() re-renders on every
+  // stack change; the version guard makes runs triggered by anything other
+  // than a stack change (dep identity churn, our own setToast re-renders)
+  // explicit no-ops, which in turn makes it safe to read `toast` here.
+  //
+  // The stack's only version-ticking ops are push() and a non-empty
+  // undoLast()/clear(), so for a changed version:
+  //   size >= prev  ⟹ at least one push landed (strict growth misses a push
+  //                   at capacity — oldest evicted, size flat — and a
+  //                   batched pop+push netting to equal size; both showed
+  //                   NO toast under the old `size > prev` check).
+  //   size <  prev  ⟹ pure shrink: our own undoLast() or an external clear.
   const version = stack.getVersion();
   useEffect(() => {
     const size = stack.size;
-    const prev = prevSizeRef.current;
+    const prevSize = prevSizeRef.current;
+    const versionChanged = version !== prevVersionRef.current;
     prevSizeRef.current = size;
-    if (size > prev) {
+    prevVersionRef.current = version;
+    if (!versionChanged) return;
+    if (size >= prevSize) {
       setToast({ phase: 'undoable', label: stack.peekLabel ?? 'Last change' });
       animateIn();
-    } else if (size < prev && !undoInFlightRef.current) {
-      // External shrink — the sign-out clear. Entries closed over a session
-      // that no longer exists; drop the toast immediately (no exit motion).
+    } else if (
+      !undoInFlightRef.current &&
+      (toast === null || toast.phase === 'undoable')
+    ) {
+      // External shrink (e.g. a sign-out clear) while an ACTIONABLE toast is
+      // up: its entry no longer exists, so drop it immediately (no exit
+      // motion). The 'undoing'/'undone'/'error' phases are deliberately left
+      // alone — handleUndo owns that lifecycle, and our own pop's shrink
+      // must never kill the confirmation it is about to show (the in-flight
+      // ref alone was racy: it resets in a microtask, which can beat the
+      // passive-effect flush when an inverse resolves synchronously-fast).
       anim.setValue(0);
       setToast(null);
     }
-  }, [version, stack, anim, animateIn]);
+  }, [version, stack, anim, animateIn, toast]);
 
   // Auto-dismiss, phase-dependent. 'undoing' never auto-dismisses — the
   // async inverse resolves to 'undone'/'error', which restarts this timer

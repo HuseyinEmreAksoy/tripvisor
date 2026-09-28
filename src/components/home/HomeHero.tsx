@@ -12,11 +12,15 @@
  * uppercase overline, big display headline, and a white pill CTA that reads
  * as the floating primary action over imagery in both themes.
  *
- * Imagery follows the auth screens' pattern: Unsplash CDN photo, decorative
+ * Imagery follows the auth screens' pattern: bundled brand photo (assets/images/hero-home.jpg), decorative
  * (hidden from the a11y tree), color placeholder while loading.
  *
  * Desktop (≥1024px): the parent constrains width to the centred 1200px
  * container; the hero grows taller and lays the CTA + countdown side by side.
+ *
+ * Phones (<768px, M4 X1.1): a COMPACT card — shorter, no body sentence,
+ * smaller headline — that scrolls away with the trips list so the first trip
+ * card is visible without scrolling.
  */
 import { StyleSheet, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -24,9 +28,9 @@ import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { Trip } from '@/api';
 
-// Lisbon tram scene — distinct from the login/signup heroes.
-const HERO_URI =
-  'https://images.unsplash.com/photo-1502920514313-52581002a659?w=1600&q=75&fm=webp&fit=crop';
+// Cobbled old-town evening — distinct from the login/signup heroes.
+// Bundled brand art (generated 2026-09-28) — offline-safe and COEP-safe, unlike a hotlink.
+const HERO_SOURCE = require('../../../assets/images/hero-home.jpg');
 
 export interface HomeHeroProps {
   /** Active trips (owned + shared) — countdown picks the nearest future start_date. */
@@ -71,7 +75,9 @@ function countdownLabel(c: Countdown): string {
 
 export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
   const t = useTheme();
-  const isDesktop = useBreakpoint() === 'desktop';
+  const bp = useBreakpoint();
+  const isDesktop = bp === 'desktop';
+  const compact = bp === 'mobile';
   const next = findNextTrip(trips);
 
   return (
@@ -80,13 +86,13 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
         styles.card,
         {
           borderRadius: t.radius.xl,
-          minHeight: isDesktop ? 260 : 208,
+          minHeight: isDesktop ? 260 : compact ? 164 : 208,
           ...t.shadows.lg(t.colors.shadowColorStrong),
         },
       ]}
     >
       <Image
-        source={{ uri: HERO_URI }}
+        source={HERO_SOURCE}
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
         contentFit="cover"
         accessibilityElementsHidden
@@ -109,7 +115,7 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
         aria-hidden
       />
 
-      <View style={[styles.copy, { padding: isDesktop ? t.spacing.xl : t.spacing.lg, gap: t.spacing.sm }]}>
+      <View style={[styles.copy, { padding: isDesktop ? t.spacing.xl : t.spacing.lg, gap: compact ? t.spacing.xs : t.spacing.sm }]}>
         <Text style={[t.typography.overline, { color: 'rgba(255,255,255,0.85)' }]}>
           Tripvisor
         </Text>
@@ -118,8 +124,8 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
             styles.headline,
             {
               color: '#FFFFFF',
-              fontSize: isDesktop ? 34 : 27,
-              lineHeight: isDesktop ? 40 : 33,
+              fontSize: isDesktop ? 34 : compact ? 23 : 27,
+              lineHeight: isDesktop ? 40 : compact ? 29 : 33,
             },
           ]}
           accessibilityRole="header"
@@ -127,9 +133,11 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
         >
           Plan your next adventure
         </Text>
-        <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.92)', maxWidth: 460 }]}>
-          Describe your dream trip and let AI draft the plan.
-        </Text>
+        {compact ? null : (
+          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.92)', maxWidth: 460 }]}>
+            Describe your dream trip and let AI draft the plan.
+          </Text>
+        )}
 
         {/* CTA + countdown — row on desktop, stacked on mobile */}
         <View style={[styles.actionsRow, { gap: t.spacing.sm, flexDirection: isDesktop ? 'row' : 'column', alignItems: isDesktop ? 'center' : 'stretch' }]}>

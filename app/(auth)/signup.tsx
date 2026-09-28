@@ -5,10 +5,11 @@
  * Desktop layout (≥ 1024px): hero fills the left half, form sits in the right
  * half centred at max-width 440px, mirroring the login.tsx desktop treatment.
  *
- * Attribution: same Unsplash License note as login.tsx.
+ * Imagery: bundled brand photo (assets/images/hero-signup.jpg).
  */
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -25,9 +26,8 @@ import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
-// Different Unsplash photo from login (mountain lake / dawn scene) to differentiate.
-const HERO_URI =
-  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200&q=75&fm=webp&fit=crop';
+// Bundled brand art (mountain road at sunrise) — distinct from login, offline-safe.
+const HERO_SOURCE = require('../../assets/images/hero-signup.jpg');
 
 const Schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -38,6 +38,7 @@ type FormValues = z.infer<typeof Schema>;
 export default function Signup() {
   const t = useTheme();
   const router = useRouter();
+  const goBack = useSafeBack('/login');
   const signIn = useSignInWithMagicLink();
   const [sent, setSent] = useState(false);
   const bp = useBreakpoint();
@@ -119,7 +120,7 @@ export default function Signup() {
       <Button
         variant="ghost"
         label="Already have an account? Sign in"
-        onPress={() => router.back()}
+        onPress={goBack}
       />
     </>
   );
@@ -131,7 +132,7 @@ export default function Signup() {
         {/* Left column — hero image fills the full height */}
         <View style={styles.desktopHero}>
           <Image
-            source={{ uri: HERO_URI }}
+            source={HERO_SOURCE}
             style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
             contentFit="cover"
             accessibilityElementsHidden
@@ -191,7 +192,7 @@ export default function Signup() {
       {/* ── Hero section ─────────────────────────────────────────────────── */}
       <View style={styles.heroContainer}>
         <Image
-          source={{ uri: HERO_URI }}
+          source={HERO_SOURCE}
           style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
           contentFit="cover"
           accessibilityElementsHidden

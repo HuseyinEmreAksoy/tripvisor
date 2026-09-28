@@ -13,6 +13,13 @@
  * sync flag OFF. The require only runs inside createSyncPersistence(),
  * which hydrate.ts calls after the flag check, and any throw degrades to
  * in-memory (risk R5 contract: never crash).
+ *
+ * ASYNC SIGNATURE (S2.8.13/B1): the factory is async only to match the
+ * unified cross-platform contract — persistence.web.ts must await an OPFS
+ * worker warm-up before its sync probe. Native has no worker to warm
+ * (expo-sqlite is synchronous over JSI), so this resolves in one tick;
+ * every throw below still lands in the catch because async functions
+ * convert sync throws into rejections.
  */
 
 import type { SyncPersistenceResult } from './persistence.types';
@@ -20,7 +27,7 @@ import type { SyncPersistenceResult } from './persistence.types';
 /** Dedicated DB so a future "wipe sync cache" never touches anything else. */
 const SYNC_DB_NAME = 'tripvisor-sync.db';
 
-export function createSyncPersistence(): SyncPersistenceResult {
+export async function createSyncPersistence(): Promise<SyncPersistenceResult> {
   try {
     // Type-only imports are erased at compile time; the requires below are
     // the only runtime touch of the native module.

@@ -8,7 +8,8 @@
  * useReducedMotion).
  */
 import { useEffect, useRef } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View, type TextStyle } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View, type ImageSourcePropType, type TextStyle } from 'react-native';
+import { Image } from 'expo-image';
 import { useTheme } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
@@ -20,6 +21,8 @@ export interface EmptyStateProps {
   ctaLabel?: string;
   onPress?: () => void;
   icon?: React.ReactNode;
+  /** Brand illustration (assets/images/empty-*.png). Takes precedence over `icon`. */
+  illustration?: ImageSourcePropType;
   /** @deprecated Pass ctaLabel + onPress instead */
   action?: React.ReactNode;
 }
@@ -31,6 +34,7 @@ export function EmptyState({
   ctaLabel,
   onPress,
   icon,
+  illustration,
   action,
 }: EmptyStateProps) {
   const t = useTheme();
@@ -84,7 +88,17 @@ export function EmptyState({
       accessibilityRole="summary"
       accessibilityLabel={bodyText ? `${title}. ${bodyText}` : title}
     >
-      {icon ? (
+      {illustration ? (
+        <Animated.View style={{ transform: [{ translateY: floatAnim }] }}>
+          <Image
+            source={illustration}
+            style={styles.illustration}
+            contentFit="contain"
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        </Animated.View>
+      ) : icon ? (
         <Animated.View
           style={[
             styles.iconTile,
@@ -163,5 +177,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 4,
   },
+  // 4:3 source art (640×480); capped so the CTA stays above the fold on 375×667.
+  illustration: { width: 220, height: 165 },
   cta: { alignItems: 'center', justifyContent: 'center', minHeight: 48 },
 });

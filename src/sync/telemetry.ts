@@ -164,6 +164,18 @@ export function recordEntityHydrated(table: Tier1Table, rowCount: number): void 
   refreshSyncStatus();
 }
 
+/**
+ * Row count only — NO lastSyncAt stamp (X1.3). For store changes that are
+ * not server contact: the persisted cold-start load (OPFS/SQLite) and local
+ * edits before the first remote load has completed.
+ */
+export function recordEntityRowCount(table: Tier1Table, rowCount: number): void {
+  const e = state.entities[table];
+  if (e.rowCount === rowCount) return;
+  e.rowCount = rowCount;
+  refreshSyncStatus();
+}
+
 export function recordHydrationFailure(table: Tier1Table, error: unknown): void {
   state.entities[table].errorCount += 1;
   breadcrumb('sync hydration failure', {

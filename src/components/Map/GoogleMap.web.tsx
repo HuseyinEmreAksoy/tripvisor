@@ -11,7 +11,7 @@
  *   without a configured key), we render <MapUnavailable> instead of crashing.
  *   This fallback shows the place list grouped by day with day-color chips.
  *
- * Map.native.tsx is untouched — native API keys live in app.json and are never
+ * Map.native.tsx is untouched — native SDK keys come from app.config.ts (build env) and are never
  * exposed to the web bundle.
  *
  * Phase 23 Step 23.9: transit legs (polyline === null from backend) are passed

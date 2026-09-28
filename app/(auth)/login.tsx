@@ -12,13 +12,8 @@
  *   This is a Row split so neither side scrolls independently — only the right
  *   panel scrolls when the viewport is short enough to require it.
  *
- * Imagery: Unsplash CDN source URL. Requires network; graceful fallback is a
- * gradient bg (`t.colors.primary`-tinted) while loading or on error.
- *
- * Attribution: Unsplash Source API images are provided under the Unsplash
- * License (free to use, no attribution required per Unsplash ToS when using
- * the Source API). The decorative accessibilityElementsHidden flag keeps the
- * background out of the screen-reader tree.
+ * Imagery: bundled brand photo (assets/images/hero-login.jpg), works offline.
+ * Decorative — accessibilityElementsHidden keeps it out of the screen-reader tree.
  */
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -38,11 +33,8 @@ import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
-// Unsplash Source API — returns a random travel/destination photo at 1200×800.
-// The `?sig=1` param ensures stable caching per session (same photo won't
-// change mid-session) while still rotating on next cold load.
-const HERO_URI =
-  'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=1200&q=75&fm=webp&fit=crop';
+// Bundled brand art (generated 2026-09-28) — offline-safe and COEP-safe, unlike a hotlink.
+const HERO_SOURCE = require('../../assets/images/hero-login.jpg');
 
 const Schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -115,7 +107,7 @@ export default function Login() {
         {/* Left column — hero image fills the full height */}
         <View style={styles.desktopHero}>
           <Image
-            source={{ uri: HERO_URI }}
+            source={HERO_SOURCE}
             style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
             contentFit="cover"
             accessibilityElementsHidden
@@ -229,7 +221,7 @@ export default function Login() {
       {/* ── Hero section ─────────────────────────────────────────────────── */}
       <View style={styles.heroContainer}>
         <Image
-          source={{ uri: HERO_URI }}
+          source={HERO_SOURCE}
           style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
           contentFit="cover"
           // Decorative background — excluded from a11y tree.

@@ -259,6 +259,16 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
     // We enable the toggle only if granted — checked in the effect below.
   }
 
+  // The toggle state is persisted per trip but the location hook is lazy:
+  // when the persisted intent is "on" and we have no fix yet, fetch one so
+  // the active button is backed by an actual location (and the virtual leg
+  // renders) instead of looking on while doing nothing.
+  useEffect(() => {
+    if (useMyLocation && !userLocation && locationStatus === 'idle') {
+      void requestLocation();
+    }
+  }, [useMyLocation, userLocation, locationStatus, requestLocation]);
+
   // Enable the toggle automatically once location is granted after a tap.
   useEffect(() => {
     if (locationStatus === 'granted' && !useMyLocation && userLocation) {
@@ -386,8 +396,9 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
       ) : null}
 
       {/* ── Phase 24 Step 24.9: "From my location" toggle ─────────────────
-       * Hidden when locationStatus === 'unavailable' (locked-down web env).
-       * Shows a spinner while requesting, inline error on denied.
+       * Hidden only when locationStatus === 'unavailable' (no geolocation
+       * capability at all). Spinner while requesting; inline retry row on
+       * denied and on transient errors (timeout / no fix).
        */}
       {locationStatus !== 'unavailable' ? (
         <View style={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.sm, gap: t.spacing.xs }}>
@@ -446,10 +457,35 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Try requesting location again"
-                onPress={handleMyLocationToggle}
+                // Retry directly — the toggle would switch a persisted "on" off.
+                onPress={() => {
+                  void requestLocation();
+                }}
               >
                 <Text style={[t.typography.caption, { color: t.colors.primary }]}>
                   {'Try again'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {locationStatus === 'error' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm }}>
+              <Text
+                style={[t.typography.caption, { color: t.colors.danger, flex: 1 }]}
+                accessibilityLiveRegion="polite"
+              >
+                {"Couldn't get your location — check location services and try again."}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry getting my location"
+                onPress={() => {
+                  void requestLocation();
+                }}
+              >
+                <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+                  {'Retry'}
                 </Text>
               </Pressable>
             </View>

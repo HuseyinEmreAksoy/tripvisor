@@ -3,7 +3,8 @@
  *
  * Flow:
  *   1. User follows an email link to this route.
- *   2. If not authenticated → redirect to /login?redirect=/invite/<token>.
+ *   2. If not authenticated → store /invite/<token> as the pending post-login
+ *      redirect (src/lib/pendingRedirect.ts) and <Redirect> to /login.
  *   3. Screen shows trip info preview + "Accept" / "Decline" buttons.
  *      DO NOT auto-accept — the user must explicitly tap Accept.
  *   4. On Accept → navigate to /trip/<tripId>.
@@ -20,14 +21,15 @@
  * Desktop: max-width 560px centred (matches add-place 720px pattern, slightly
  * narrower because this is a single-action form, not a search flow).
  */
-import { useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { setPendingRedirect } from '@/lib/pendingRedirect';
 import { useSession } from '@/api/auth';
 import {
   useAcceptCollaboratorInvite,
@@ -52,15 +54,30 @@ export default function InviteAcceptScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
-  // Redirect unauthenticated users to login with a return URL.
-  if (!sessionLoading && !session) {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const returnPath = `/invite/${token ?? ''}`;
-      router.replace(`/login?redirect=${encodeURIComponent(returnPath)}` as never);
-    } else {
-      router.replace('/login' as never);
-    }
-    return null;
+  // Signed-out users: remember this invite as the post-login destination
+  // (AsyncStorage survives the magic-link / OAuth round trip on every
+  // platform), then send them to /login. The (auth) layout and the root
+  // index consume it once a session exists.
+  const needsLogin = !sessionLoading && !session;
+  const [redirectStored, setRedirectStored] = useState(false);
+  useEffect(() => {
+    if (!needsLogin || !token) return;
+    let cancelled = false;
+    void setPendingRedirect(`/invite/${encodeURIComponent(token)}`).finally(() => {
+      if (!cancelled) setRedirectStored(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsLogin, token]);
+
+  if (needsLogin) {
+    if (redirectStored || !token) return <Redirect href="/login" />;
+    return (
+      <Screen>
+        <ActivityIndicator size="large" color={t.colors.primary} accessibilityLabel="Redirecting to sign in" />
+      </Screen>
+    );
   }
 
   if (sessionLoading) {
@@ -76,7 +93,7 @@ export default function InviteAcceptScreen() {
     try {
       const result = await acceptInvite.mutateAsync();
       setDone(true);
-      router.replace(`/trip/${result.tripId}` as never);
+      router.replace(`/trip/${result.tripId}`);
     } catch (err) {
       setActionError(formatCollaboratorError(err));
     }
@@ -86,7 +103,7 @@ export default function InviteAcceptScreen() {
     setActionError(null);
     try {
       await declineInvite.mutateAsync();
-      router.replace('/trips' as never);
+      router.replace('/trips');
     } catch (err) {
       setActionError(formatCollaboratorError(err));
     }
@@ -107,7 +124,7 @@ export default function InviteAcceptScreen() {
           { padding: t.spacing.lg, gap: t.spacing.lg },
         ]}
       >
-        <BackButton onPress={() => router.replace('/trips' as never)} label="Trips" />
+        <BackButton onPress={() => router.replace('/trips')} label="Trips" />
 
         {/* Header */}
         <View style={{ gap: t.spacing.sm }}>

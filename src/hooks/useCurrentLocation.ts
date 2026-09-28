@@ -13,7 +13,11 @@
  *   const { location, status, request } = useCurrentLocation();
  *
  * - `location`: { lat: number; lng: number } | null
- * - `status`:   'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable'
+ * - `status`:   'idle' | 'requesting' | 'granted' | 'denied' | 'error' | 'unavailable'
+ *     - 'error'       — transient failure (timeout / position unavailable);
+ *                       retryable, call `request()` again.
+ *     - 'unavailable' — no geolocation capability at all (no
+ *                       navigator.geolocation, expo-location missing).
  * - `request`:  async () => void
  *
  * Phase 24 Step 24.7.
@@ -21,7 +25,13 @@
 import { useCallback, useState } from 'react';
 import { Platform } from 'react-native';
 
-export type LocationStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable';
+export type LocationStatus =
+  | 'idle'
+  | 'requesting'
+  | 'granted'
+  | 'denied'
+  | 'error'
+  | 'unavailable';
 
 export interface CurrentLocation {
   lat: number;
@@ -62,11 +72,9 @@ export function useCurrentLocation(): UseCurrentLocationResult {
             //   1 = PERMISSION_DENIED
             //   2 = POSITION_UNAVAILABLE
             //   3 = TIMEOUT
-            if (err.code === 1) {
-              setStatus('denied');
-            } else {
-              setStatus('unavailable');
-            }
+            // 2/3 are transient (indoors, GPS cold start) — retryable 'error',
+            // not the permanent 'unavailable' that hides the control.
+            setStatus(err.code === 1 ? 'denied' : 'error');
             resolve();
           },
           { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
@@ -79,12 +87,20 @@ export function useCurrentLocation(): UseCurrentLocationResult {
     // Belt-and-suspenders: import inside the function so a missing package
     // doesn't crash the module on web (though Metro will never bundle this
     // branch on web).
+    let Location: typeof import('expo-location');
     try {
       // Dynamic require keeps the web bundle clean; on native Metro statically
       // includes this because Platform.OS === 'native' is always true.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const Location = require('expo-location') as typeof import('expo-location');
+      Location = require('expo-location') as typeof import('expo-location');
+    } catch {
+      // expo-location not installed (e.g. bare workflow without native
+      // rebuild) — the capability genuinely doesn't exist.
+      setStatus('unavailable');
+      return;
+    }
 
+    try {
       const { status: permStatus } =
         await Location.requestForegroundPermissionsAsync();
 
@@ -100,9 +116,8 @@ export function useCurrentLocation(): UseCurrentLocationResult {
       setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
       setStatus('granted');
     } catch {
-      // If expo-location is not installed (e.g. bare workflow without
-      // native rebuild), fall through to unavailable rather than crash.
-      setStatus('unavailable');
+      // Location services off, timeout, no fix — transient and retryable.
+      setStatus('error');
     }
   }, [status]);
 

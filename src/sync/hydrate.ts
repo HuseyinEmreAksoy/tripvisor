@@ -39,10 +39,12 @@
  *     status-UI concern. Failures land in telemetry per attempt.
  *   - Queue durability is PLATFORM-DEPENDENT (R5): pending writes are
  *     persisted across restarts (`retrySync: true`) ONLY when the SQLite
- *     persistence plugin attached (native with the S1 dev client; web only
- *     once COOP/COEP lands). On the in-memory degrade path (today's web,
- *     node) offline writes retry within the session but DIE WITH THE
- *     PROCESS. Surfaced via the existing `degraded` telemetry.
+ *     persistence plugin attached (native with the S1 dev client; web on
+ *     cross-origin-isolated browsers — COOP/COEP shipped in S2.8.10, the
+ *     OPFS worker warm-up in S2.8.13/B1; Safari stays degraded). On the
+ *     in-memory degrade path (non-isolated web, node) offline writes retry
+ *     within the session but DIE WITH THE PROCESS. Surfaced via the
+ *     existing `degraded` telemetry.
  *   - id generation: callers must supply row ids (client UUIDs) — the
  *     engine is not configured with generateId. Wave 3's mutation layer
  *     owns id minting.
@@ -80,7 +82,11 @@
  * left to carry the fact) and only semi-reliable via realtime DELETE
  * events. v1 paths still hard-delete (places, expenses, reaction-clear…) —
  * Wave 3 flips them to `deleted = true` tombstones, which is why 0027 added
- * the column everywhere first.
+ * the column everywhere first. For TRIPS specifically (the one root with no
+ * tombstone at all) the full coverage analysis + accepted ghost-trip window
+ * is the F5 contract note inside attachEntity, next to the fieldDeleted
+ * config line (S2.8.13 triage verdict: documented acceptance, no config
+ * change).
  */
 
 import { syncObservable } from '@legendapp/state/sync';
@@ -105,6 +111,7 @@ import {
   markSyncStopped,
   recordDroppedField,
   recordEntityHydrated,
+  recordEntityRowCount,
   recordHydrationFailure,
   recordWriteFailure,
   recordWriteSanitizedDrop,
@@ -192,7 +199,21 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
   const obs$ = tier1Store$[key];
   const writable = isTier1WriteTable(table);
 
-  syncObservable(
+  // F5 (S2.8.13): own the plugin's dev-only config warning for trips. The
+  // very next call below makes syncedSupabase print "[legend-state]
+  // fieldDeleted is required when using last-sync mode" ONCE (dev builds
+  // only, at config time — supabase.js gates on NODE_ENV==='development').
+  // That warning is the EXPECTED signature of a deliberate choice, not a
+  // regression — see the fieldDeleted contract note below for the full
+  // hard-delete coverage analysis. This info line lands adjacent to it in
+  // the console so the pairing is self-explanatory.
+  if (table === 'trips' && typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.info(
+      '[sync] expected: the next legend-state "fieldDeleted is required" dev warning is the trips root — trips deliberately has no tombstone (archive is its lifecycle, migration 0027). Hard-delete coverage: same-device D5 prune + realtime DELETE events; an other-device hard-delete while this device is offline leaves a ghost row (accepted — see hydrate.ts attachEntity).',
+    );
+  }
+
+  const state$ = syncObservable(
     obs$,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase client vs the plugin's Database-generic inference (see note above)
     (syncedSupabase as any)({
@@ -217,6 +238,37 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
       fieldUpdatedAt: 'updated_at',
       // trips has no tombstone — archive (archived_at) is its lifecycle and
       // account deletion cascades server-side (see 0027 header).
+      //
+      // F5 CONTRACT (S2.8.13, documented acceptance — verdict: NO config
+      // change). last-sync mode without fieldDeleted means a HARD DELETE of
+      // a trip cannot replicate through incremental pulls (no row left to
+      // carry the fact; the plugin dev-warns about exactly this at attach —
+      // owned by the console.info above). Trip-removal coverage as shipped:
+      //   1. same-device hard-delete (flag-on): legacy PostgREST DELETE +
+      //      pruneTripFromLocalStore after server ack (S2.8.4/D5) — covered.
+      //   2. archive: a plain updated_at row change — replicates — covered.
+      //   3. other-device hard-delete while THIS device's realtime channel
+      //      is up: the supabase plugin's subscribe handler processes
+      //      eventType DELETE (old[symbolDelete] = true → row removed;
+      //      verified in beta.47 sync-plugins/supabase.js) — covered,
+      //      best-effort (no replay across socket drops, issue #362).
+      //   4. other-device hard-delete while this device is offline/socket
+      //      down: NOT covered — the reconnect force-pull is still an
+      //      incremental `updated_at > lastSync` query and cannot observe a
+      //      vanished row. The ghost trip persists until the persisted
+      //      store/watermark is discarded (fresh device, account-deletion
+      //      wipe); with OPFS/SQLite persistence attached there is no
+      //      "next full pull" that would re-baseline it. ACCEPTED for this
+      //      phase: trips hard-delete is owner-initiated and rare, the
+      //      ghost is read-only stale (writes against it fail server-side
+      //      and surface as write errors in the status sheet) — revisit
+      //      when trip sharing makes cross-client deletes common.
+      // Do NOT "fix" by adding fieldDeleted here: D5's prune-no-echo
+      // contract DEPENDS on its absence (with fieldDeleted a store-level
+      // delete becomes UPDATE … SET deleted=true against a row the server
+      // already hard-deleted → zero-row update retried forever). And 'all'
+      // mode would not help either — mode:'merge' never evicts absent ids,
+      // and mode:'set' would clobber pending offline creates.
       ...(table === 'trips' ? {} : { fieldDeleted: 'deleted' }),
       // Offline write queue: keep retrying sets until they land (exponential
       // 1s → 30s cap). See header for the RLS-rejection caveat.
@@ -268,10 +320,43 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
     }),
   );
 
-  // Row-count + last-sync telemetry. A shallow listener is enough — any
-  // hydration/realtime merge fires it; tables are small (per-user data).
-  obs$.onChange(({ value }) => {
+  // ── lastSyncAt stamping (S2.8.13/B2) ──────────────────────────────────
+  // The obs$.onChange listener below only fires when row DATA changes — a
+  // root whose pull returns ZERO rows never changes the observable, never
+  // got stamped, and telemetry's lastSyncAgeMs (which requires a stamp on
+  // EVERY entity) stayed null forever: the pill could never reach "Synced"
+  // for any user with one empty root (smoke S2.8.13, B2). Stamp from the
+  // engine's own sync state instead — beta.47 sets `isLoaded: true` and
+  // `isGetting: false` when a get COMPLETES, row count irrelevant
+  // (sync.js `handle()`):
+  //   - isLoaded false→true  = the FIRST remote load finished;
+  //   - isGetting true→false = EVERY later pull finished (resyncTier1's
+  //     reconnect/foreground re-pulls re-stamp empty roots too).
+  // First load fires both (one double-stamp, idempotent); failures never
+  // set isLoaded and land in onError → recordHydrationFailure as before.
+  const stampHydrated = () => {
+    const value = obs$.peek();
     recordEntityHydrated(table, value ? Object.keys(value).length : 0);
+  };
+  state$.isLoaded.onChange(({ value }) => {
+    if (value === true) stampHydrated();
+  });
+  state$.isGetting.onChange(({ value }) => {
+    if (value === false && state$.isLoaded.peek() === true) stampHydrated();
+  });
+
+  // Row-count (+ last-sync once remotely loaded) telemetry. A shallow
+  // listener is enough — any hydration/realtime merge fires it; tables are
+  // small (per-user data). X1.3: BEFORE the first remote load completes a
+  // data change can only be the persisted (OPFS/SQLite) cold-start load or a
+  // local edit — neither is server contact, so it updates the row count but
+  // must NOT stamp lastSyncAt (with B1 fixed, disk loads now really happen
+  // and would otherwise show "Synced · now" on an offline cold start).
+  // After isLoaded, changes are realtime merges/pull results → stamp.
+  obs$.onChange(({ value }) => {
+    const rows = value ? Object.keys(value).length : 0;
+    if (state$.isLoaded.peek() === true) recordEntityHydrated(table, rows);
+    else recordEntityRowCount(table, rows);
   });
 }
 
@@ -365,9 +450,11 @@ function attachReconnectResync(): void {
 
 /**
  * Boot Tier-1 sync for the signed-in user (read-write for the trips +
- * trip_places slice, read-only elsewhere). Idempotent per process; call
- * after auth resolves (Wave 3 wires this into the app — nothing calls it
- * yet). Resolves fast: hydration continues in the background.
+ * trip_places slice, read-only elsewhere). Idempotent per process; called
+ * fire-and-forget from the auth listener (src/api/auth.ts). Resolves after
+ * the bounded persistence warm-up (web ≤ ~6 s worst case, typically <1 s;
+ * native immediate — S2.8.13/B1); hydration continues in the background.
+ * Concurrent same-user calls share one boot (bootInFlight below).
  */
 export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1SyncResult> {
   const enabled = await loadTier1SyncFlag();
@@ -380,7 +467,11 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
   if (attachedForUser !== null) {
     if (attachedForUser === opts.userId) {
       // Same user re-init (or sign-in after sign-out): resume + resync.
+      // markSyncEnabled re-shows the pill after a teardown's markSyncStopped
+      // (X1.3: previously a sign-out → sign-in left the pill hidden).
+      const wasActive = initializedForUser !== null;
       initializedForUser = opts.userId;
+      if (!wasActive) markSyncEnabled();
       resyncTier1();
       return { started: true, degraded: lastPersistenceDegraded };
     }
@@ -390,25 +481,68 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
     return { started: false, degraded: false };
   }
 
-  const persistence = createSyncPersistence();
-  persistencePlugin = persistence.plugin;
-  lastPersistenceDegraded = persistence.degraded;
-  if (persistence.degraded) {
-    markSyncDegraded(persistence.reason ?? 'unknown');
+  // S2.8.13/B1: createSyncPersistence is now ASYNC (web awaits a BOUNDED
+  // OPFS worker warm-up, ≤ ~6 s worst case and typically well under 1 s;
+  // native resolves in one tick). Blocking on it here is fine — the auth
+  // listener (src/api/auth.ts) calls initTier1Sync fire-and-forget, so app
+  // startup is never gated on the warm-up. BUT the await breaks the old
+  // invariant that check→attach was synchronous, so concurrent calls (the
+  // auth listener can fire SIGNED_IN + TOKEN_REFRESHED back-to-back) must
+  // share one boot instead of double-attaching every root.
+  //
+  // Sign-out DURING the await (teardownTier1Sync while bootInFlight) sets
+  // bootCancelled: the boot still attaches (so a later same-user sign-in
+  // takes the cheap resume path and the SQLite DB is never opened twice —
+  // exactly the state a teardown right after boot leaves), but it does NOT
+  // activate the engine. A same-user init arriving mid-boot un-cancels.
+  if (bootInFlight) {
+    if (bootInFlightUser !== opts.userId) {
+      return { started: false, degraded: false }; // different user mid-boot: same "restart required" answer as post-attach
+    }
+    bootCancelled = false;
+    return bootInFlight;
   }
+  bootInFlightUser = opts.userId;
+  bootCancelled = false;
+  bootInFlight = (async (): Promise<InitTier1SyncResult> => {
+    const persistence = await createSyncPersistence();
+    persistencePlugin = persistence.plugin;
+    lastPersistenceDegraded = persistence.degraded;
+    if (persistence.degraded) {
+      markSyncDegraded(persistence.reason ?? 'unknown');
+    }
 
-  for (const key of TIER1_STORE_KEYS) {
-    attachEntity(key, opts.userId);
+    for (const key of TIER1_STORE_KEYS) {
+      attachEntity(key, opts.userId);
+    }
+    attachReconnectResync();
+    attachedForUser = opts.userId;
+    if (bootCancelled) {
+      // Signed out mid-boot: attached but inactive (see above).
+      return { started: false, degraded: persistence.degraded };
+    }
+    initializedForUser = opts.userId;
+    markSyncEnabled();
+    return { started: true, degraded: persistence.degraded };
+  })();
+  const inFlight = bootInFlight;
+  try {
+    return await inFlight;
+  } finally {
+    if (bootInFlight === inFlight) {
+      bootInFlight = null;
+      bootInFlightUser = null;
+      bootCancelled = false;
+    }
   }
-  attachReconnectResync();
-  attachedForUser = opts.userId;
-  initializedForUser = opts.userId;
-  markSyncEnabled();
-  return { started: true, degraded: persistence.degraded };
 }
 
 let attachedForUser: string | null = null;
 let lastPersistenceDegraded = false;
+let bootInFlight: Promise<InitTier1SyncResult> | null = null;
+let bootInFlightUser: string | null = null;
+/** teardownTier1Sync ran while bootInFlight — finish attaching, don't activate. */
+let bootCancelled = false;
 
 /** Is the engine the ACTIVE write path right now? (mutations.ts gates on this.) */
 export function isTier1SyncInitialized(): boolean {
@@ -455,6 +589,9 @@ export function isTier1PersistenceDegraded(): boolean {
  * in src/sync/wipe.ts (never through the engine — see that module's header).
  */
 export function teardownTier1Sync(): void {
+  // Sign-out while the (async, S2.8.13/B1) boot is still warming up: the
+  // boot must not activate the engine when it lands (X1.3).
+  if (bootInFlight) bootCancelled = true;
   if (initializedForUser === null) return;
   initializedForUser = null;
   markSyncStopped();

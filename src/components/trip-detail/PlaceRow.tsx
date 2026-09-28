@@ -22,8 +22,16 @@
  * user-set data).
  * v2 P1.2: the transit travel connector names the rides when the leg carries
  * transit_steps ("🚇 M2 → ~12 min"); deep link unchanged.
+ * v2 S2.8.13 (F4): web-only "Place actions" kebab (⋮) in the chip rail opens
+ * the same PlaceActionsSheet that long-press opens on native — desktop web
+ * users don't long-press, and it was the ONLY route to move/duration/delete.
+ * The card was also restructured so the open-details Pressable wraps ONLY
+ * non-interactive content (thumbnail + text): the chip rail (comments,
+ * reaction, kebab) is now a SIBLING inside the card View, which removes the
+ * invalid <button>-inside-<button> DOM nesting RNW produced on web (the
+ * "cannot be a descendant of <button>" console error). Visuals unchanged.
  */
-import { Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 import { dayColor } from '@/components/Map';
 import { Icon } from '@/components/Icon';
@@ -101,6 +109,14 @@ export interface PlaceRowProps {
   /** v2 N1 1.7: opens the comment thread sheet. Chip hidden when absent. */
   onOpenComments?: () => void;
   /**
+   * v2 S2.8.13 (F4): opens PlaceActionsSheet (move day / duration / windows /
+   * delete). Renders a web-only kebab (⋮) button in the chip rail — mouse
+   * users have no long-press, so without it the sheet is unreachable on
+   * desktop web. Native keeps the long-press path (DraggableItinerary) and
+   * never shows the kebab. Hidden when absent.
+   */
+  onOpenActions?: () => void;
+  /**
    * v2 S2.6 (sync flag-gated): true while this row's OFFLINE reorder awaits
    * its next route recompute — the displayed travel legs are stale for the
    * new order. Renders a muted "route recompute pending" pill (same chip
@@ -123,6 +139,7 @@ export function PlaceRow({
   timeline,
   commentCount = 0,
   onOpenComments,
+  onOpenActions,
   pendingRecompute = false,
 }: PlaceRowProps) {
   const t = useTheme();
@@ -189,10 +206,7 @@ export function PlaceRow({
 
   return (
     <View style={{ gap: t.spacing.xs }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open details for ${place.user_title ?? 'place'}. Long-press to change day, duration, or delete.`}
-        onPress={onOpenDetails}
+      <View
         style={[
           styles.placeCard,
           {
@@ -208,14 +222,29 @@ export function PlaceRow({
           },
         ]}
       >
-        {/* Title row: optional thumbnail + text content + reaction chip */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-          {/* Phase 25 Step 25.8: thumbnail — omitted when no photo URL */}
-          {!dragging ? (
-            <PlaceThumbnail googlePlaceId={place.google_place_id} />
-          ) : null}
+        {/* Title row: open-details press surface + sibling chip rail. The
+            Pressable wraps ONLY non-interactive content (thumbnail + text) —
+            v2 S2.8.13: interactive chips as Pressable children rendered
+            nested <button> elements on web (invalid HTML, console noise,
+            unpredictable AT behavior). */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              Platform.OS === 'web'
+                ? // Web: the kebab below is the actions affordance — don't
+                  // teach mouse users a long-press gesture they don't have.
+                  `Open details for ${place.user_title ?? 'place'}.`
+                : `Open details for ${place.user_title ?? 'place'}. Long-press to change day, duration, or delete.`
+            }
+            onPress={onOpenDetails}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
+          >
+            {/* Phase 25 Step 25.8: thumbnail — omitted when no photo URL */}
+            {!dragging ? (
+              <PlaceThumbnail googlePlaceId={place.google_place_id} />
+            ) : null}
 
-          <View style={{ flex: 1, justifyContent: 'space-between', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
             <View style={{ flex: 1 }}>
               <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
                 {place.user_title ?? 'Place'}
@@ -354,50 +383,79 @@ export function PlaceRow({
                 </View>
               ) : null}
             </View>
-            {/* Right rail: comment chip (v2 N1 1.7) + reaction chip (Phase 24) */}
-            <View style={styles.chipRail}>
-              {onOpenComments ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    commentCount > 0
-                      ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${place.user_title ?? 'place'}. Open the thread.`
-                      : `No comments yet on ${place.user_title ?? 'place'}. Start the discussion.`
-                  }
-                  onPress={onOpenComments}
-                  hitSlop={6}
-                  style={({ pressed }) => [
-                    styles.commentChip,
-                    {
-                      backgroundColor: t.colors.bgMuted,
-                      borderRadius: t.radius.pill,
-                      opacity: pressed ? 0.6 : 1,
-                    },
-                  ]}
-                >
-                  {/* v3: Lucide message-circle replaces 💬 (functional spot). */}
-                  <Icon name="message-circle" size={13} color={t.colors.textMuted} />
-                  {commentCount > 0 ? (
-                    <Text
-                      style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}
-                    >
-                      {commentCount}
-                    </Text>
-                  ) : null}
-                </Pressable>
-              ) : null}
-              {onReactionChange ? (
-                <ReactionChip
-                  reaction={reaction ?? null}
-                  onChange={onReactionChange}
-                  accentColor={dayColor(place.day_index ?? -1)}
-                  size="sm"
-                />
-              ) : null}
-            </View>
+          </Pressable>
+
+          {/* Right rail: comment chip (v2 N1 1.7) + reaction chip (Phase 24)
+              + web-only "Place actions" kebab (v2 S2.8.13 F4). Siblings of
+              the open-details press surface — never its children — so the
+              web DOM stays free of nested <button> elements. */}
+          <View style={styles.chipRail}>
+            {onOpenComments ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  commentCount > 0
+                    ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${place.user_title ?? 'place'}. Open the thread.`
+                    : `No comments yet on ${place.user_title ?? 'place'}. Start the discussion.`
+                }
+                onPress={onOpenComments}
+                hitSlop={6}
+                style={({ pressed }) => [
+                  styles.commentChip,
+                  {
+                    backgroundColor: t.colors.bgMuted,
+                    borderRadius: t.radius.pill,
+                    opacity: pressed ? 0.6 : 1,
+                  },
+                ]}
+              >
+                {/* v3: Lucide message-circle replaces 💬 (functional spot). */}
+                <Icon name="message-circle" size={13} color={t.colors.textMuted} />
+                {commentCount > 0 ? (
+                  <Text
+                    style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}
+                  >
+                    {commentCount}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+            {onReactionChange ? (
+              <ReactionChip
+                reaction={reaction ?? null}
+                onChange={onReactionChange}
+                accentColor={dayColor(place.day_index ?? -1)}
+                size="sm"
+              />
+            ) : null}
+            {/* v2 S2.8.13 (F4): "Place actions" kebab — opens the same
+                PlaceActionsSheet that long-press opens on native. Web only:
+                mouse users don't long-press, and this was the ONLY route to
+                move-day / duration / windows / delete on desktop web. Also
+                the keyboard-reachable path (a real button, unlike a
+                long-press gesture). Native is untouched. */}
+            {onOpenActions && Platform.OS === 'web' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Place actions"
+                onPress={onOpenActions}
+                // styles.actionsKebab enforces the 44px minimum touch target
+                // (WCAG 2.5.8 / Apple HIG), matching the UndoToast action.
+                style={({ pressed }) => [
+                  styles.actionsKebab,
+                  {
+                    borderRadius: t.radius.pill,
+                    backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
+                  },
+                  { cursor: 'pointer' } as ViewStyle,
+                ]}
+              >
+                <Icon name="ellipsis-vertical" size={18} color={t.colors.textMuted} />
+              </Pressable>
+            ) : null}
           </View>
         </View>
-      </Pressable>
+      </View>
 
       {/* ── Per-place notes editor (Step 9.4 / Phase 25 Step 25.10) — Option A inline ── */}
       {!dragging ? (
@@ -491,6 +549,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
+  },
+  // v2 S2.8.13 (F4): web-only place-actions kebab. 44px minimum touch
+  // target (WCAG 2.5.8 / Apple HIG) — same convention as UndoToast's action.
+  actionsKebab: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {

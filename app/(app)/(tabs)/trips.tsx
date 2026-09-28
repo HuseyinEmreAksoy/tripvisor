@@ -26,6 +26,10 @@
  *
  * Mobile / tablet layout: unchanged from before.
  *
+ * v2 M4 X1.1: this is the Trips tab of app/(app)/(tabs). Insights / Settings
+ * pills are gone (they are tabs now); the hero moved into the scroll content
+ * so it scrolls away, while search / sort / Active-Archived stay pinned.
+ *
  * Duration sort (total leg duration_seconds, descending) defers the legs
  * fetch until the user selects it; if `sortKey` is not `'duration'`,
  * `useAllTripLegs` receives an empty array which keeps the hook disabled
@@ -37,7 +41,7 @@
  * are also stored as `YYYY-MM-DD` text, so string comparison is valid.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   FlatList,
   Pressable,
@@ -55,9 +59,13 @@ import {
   EmptyState,
   FilterSheet,
   Heading,
+  Icon,
   Screen,
   SegmentedControl,
+  Skeleton,
+  SkeletonGroup,
   SyncStatusPill,
+  TAB_SCREEN_EDGES,
 } from '@/components';
 import { noTrips } from '@/components/emptyStates';
 import { TripCard } from '@/components/TripCard';
@@ -230,29 +238,14 @@ export default function TripsList() {
     }
   };
 
-  // ── Loading / error states ─────────────────────────────────────────────────
-  if (isLoading) {
-    return (
-      <Screen>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>Loading trips…</Text>
-      </Screen>
-    );
-  }
-
-  if (error) {
-    return (
-      <Screen>
-        <EmptyState
-          title="Couldn't load trips"
-          description={(error as Error).message}
-          action={<Button label="Retry" onPress={() => refetch()} />}
-        />
-      </Screen>
-    );
-  }
-
-  const serverIsEmpty = ownedTrips.length === 0;
-  const noResults = !serverIsEmpty && displayedTrips.length === 0;
+  // ── List-area state ────────────────────────────────────────────────────────
+  // Loading / error no longer early-return: the header (incl. the Active /
+  // Archived switcher) must stay on screen so a failing tab can be left.
+  // Owned-empty is NOT "nothing to show": a collaborator-only user still
+  // gets the empty CTA *plus* the "Shared with me" section.
+  const ownedIsEmpty = ownedTrips.length === 0;
+  const noResults = !ownedIsEmpty && displayedTrips.length === 0;
+  const showShared = tab === 'active' && collaboratedTrips.length > 0;
   const filterActive = dateFilter !== 'all';
 
   // ── v2 N1 1.5: secondary empty-state action — sample trip ─────────────────
@@ -291,21 +284,6 @@ export default function TripsList() {
       alignItems: 'center',
       justifyContent: 'space-between',
     },
-    settingsBtn: {
-      paddingHorizontal: t.spacing.md,
-      paddingVertical: t.spacing.sm,
-      backgroundColor: t.colors.bgElevated,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      borderRadius: t.radius.pill,
-      ...t.shadows.sm(t.colors.shadowColor),
-    },
-    settingsBtnText: {
-      ...(t.typography.caption as object),
-      color: t.colors.text,
-      fontWeight: '600',
-      fontSize: 13,
-    },
     searchRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -324,7 +302,6 @@ export default function TripsList() {
       ...t.shadows.sm(t.colors.shadowColor),
     },
     searchIcon: {
-      fontSize: 16,
       marginRight: t.spacing.sm,
     },
     searchInput: {
@@ -389,49 +366,21 @@ export default function TripsList() {
         <EdgeRuntimeBanner onDismiss={dismissEdgeBanner} />
       ) : null}
 
-      {/* ─── v2 N1 1.3: Home hero — imagery + AI CTA + trip countdown ──── */}
-      {tab === 'active' ? (
-        <HomeHero
-          trips={trips ?? []}
-          onPlanWithAI={() => router.push('/trip/plan')}
-          onOpenTrip={(id) => router.push(`/trip/${id}`)}
-        />
-      ) : null}
-
-      {/* ─── Header row: title + analytics + settings links ─────────── */}
+      {/* ─── Header row: title + sync pill. Insights / Settings moved to the
+          app tab bar (M4 X1.1); the hero scrolls with the list below. ─── */}
       <View style={s.titleRow}>
         <Heading level={1}>Your trips</Heading>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          {/* v2 S2.7: sync-status pill — renders null while the Tier-1 sync
-              flag is off (zero layout shift; v1 header unchanged). */}
-          <SyncStatusPill />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="View analytics and insights"
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            onPress={() => router.push('/(app)/analytics' as any)}
-            hitSlop={8}
-            style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={[s.settingsBtnText]}>📊 Insights</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open settings"
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            onPress={() => router.push('/(app)/settings' as any)}
-            hitSlop={8}
-            style={({ pressed }) => [s.settingsBtn, { opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={[s.settingsBtnText]}>⚙️ Settings</Text>
-          </Pressable>
-        </View>
+        {/* v2 S2.7: sync-status pill — renders null while the Tier-1 sync
+            flag is off (zero layout shift). */}
+        <SyncStatusPill />
       </View>
 
       {/* ─── Search + Sort + Filter row ──────────────────────────────── */}
       <View style={s.searchRow}>
         <View style={s.searchWrap}>
-          <Text style={s.searchIcon} accessibilityElementsHidden aria-hidden>🔍</Text>
+          <View style={s.searchIcon}>
+            <Icon name="search" size={18} color={t.colors.textMuted} />
+          </View>
           <TextInput
             ref={searchRef}
             value={searchText}
@@ -514,222 +463,201 @@ export default function TripsList() {
     </View>
   );
 
-  // ── Desktop grid layout ───────────────────────────────────────────────────
-  if (isDesktop) {
-    return (
-      <Screen padded={false}>
-        {headerContent}
+  // ── Reusable list-area fragments ──────────────────────────────────────────
+  const refreshControl = <RefreshControl refreshing={isRefetching} onRefresh={refetch} />;
+  const gridGutter = t.spacing.md;
 
-        {serverIsEmpty ? (
-          tab === 'active' ? (
-            <View style={desktopStyles.centeredContainer}>
-              <EmptyState
-                {...noTrips}
-                icon={
-                  <Text
-                    style={{ fontSize: 56, lineHeight: 64 }}
-                    accessibilityElementsHidden
-                    importantForAccessibility="no"
-                    aria-hidden
-                  >
-                    🗺️
-                  </Text>
-                }
-                onPress={() => router.push('/trip/new')}
-                action={sampleTripAction}
-              />
-            </View>
-          ) : (
-            <View style={desktopStyles.centeredContainer}>
-              <EmptyState title="No archived trips" body="Archived trips will appear here." />
-            </View>
-          )
-        ) : noResults ? (
-          <View style={[s.noResultsWrap, desktopStyles.centeredContainer]}>
-            <Text style={s.noResultsText}>No trips match your search.</Text>
-          </View>
-        ) : (
-          <ScrollView
-            refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-            contentContainerStyle={[
-              desktopStyles.centeredContainer,
-              { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
-            ]}
-          >
-            {/*
-             * Desktop grid: flexDirection row + flexWrap to fill columns.
-             * Each card gets (100% / columns) width minus the gap.
-             * Using percentage minus gap works reliably on RN Web Flexbox.
-             * Gap between columns is t.spacing.md (12px); between rows t.spacing.md.
-             */}
-            <View
-              style={[
-                desktopStyles.grid,
-                {
-                  gap: t.spacing.md,
-                  paddingTop: t.spacing.md,
-                },
-              ]}
-            >
-              {displayedTrips.map((item) => (
-                <View
-                  key={item.id}
-                  style={[
-                    desktopStyles.gridItem,
-                    {
-                      // Subtract gap budget: (columns - 1) gaps shared equally.
-                      // flexBasis computed as: (100 / columns)% minus gap contribution.
-                      // Using `width` + `flex: 0` pattern is more reliable than
-                      // flexBasis string arithmetic on RN Web.
-                      width: `${(100 / columns).toFixed(4)}%` as unknown as number,
-                    },
-                  ]}
-                >
-                  <TripCard
-                    trip={item}
-                    onPress={() => router.push(`/trip/${item.id}`)}
-                    onArchive={(id) => archiveMutation.mutate(id)}
-                    onUnarchive={(id) => unarchiveMutation.mutate(id)}
-                    onDuplicate={handleDuplicate}
-                    onDelete={handleDelete}
-                  />
-                </View>
-              ))}
-            </View>
+  // Desktop grid: no flex `gap` (percentage widths + gap overflow and wrap to
+  // one card per row). Instead each cell is exactly 100/columns % wide and
+  // carries half the gutter as padding; the row's negative margin cancels the
+  // outer half-gutters so cards stay flush with the header edges.
+  type ListTrip = (typeof displayedTrips)[number];
+  const renderGrid = (items: ListTrip[], renderCard: (item: ListTrip) => ReactNode) => (
+    <View style={[desktopStyles.gridRow, { marginHorizontal: -gridGutter / 2 }]}>
+      {items.map((item) => (
+        <View
+          key={item.id}
+          style={[
+            desktopStyles.gridItem,
+            {
+              width: `${(100 / columns).toFixed(4)}%` as unknown as number,
+              paddingHorizontal: gridGutter / 2,
+              paddingBottom: gridGutter,
+            },
+          ]}
+        >
+          {renderCard(item)}
+        </View>
+      ))}
+    </View>
+  );
 
-            {tab === 'active' ? (
-              <View style={{ marginTop: t.spacing.lg, width: '100%' }}>
-                <Button label="New trip" onPress={() => router.push('/trip/new')} />
-              </View>
-            ) : null}
+  const renderSharedCard = (item: (typeof collaboratedTrips)[number]) => (
+    <View style={{ position: 'relative' }}>
+      <TripCard trip={item} onPress={() => router.push(`/trip/${item.id}`)} />
+      <SharedBadge role={item.collaboratorRole} />
+    </View>
+  );
 
-            {/* Shared with me — desktop: rendered below owned trips in same centred container */}
-            {tab === 'active' && collaboratedTrips.length > 0 ? (
-              <View style={{ marginTop: t.spacing.xl, width: '100%', gap: t.spacing.md }}>
-                <Text
-                  style={[t.typography.subtitle, { color: t.colors.text }]}
-                  accessibilityRole="header"
-                  aria-level={2}
-                >
-                  Shared with me
-                </Text>
-                <View style={[desktopStyles.grid, { gap: t.spacing.md }]}>
-                  {collaboratedTrips.map((item) => (
-                    <View
-                      key={item.id}
-                      style={[
-                        desktopStyles.gridItem,
-                        { width: `${(100 / columns).toFixed(4)}%` as unknown as number },
-                      ]}
-                    >
-                      <View style={{ position: 'relative' }}>
-                        <TripCard
-                          trip={item}
-                          onPress={() => router.push(`/trip/${item.id}`)}
-                        />
-                        <SharedBadge role={item.collaboratorRole} />
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-          </ScrollView>
-        )}
+  // "Shared with me" — rendered both under owned trips and under the empty
+  // state (collaborator-only users), on desktop (grid) and mobile (stack).
+  const sharedSection = showShared ? (
+    <View style={{ marginTop: t.spacing.xl, width: '100%', gap: t.spacing.md }}>
+      <Text
+        style={[t.typography.subtitle, { color: t.colors.text }]}
+        accessibilityRole="header"
+        aria-level={2}
+      >
+        Shared with me
+      </Text>
+      {isDesktop ? (
+        renderGrid(collaboratedTrips, renderSharedCard)
+      ) : (
+        <View style={{ gap: t.spacing.lg }}>
+          {collaboratedTrips.map((item) => (
+            <View key={item.id}>{renderSharedCard(item)}</View>
+          ))}
+        </View>
+      )}
+    </View>
+  ) : null;
 
-        <FilterSheet
-          visible={filterSheetOpen}
-          onClose={() => setFilterSheetOpen(false)}
-          title="Filter trips"
-          options={DATE_FILTER_OPTIONS}
-          selected={dateFilter}
-          onSelect={(value) => setDateFilter(value)}
+  // v2 N1 1.3 hero (imagery + AI CTA + countdown), active tab only. M4 X1.1:
+  // lives INSIDE the scroll content so it scrolls away with the list, while
+  // the search / sort / Active-Archived header above stays pinned.
+  const hero =
+    tab === 'active' ? (
+      <View style={{ paddingBottom: t.spacing.lg }}>
+        <HomeHero
+          trips={trips ?? []}
+          onPlanWithAI={() => router.push('/trip/plan')}
+          onOpenTrip={(id) => router.push(`/trip/${id}`)}
         />
-      </Screen>
+      </View>
+    ) : null;
+
+  const emptyState =
+    tab === 'active' ? (
+      <EmptyState
+        {...noTrips}
+        onPress={() => router.push('/trip/new')}
+        action={sampleTripAction}
+      />
+    ) : (
+      <EmptyState title="No archived trips" body="Archived trips will appear here." />
+    );
+
+  // Scrollable wrapper for every non-list state so tall empty states (CTA +
+  // "Try a sample trip" at 375×667) and the shared section stay reachable.
+  const scrollContainerStyle = [
+    isDesktop && desktopStyles.centeredContainer,
+    { paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.lg, paddingBottom: t.spacing.xl },
+  ];
+
+  let listArea: ReactNode;
+  if (isLoading) {
+    listArea = (
+      <ScrollView contentContainerStyle={scrollContainerStyle}>
+        {hero}
+        <SkeletonGroup label="Loading trips" style={{ gap: t.spacing.lg }}>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} height={isDesktop ? 180 : 132} radius="xl" />
+          ))}
+        </SkeletonGroup>
+      </ScrollView>
+    );
+  } else if (error) {
+    listArea = (
+      <ScrollView contentContainerStyle={scrollContainerStyle} refreshControl={refreshControl}>
+        {hero}
+        <EmptyState
+          title="Couldn't load trips"
+          description={(error as Error).message}
+          action={<Button label="Retry" fullWidth={false} onPress={() => refetch()} />}
+        />
+      </ScrollView>
+    );
+  } else if (ownedIsEmpty || noResults) {
+    listArea = (
+      <ScrollView contentContainerStyle={scrollContainerStyle} refreshControl={refreshControl}>
+        {hero}
+        {ownedIsEmpty ? (
+          emptyState
+        ) : (
+          <View style={s.noResultsWrap}>
+            <Text accessibilityLiveRegion="polite" style={s.noResultsText}>
+              No trips match your search.
+            </Text>
+          </View>
+        )}
+        {sharedSection}
+      </ScrollView>
+    );
+  } else if (isDesktop) {
+    listArea = (
+      <ScrollView
+        refreshControl={refreshControl}
+        contentContainerStyle={scrollContainerStyle}
+      >
+        {hero}
+        {renderGrid(displayedTrips, (item) => (
+          <TripCard
+            trip={item}
+            onPress={() => router.push(`/trip/${item.id}`)}
+            onArchive={(id) => archiveMutation.mutate(id)}
+            onUnarchive={(id) => unarchiveMutation.mutate(id)}
+            onDuplicate={handleDuplicate}
+            onDelete={handleDelete}
+          />
+        ))}
+
+        {tab === 'active' ? (
+          <View style={{ marginTop: t.spacing.sm, width: '100%' }}>
+            <Button label="New trip" onPress={() => router.push('/trip/new')} />
+          </View>
+        ) : null}
+
+        {sharedSection}
+      </ScrollView>
+    );
+  } else {
+    listArea = (
+      <FlatList
+        data={displayedTrips}
+        keyExtractor={(trip) => trip.id}
+        renderItem={({ item }) => (
+          <TripCard
+            trip={item}
+            onPress={() => router.push(`/trip/${item.id}`)}
+            onArchive={(id) => archiveMutation.mutate(id)}
+            onUnarchive={(id) => unarchiveMutation.mutate(id)}
+            onDuplicate={handleDuplicate}
+            onDelete={handleDelete}
+          />
+        )}
+        contentContainerStyle={{
+          padding: t.spacing.lg,
+          gap: t.spacing.lg,
+        }}
+        refreshControl={refreshControl}
+        ListHeaderComponent={hero}
+        ListFooterComponent={
+          tab === 'active' ? (
+            <View style={{ marginTop: t.spacing.lg }}>
+              <Button label="New trip" onPress={() => router.push('/trip/new')} />
+              {sharedSection}
+            </View>
+          ) : null
+        }
+      />
     );
   }
 
-  // ── Mobile / tablet layout (unchanged) ───────────────────────────────────
   return (
-    <Screen padded={false}>
+    <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       {headerContent}
 
-      {serverIsEmpty ? (
-        tab === 'active' ? (
-          <EmptyState
-            {...noTrips}
-            icon={
-              <Text
-                style={{ fontSize: 56, lineHeight: 64 }}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-                aria-hidden
-              >
-                🗺️
-              </Text>
-            }
-            onPress={() => router.push('/trip/new')}
-            action={sampleTripAction}
-          />
-        ) : (
-          <EmptyState
-            title="No archived trips"
-            body="Archived trips will appear here."
-          />
-        )
-      ) : noResults ? (
-        <View style={s.noResultsWrap}>
-          <Text style={s.noResultsText}>No trips match your search.</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={displayedTrips}
-          keyExtractor={(trip) => trip.id}
-          renderItem={({ item }) => (
-            <TripCard
-              trip={item}
-              onPress={() => router.push(`/trip/${item.id}`)}
-              onArchive={(id) => archiveMutation.mutate(id)}
-              onUnarchive={(id) => unarchiveMutation.mutate(id)}
-              onDuplicate={handleDuplicate}
-              onDelete={handleDelete}
-            />
-          )}
-          contentContainerStyle={{
-            padding: t.spacing.lg,
-            gap: t.spacing.lg,
-          }}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-          ListFooterComponent={
-            tab === 'active' ? (
-              <View style={{ marginTop: t.spacing.lg, gap: t.spacing.lg }}>
-                <Button label="New trip" onPress={() => router.push('/trip/new')} />
-                {/* Shared with me — mobile: rendered below the new-trip button */}
-                {collaboratedTrips.length > 0 ? (
-                  <View style={{ gap: t.spacing.md }}>
-                    <Text
-                      style={[t.typography.subtitle, { color: t.colors.text }]}
-                      accessibilityRole="header"
-                      aria-level={2}
-                    >
-                      Shared with me
-                    </Text>
-                    {collaboratedTrips.map((item) => (
-                      <View key={item.id} style={{ position: 'relative' }}>
-                        <TripCard
-                          trip={item}
-                          onPress={() => router.push(`/trip/${item.id}`)}
-                        />
-                        <SharedBadge role={item.collaboratorRole} />
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            ) : null
-          }
-        />
-      )}
+      {listArea}
 
       <FilterSheet
         visible={filterSheetOpen}
@@ -843,11 +771,13 @@ const desktopStyles = StyleSheet.create({
     alignSelf: 'center',
     // Horizontal padding is applied at usage site to support variation.
   },
-  // Flex-wrap row for the desktop card grid.
-  grid: {
+  // Flex-wrap row for the desktop card grid. No explicit width: it stretches
+  // to the parent, and the negative horizontal margin applied at the usage
+  // site widens it by one gutter so percentage cell widths sum to exactly 100%.
+  gridRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    width: '100%',
+    alignSelf: 'stretch',
   },
   // Each grid item stretches to fill its column slot.
   gridItem: {

@@ -1,7 +1,10 @@
-import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useRef } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
+import { MapUnavailable } from '../MapUnavailable';
+import { nativeMapsMode } from './nativeMapsConfig';
 import { dayColor, polylineColor, type MapViewProps } from './types';
+import { FIT_EDGE_PADDING, SINGLE_MARKER_DELTA, markerSignature } from './fit';
 
 function toRegion(props: MapViewProps): Region {
   if (props.initialRegion) {
@@ -29,13 +32,58 @@ function toRegion(props: MapViewProps): Region {
   };
 }
 
+// Resolved once: the key flag is baked into the binary's expoConfig.
+const MODE = nativeMapsMode(Platform.OS);
+
 export function Map(props: MapViewProps) {
+  // Android build without GOOGLE_MAPS_ANDROID_KEY: the Google provider would
+  // render blank or crash, so show the place list instead (X1.2).
+  if (MODE === 'unavailable') {
+    return <MapUnavailable {...props} keyName="GOOGLE_MAPS_ANDROID_KEY" />;
+  }
+  return <NativeMap {...props} />;
+}
+
+function NativeMap(props: MapViewProps) {
   const region = useMemo(() => toRegion(props), [props]);
+  const mapRef = useRef<MapView | null>(null);
+
+  // initialRegion only applies on mount; refit whenever the marker set
+  // (ids + coords) changes afterwards — e.g. places added, day filter
+  // switched, optimizer moved things. The mount-time set is skipped because
+  // initialRegion already frames it.
+  const signature = markerSignature(props.markers);
+  const fittedSignature = useRef(signature);
+  const markersRef = useRef(props.markers);
+  markersRef.current = props.markers;
+  useEffect(() => {
+    if (fittedSignature.current === signature) return;
+    fittedSignature.current = signature;
+    const map = mapRef.current;
+    const markers = markersRef.current;
+    if (!map || markers.length === 0) return;
+    if (markers.length === 1) {
+      const only = markers[0]!;
+      map.animateToRegion({
+        latitude: only.lat,
+        longitude: only.lng,
+        latitudeDelta: SINGLE_MARKER_DELTA,
+        longitudeDelta: SINGLE_MARKER_DELTA,
+      });
+      return;
+    }
+    map.fitToCoordinates(
+      markers.map((m) => ({ latitude: m.lat, longitude: m.lng })),
+      { edgePadding: FIT_EDGE_PADDING, animated: true },
+    );
+  }, [signature]);
 
   return (
     <View style={styles.container}>
       <MapView
-        provider={PROVIDER_GOOGLE}
+        ref={mapRef}
+        // iOS without GOOGLE_MAPS_IOS_KEY: default provider (Apple Maps).
+        provider={MODE === 'google' ? PROVIDER_GOOGLE : undefined}
         style={StyleSheet.absoluteFillObject}
         initialRegion={region}
         accessibilityLabel="Trip map"

@@ -25,6 +25,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -86,6 +87,7 @@ function roleUpdateErrorMessage(err: unknown): string {
 export default function CollaboratorsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useSafeBack(`/trip/${id}`);
   const t = useTheme();
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
@@ -158,7 +160,7 @@ export default function CollaboratorsScreen() {
           isDesktop && { maxWidth: COLLAB_MAX_WIDTH, alignSelf: 'center', width: '100%' },
         ]}
       >
-        <BackButton onPress={() => router.back()} label="Trip" />
+        <BackButton onPress={goBack} label="Trip" />
 
         {/* Header */}
         <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'flex-start' }]}>

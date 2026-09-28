@@ -1,32 +1,35 @@
 /**
  * add.tsx — Add a place to the trip.
  *
- * Phase 23 Step 23.7:
- *   - Day picker horizontal chip row above the search box. Chips drive the
- *     `selectedDayIndex` for the place save. Default comes from a `day`
- *     URL param set by MapTab (if passed), else the first scheduled day.
- *   - Active chip is highlighted with the day color.
- *   - Stepper: "Switch to Day N+1" advances one day; at the last day it
- *     becomes "Add to Unscheduled" (day_index = null).
- *   - After save the form clears the search + query but stays on screen with
- *     the same selectedDayIndex so the user can add another place to the same
- *     day immediately.
- *   - Brief inline toast "Added to Day N" appears after a successful save.
+ * Phase 23 Step 23.7 (+ review fixes):
+ *   - Day picker (`DayPicker`) above the search box. Chips come from the
+ *     trip's start_date..end_date day count, plus "Ideas" (day_index NULL).
+ *     Default comes from a `day` URL param (MapTab), else Day 1.
+ *   - Create always lands in Ideas (day_index is server-domain, C1). When a
+ *     day is chosen, the place is then moved there through the existing
+ *     server path (`useMoveToDay`). The toast reports what actually happened.
+ *   - After save the form clears the search but keeps the selected day so the
+ *     user can add another place to the same day immediately.
+ *   - Each search → details pair is one Google billing session: the token
+ *     rotates after a place is confirmed.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { BackButton, Button, EmptyState, Heading, PoweredByGoogle, Screen, TextField } from '@/components';
+import { DayPicker, dayLabel, tripDayCount } from '@/components/add-place/DayPicker';
 import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { dayColor } from '@/components/Map';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import {
   PlacesError,
-  useAutocompleteSessionToken,
+  useAutocompleteSession,
   useCreateTripPlace,
+  useMoveToDay,
   usePlacesAutocomplete,
   usePlaceDetails,
+  useTrip,
   useTripPlaces,
 } from '@/api';
 import { inferCategoryDefault } from '@/lib/categoryDurations';
@@ -52,6 +55,11 @@ const ADD_DESKTOP_MAX_WIDTH = 720;
 // How many milliseconds the "Added to Day N" toast stays visible.
 const TOAST_DURATION_MS = 2500;
 
+// Move-to-day retry delays. With Tier-1 sync on, the create is an optimistic
+// local insert whose server INSERT is queued, so the first server-side move
+// can race it and find no row; a couple of short retries cover that window.
+const MOVE_RETRY_DELAYS_MS = [0, 800, 2000];
+
 const mapsSetupErrorCodes = new Set([
   'server_misconfigured',
   'google_places_disabled',
@@ -68,13 +76,15 @@ function getMapsSetupError(...errors: Array<PlacesError | Error | null | undefin
   );
 }
 
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export default function AddPlace() {
   const { id: tripId, day: dayParam } = useLocalSearchParams<{ id: string; day?: string }>();
-  const router = useRouter();
+  const goBack = useSafeBack(`/trip/${tripId}`);
   const t = useTheme();
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
-  const sessionToken = useAutocompleteSessionToken();
+  const { sessionToken, rotate: rotateSessionToken } = useAutocompleteSession();
 
   const [query, setQuery] = useState('');
   const debounced = useDebounced(query, 250);
@@ -104,32 +114,24 @@ export default function AddPlace() {
   const mapsSetupError = getMapsSetupError(autocompleteError, detailsError);
 
   const { data: existingPlaces = [] } = useTripPlaces(tripId);
+  const { data: trip } = useTrip(tripId);
 
-  // ── Day picker (Step 23.7) ────────────────────────────────────────────────
-  // All day indexes that have at least one assigned place, plus any that exist
-  // in the date range. We build a simple 0..max list for the picker chips.
-  const availableDays = useMemo(() => {
-    const seen = new Set<number>();
-    for (const p of existingPlaces) {
-      if (p.day_index !== null && p.day_index >= 0) seen.add(p.day_index);
-    }
-    // Always include at least Day 0 so the picker has something to show.
-    seen.add(0);
-    return [...seen].sort((a, b) => a - b);
-  }, [existingPlaces]);
+  // ── Day picker ────────────────────────────────────────────────────────────
+  const dayCount = tripDayCount(
+    trip?.start_date,
+    trip?.end_date,
+    existingPlaces.map((p) => p.day_index),
+  );
 
-  // Default to the URL param if provided (MapTab may pass the selected day),
-  // else the first available day.
-  const initialDay = useMemo(() => {
+  // null = Ideas bucket (day_index NULL). Seeded once from the URL param.
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(() => {
     const parsed = dayParam != null ? parseInt(dayParam, 10) : NaN;
-    if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
-    return availableDays[0] ?? 0;
-    // Only computed once at mount — intentionally not reactive to dayParam changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // null = unscheduled bucket (day_index = null)
-  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(initialDay);
+    return !Number.isNaN(parsed) && parsed >= 0 ? parsed : 0;
+  });
+  // If the trip loads with fewer days than the seeded selection, clamp at
+  // render time (no state→effect→state cycle).
+  const effectiveDayIndex =
+    selectedDayIndex !== null && selectedDayIndex >= dayCount ? dayCount - 1 : selectedDayIndex;
 
   // ── Toast state ───────────────────────────────────────────────────────────
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -140,6 +142,9 @@ export default function AddPlace() {
   }, [toastMessage]);
 
   const createTripPlace = useCreateTripPlace();
+  const moveToDay = useMoveToDay();
+  const [addError, setAddError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // ─── Recent places — local AsyncStorage state (not server state) ──────────
   const [recents, setRecents] = useState<RecentPlace[]>([]);
@@ -150,31 +155,70 @@ export default function AddPlace() {
 
   const showRecents = debounced.length < 2 && recents.length > 0;
 
-  async function handleConfirm() {
-    if (!picked || !tripId) return;
-    const defaults = inferCategoryDefault(picked.types);
-    await createTripPlace.mutateAsync({
-      trip_id: tripId,
-      google_place_id: picked.placeId,
-      user_title: picked.displayName,
-      category: defaults.category,
-      visit_duration_minutes: defaults.durationMinutes,
-      lat: picked.location.latitude,
-      lng: picked.location.longitude,
-    });
-    // Fire-and-forget recent places write.
-    addRecentPlace({
-      placeId: picked.placeId,
-      mainText: picked.displayName,
-      secondaryText: picked.formattedAddress,
-    });
+  async function scheduleOnDay(placeRowId: string, dayIndex: number): Promise<boolean> {
+    for (const delay of MOVE_RETRY_DELAYS_MS) {
+      if (delay) await wait(delay);
+      try {
+        await moveToDay.mutateAsync({ id: placeRowId, tripId, toDayIndex: dayIndex });
+        return true;
+      } catch {
+        // retry below; final failure is reported via the toast
+      }
+    }
+    return false;
+  }
 
-    // Step 23.7: show toast + stay on screen (clear search only).
-    const dayLabel =
-      selectedDayIndex !== null ? `Day ${selectedDayIndex + 1}` : 'Unscheduled';
-    setToastMessage(`Added to ${dayLabel}`);
-    setPickedId(null);
-    setQuery('');
+  async function handleConfirm() {
+    if (!picked || !tripId || saving) return;
+    const targetDay = effectiveDayIndex;
+    const defaults = inferCategoryDefault(picked.types);
+    setAddError(null);
+    setSaving(true);
+    try {
+      let created;
+      try {
+        created = await createTripPlace.mutateAsync({
+          trip_id: tripId,
+          google_place_id: picked.placeId,
+          user_title: picked.displayName,
+          category: defaults.category,
+          visit_duration_minutes: defaults.durationMinutes,
+          lat: picked.location.latitude,
+          lng: picked.location.longitude,
+        });
+      } catch (e) {
+        setAddError(
+          e instanceof Error && e.message
+            ? `Couldn't add this place: ${e.message}`
+            : "Couldn't add this place. Check your connection and try again.",
+        );
+        return;
+      }
+
+      // Session closed by the details call that preceded this confirm.
+      rotateSessionToken();
+      // Fire-and-forget recent places write.
+      addRecentPlace({
+        placeId: picked.placeId,
+        mainText: picked.displayName,
+        secondaryText: picked.formattedAddress,
+      });
+      setPickedId(null);
+      setQuery('');
+
+      if (targetDay === null) {
+        setToastMessage('Added to Ideas');
+        return;
+      }
+      const scheduled = await scheduleOnDay(created.id, targetDay);
+      setToastMessage(
+        scheduled
+          ? `Added to ${dayLabel(targetDay)}`
+          : `Added to Ideas — couldn't schedule on ${dayLabel(targetDay)}. Move it from the itinerary.`,
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleClearRecents() {
@@ -187,34 +231,14 @@ export default function AddPlace() {
     !!picked &&
     existingPlaces.some((p) => p.google_place_id === picked.placeId);
 
-  // Step 23.7: stepper — advance to next day or switch to Unscheduled.
-  const maxDayIndex = Math.max(...availableDays, selectedDayIndex ?? 0);
-  const isLastDay =
-    selectedDayIndex === null ||
-    selectedDayIndex >= maxDayIndex;
-  const isUnscheduled = selectedDayIndex === null;
-
-  function handleStepNext() {
-    if (isUnscheduled) return;
-    if (selectedDayIndex !== null && selectedDayIndex >= maxDayIndex) {
-      // At last scheduled day → switch to Unscheduled
-      setSelectedDayIndex(null);
-    } else if (selectedDayIndex !== null) {
-      setSelectedDayIndex(selectedDayIndex + 1);
-    }
-  }
-
   const desktopWrap = isDesktop
     ? { maxWidth: ADD_DESKTOP_MAX_WIDTH, width: '100%' as const, alignSelf: 'center' as const }
     : undefined;
 
-  // All chip values: day indexes + "Unscheduled"
-  const chipValues: Array<number | 'unscheduled'> = [...availableDays, 'unscheduled'];
-
   return (
     <Screen padded={false}>
       <View style={[{ padding: t.spacing.lg, gap: t.spacing.sm }, desktopWrap]}>
-        <BackButton onPress={() => router.back()} />
+        <BackButton onPress={goBack} />
         <View style={{ gap: t.spacing.xs }}>
           <Heading level={2}>Add a place</Heading>
           <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
@@ -222,97 +246,11 @@ export default function AddPlace() {
           </Text>
         </View>
 
-        {/* ── Day picker chips (Step 23.7) ────────────────────────────── */}
-        <View style={{ gap: t.spacing.xs }}>
-          <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-            Add to
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: t.spacing.sm }}
-            accessibilityRole="radiogroup"
-            accessibilityLabel="Select day to add place"
-          >
-            {chipValues.map((value) => {
-              const isUnsch = value === 'unscheduled';
-              const dayIdx = isUnsch ? null : (value as number);
-              const isSelected = isUnsch
-                ? selectedDayIndex === null
-                : selectedDayIndex === dayIdx;
-              const chipColor = !isUnsch && dayIdx !== null ? dayColor(dayIdx) : undefined;
-              const chipLabel = isUnsch ? 'Unscheduled' : `Day ${(dayIdx as number) + 1}`;
-
-              return (
-                <Pressable
-                  key={String(value)}
-                  accessibilityRole="radio"
-                  accessibilityLabel={chipLabel}
-                  accessibilityState={{ checked: isSelected }}
-                  onPress={() => setSelectedDayIndex(dayIdx)}
-                  style={[
-                    addStyles.chip,
-                    {
-                      borderColor: isSelected
-                        ? (chipColor ?? t.colors.primary)
-                        : t.colors.border,
-                      backgroundColor: isSelected
-                        ? (chipColor ?? t.colors.primary)
-                        : t.colors.bgElevated,
-                      borderRadius: t.radius.md,
-                    },
-                  ]}
-                >
-                  {chipColor && !isUnsch ? (
-                    <View
-                      style={[addStyles.chipDot, { backgroundColor: isSelected ? '#fff' : chipColor }]}
-                      accessibilityElementsHidden
-                      importantForAccessibility="no"
-                    />
-                  ) : null}
-                  <Text
-                    style={[
-                      t.typography.caption,
-                      {
-                        color: isSelected ? (chipColor ? '#fff' : t.colors.primaryText) : t.colors.text,
-                        fontWeight: isSelected ? '600' : '400',
-                      },
-                    ]}
-                  >
-                    {chipLabel}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* ── Stepper (Step 23.7) — advance to next day ───────────────── */}
-        {!isUnscheduled && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              isLastDay
-                ? 'Switch to Unscheduled'
-                : `Switch to Day ${(selectedDayIndex ?? 0) + 2}`
-            }
-            onPress={handleStepNext}
-            style={[
-              addStyles.stepper,
-              {
-                borderColor: t.colors.border,
-                borderRadius: t.radius.sm,
-                backgroundColor: t.colors.bgElevated,
-              },
-            ]}
-          >
-            <Text style={[t.typography.caption, { color: t.colors.primary }]}>
-              {isLastDay
-                ? '→ Add to Unscheduled'
-                : `→ Switch to Day ${(selectedDayIndex ?? 0) + 2}`}
-            </Text>
-          </Pressable>
-        )}
+        <DayPicker
+          dayCount={dayCount}
+          selected={effectiveDayIndex}
+          onSelect={setSelectedDayIndex}
+        />
 
         <TextField
           label="Search places"
@@ -419,13 +357,25 @@ export default function AddPlace() {
                     ? 'Add anyway, this place is already in your trip'
                     : undefined
                 }
-                loading={createTripPlace.isPending}
+                loading={saving}
                 onPress={handleConfirm}
               />
+              {addError ? (
+                <Text
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={[t.typography.caption, { color: t.colors.danger }]}
+                >
+                  {addError}
+                </Text>
+              ) : null}
               <Button
                 variant="ghost"
                 label="Pick a different place"
-                onPress={() => setPickedId(null)}
+                onPress={() => {
+                  setAddError(null);
+                  setPickedId(null);
+                }}
               />
             </>
           )}
@@ -541,30 +491,6 @@ const addStyles = StyleSheet.create({
   recentsSectionHeader: { flexDirection: 'row', alignItems: 'center' },
   duplicateWarning: { borderLeftWidth: 3 },
   setupBanner: { borderLeftWidth: 3 },
-  // Day picker chip styles
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 36,
-    gap: 6,
-  },
-  chipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  // Stepper affordance
-  stepper: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    alignSelf: 'flex-start',
-    minHeight: 36,
-    justifyContent: 'center',
-  },
   // Toast
   toast: {
     alignItems: 'center',

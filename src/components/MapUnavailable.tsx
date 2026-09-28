@@ -1,5 +1,7 @@
 /**
- * MapUnavailable — fallback rendered by Map.web.tsx when EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY is absent.
+ * MapUnavailable — fallback rendered when a map key is absent: Map.web.tsx (Google
+ * provider without EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY) and Map.native.tsx (Android
+ * build without GOOGLE_MAPS_ANDROID_KEY). `keyName` tailors the hint.
  * Shows a card with a place list grouped by day, using day-color chips consistent with the real map.
  * No Google logo: we are not rendering any Google data (names and coords come from our own DB).
  *
@@ -10,9 +12,15 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { dayColor, DAY_COLORS, type MapViewProps } from './Map/types';
 
-type Props = MapViewProps;
+type Props = MapViewProps & {
+  /** Env var the hint tells the developer to set. Default: the web key. */
+  keyName?: string;
+};
 
-export function MapUnavailable({ markers: maybeMarkers }: Props) {
+export function MapUnavailable({
+  markers: maybeMarkers,
+  keyName = 'EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY',
+}: Props) {
   const t = useTheme();
   // Defensive: tolerate transient undefined during data hydration.
   const markers = maybeMarkers ?? [];
@@ -56,7 +64,7 @@ export function MapUnavailable({ markers: maybeMarkers }: Props) {
       <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.xs }]}>
         Set{' '}
         <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
-          EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY
+          {keyName}
         </Text>{' '}
         to view the map — see{' '}
         <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>

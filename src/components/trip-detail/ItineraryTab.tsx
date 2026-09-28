@@ -5,7 +5,8 @@
  *
  * Renders day sections (header + StayingAtPill + DaySummaryCard +
  * DayNotesEditor) with a DraggableItinerary of PlaceRow cards per day, and
- * the PlaceActionsSheet opened by long-press.
+ * the PlaceActionsSheet opened by long-press (native + touch web) or the
+ * per-row "Place actions" kebab (web — v2 S2.8.13 F4).
  *
  * Data flow: `places`, `legs`, `trip`, `accommodations` come from the route
  * shell. The hooks that v1 already had inside this block are kept here:
@@ -569,6 +570,11 @@ export function ItineraryTab({
                           }
                           commentCount={commentCounts.get(place.id) ?? 0}
                           onOpenComments={() => setCommentsPlaceId(place.id)}
+                          // v2 S2.8.13 (F4): same sheet the long-press below
+                          // opens — PlaceRow renders it as a web-only kebab
+                          // (desktop/mobile web have no discoverable
+                          // long-press; native rows never show it).
+                          onOpenActions={() => setActivePlaceId(place.id)}
                           // v2 S2.6: muted chip while an offline reorder
                           // awaits its route recompute (always false flag-off).
                           pendingRecompute={pendingRecompute.has(place.id)}

@@ -13,6 +13,13 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
   const t = useTheme();
   const sheetRef = useRef<View | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // Call sites usually pass an inline arrow. Keeping onClose in a ref lets the
+  // focus effect key on `visible` alone, so a parent re-render never re-runs
+  // it (which used to yank focus back to the sheet and steal the caret).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!visible) return;
@@ -23,7 +30,7 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
     node?.focus?.();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
 
@@ -31,7 +38,7 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
       document.removeEventListener('keydown', onKey);
       previousFocus.current?.focus?.();
     };
-  }, [visible, onClose]);
+  }, [visible]);
 
   if (!visible) return null;
 

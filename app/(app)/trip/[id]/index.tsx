@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { Button, Heading, Screen, TabBar } from '@/components';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -43,6 +44,7 @@ type TabKey = 'map' | 'itinerary' | 'settings';
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useSafeBack('/trips');
   const t = useTheme();
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
@@ -51,7 +53,7 @@ export default function TripDetail() {
   // On mobile/tablet, the original tab behaviour (map | itinerary | settings) applies.
   const [tab, setTab] = useState<TabKey>('map');
 
-  const { data: trip, isLoading, error } = useTrip(id);
+  const { data: trip, isLoading, error, refetch } = useTrip(id);
   const { data: places = [] } = useTripPlaces(id);
   const { data: legs = [] } = useTripLegs(id);
   const optimize = useOptimizeTrip();
@@ -142,7 +144,25 @@ export default function TripDetail() {
     );
   }
 
-  if (error || !trip) {
+  if (error) {
+    return (
+      <Screen>
+        <Heading level={2}>{"Couldn't load this trip"}</Heading>
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[t.typography.body, { color: t.colors.textMuted, marginBottom: t.spacing.md }]}
+        >
+          {error.message || 'Something went wrong. Check your connection and try again.'}
+        </Text>
+        <View style={{ gap: t.spacing.sm }}>
+          <Button label="Retry" onPress={() => refetch()} accessibilityLabel="Retry loading this trip" />
+          <Button variant="secondary" label="Back to trips" onPress={() => router.replace('/trips')} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!trip) {
     return (
       <Screen>
         <Heading level={2}>Trip not found</Heading>
@@ -159,8 +179,8 @@ export default function TripDetail() {
       placesCount={places.length}
       optimizePending={optimize.isPending}
       optimizeError={optimize.error}
-      onBack={() => router.back()}
-      onPrint={() => router.push(`/trip/${trip.id}/print` as never)}
+      onBack={goBack}
+      onPrint={() => router.push(`/trip/${trip.id}/print`)}
     />
   );
 

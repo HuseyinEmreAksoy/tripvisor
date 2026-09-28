@@ -20,6 +20,7 @@
 import { useMemo } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { BackButton, Button, Heading, MarkdownText, Screen, TripCostRollup, DaySummaryCard } from '@/components';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { useTheme } from '@/theme';
@@ -80,6 +81,7 @@ function PrintHead() {
 export default function PrintRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useSafeBack(`/trip/${id}`);
   const t = useTheme();
 
   const { data: trip, isLoading, error } = useTrip(id);
@@ -138,7 +140,7 @@ export default function PrintRoute() {
           {/* ── Itinerary header ─────────────────────────────────────────── */}
           <View style={{ gap: t.spacing.xs }}>
             {/* BackButton with noPrint=true hides it from the browser print dialog */}
-            <BackButton onPress={() => router.back()} label="Trip" noPrint />
+            <BackButton onPress={goBack} label="Trip" noPrint />
 
             <Heading level={1}>{trip.title}</Heading>
             <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{dateRange}</Text>

@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { Pressable, Platform, ScrollView, Text, View, type ViewStyle } from 'react-native';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -85,6 +86,7 @@ const TRANSPORT_OPTIONS: Array<{ value: 'driving' | 'walking' | 'bicycling' | 't
 export default function NewTrip() {
   const t = useTheme();
   const router = useRouter();
+  const goBack = useSafeBack('/trips');
   const createTrip = useCreateTrip();
   // Phase 25 Step 25.11: after creation, patch currency if not the DB default.
   // useUpdateTrip must be called unconditionally at the top level; we use 'noop'
@@ -160,7 +162,7 @@ export default function NewTrip() {
     <Screen padded={false}>
       <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
         {/* ── Back affordance ───────────────────────────────────────────── */}
-        <BackButton onPress={() => router.back()} label="My trips" />
+        <BackButton onPress={goBack} label="My trips" />
 
         {/* ── Gradient banner ──────────────────────────────────────────── */}
         <View
@@ -376,7 +378,7 @@ export default function NewTrip() {
             onPress={handleSubmit(onSubmit)}
             loading={createTrip.isPending}
           />
-          <Button variant="ghost" label="Cancel" onPress={() => router.back()} />
+          <Button variant="ghost" label="Cancel" onPress={goBack} />
         </View>
       </ScrollView>
     </Screen>

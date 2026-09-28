@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import type { PlaceAutocompleteSuggestion, PlaceDetails } from './types';
 import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
@@ -75,15 +75,36 @@ function generateSessionToken(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+export interface AutocompleteSession {
+  /** Token to send on every autocomplete call AND the place-details call that ends the session. */
+  sessionToken: string;
+  /**
+   * Start a new billing session. Call once the details call that closes the
+   * current session has resolved (e.g. the user confirmed a place), so each
+   * search → details pair is exactly one Google session. Neither query key
+   * includes the token, so rotating never triggers a refetch.
+   */
+  rotate: () => void;
+}
+
 /**
- * Returns a stable session token tied to this component mount.
- * Propagate the same token to autocomplete AND the following place-details call
- * — otherwise Google bills the details call separately.
+ * Session token with an explicit rotate(). Propagate the same token to
+ * autocomplete AND the following place-details call — otherwise Google bills
+ * the details call separately — then rotate() to start the next session.
+ */
+export function useAutocompleteSession(): AutocompleteSession {
+  const [sessionToken, setSessionToken] = useState(generateSessionToken);
+  const rotate = useCallback(() => setSessionToken(generateSessionToken()), []);
+  return useMemo(() => ({ sessionToken, rotate }), [sessionToken, rotate]);
+}
+
+/**
+ * Returns a stable session token tied to this component mount (never rotates).
+ * Kept for backward compatibility; prefer `useAutocompleteSession()` in flows
+ * where the user can run more than one search → details pair per mount.
  */
 export function useAutocompleteSessionToken(): string {
-  const ref = useRef<string | null>(null);
-  if (ref.current === null) ref.current = generateSessionToken();
-  return ref.current;
+  return useAutocompleteSession().sessionToken;
 }
 
 export function usePlacesAutocomplete(params: {

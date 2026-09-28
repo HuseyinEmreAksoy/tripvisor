@@ -1,17 +1,25 @@
 import { StyleSheet, View, type ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
 
 interface ScreenProps {
   children: React.ReactNode;
   style?: ViewStyle;
   padded?: boolean;
+  /**
+   * Safe-area edges to pad. Default: all four. Tab-root screens pass
+   * `TAB_SCREEN_EDGES` — the tab bar already owns the bottom inset.
+   */
+  edges?: ReadonlyArray<Edge>;
 }
 
-export function Screen({ children, style, padded = true }: ScreenProps) {
+/** Edges for screens rendered inside the (tabs) group. */
+export const TAB_SCREEN_EDGES: ReadonlyArray<Edge> = ['top', 'left', 'right'];
+
+export function Screen({ children, style, padded = true, edges }: ScreenProps) {
   const t = useTheme();
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: t.colors.bg }]}>
+    <SafeAreaView edges={edges} style={[styles.root, { backgroundColor: t.colors.bg }]}>
       <View
         style={[
           styles.inner,

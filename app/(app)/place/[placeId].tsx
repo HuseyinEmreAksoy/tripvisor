@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { useLocalSearchParams } from 'expo-router';
 import { BackButton, Button, Heading, PoweredByGoogle, Screen } from '@/components';
 import { ReactionChip } from '@/components/ReactionChip';
 import { usePlaceDetails } from '@/api';
+import { usePlacePhotoUrl } from '@/api/place-photos';
+import { useSafeBack } from '@/hooks/useSafeBack';
 import { useTripPlaceReaction, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
 import { useSession } from '@/api/auth';
 import { useTheme } from '@/theme';
@@ -29,7 +30,7 @@ export default function PlaceDetailsScreen() {
     tripPlaceId?: string;
     tripId?: string;
   }>();
-  const router = useRouter();
+  const goBack = useSafeBack('/trips');
   const t = useTheme();
   const { data: place, isLoading, error } = usePlaceDetails({ placeId });
 
@@ -56,7 +57,7 @@ export default function PlaceDetailsScreen() {
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
           {(error as Error | null)?.message ?? 'Unknown error'}
         </Text>
-        <Button label="Back" onPress={() => router.back()} />
+        <Button label="Back" onPress={goBack} />
       </Screen>
     );
   }
@@ -67,7 +68,7 @@ export default function PlaceDetailsScreen() {
   return (
     <Screen padded={false}>
       <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}>
-        <BackButton onPress={() => router.back()} />
+        <BackButton onPress={goBack} />
 
         <Heading level={1}>{place.displayName}</Heading>
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
@@ -164,14 +165,18 @@ export default function PlaceDetailsScreen() {
         {place.websiteUri || place.googleMapsUri ? (
           <View style={{ gap: t.spacing.sm, marginTop: t.spacing.md }}>
             {place.websiteUri ? (
-              <Text style={[t.typography.body, { color: t.colors.primary }]}>
-                Website: {place.websiteUri}
-              </Text>
+              <ExternalLink
+                url={place.websiteUri}
+                label={`Website: ${place.websiteUri}`}
+                accessibilityLabel={`Open website for ${place.displayName}`}
+              />
             ) : null}
             {place.googleMapsUri ? (
-              <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                View on Google Maps: {place.googleMapsUri}
-              </Text>
+              <ExternalLink
+                url={place.googleMapsUri}
+                label="View on Google Maps"
+                accessibilityLabel={`View ${place.displayName} on Google Maps`}
+              />
             ) : null}
           </View>
         ) : null}
@@ -180,9 +185,43 @@ export default function PlaceDetailsScreen() {
   );
 }
 
+/** Tappable external URL — opens in the browser / Maps app. */
+function ExternalLink({
+  url,
+  label,
+  accessibilityLabel,
+}: {
+  url: string;
+  label: string;
+  accessibilityLabel: string;
+}) {
+  const t = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint="Opens outside the app"
+      onPress={() => {
+        Linking.openURL(url).catch(() => {
+          // No handler for this URL on the device — nothing to recover.
+        });
+      }}
+      style={styles.link}
+    >
+      <Text
+        style={[t.typography.body, { color: t.colors.primary, textDecorationLine: 'underline' }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 function PhotoCard({ photo }: { photo: PlacePhoto }) {
   const t = useTheme();
-  const photoUrl = buildPhotoUrl(photo.name, 600);
+  // Proxied through the `place-photo` Edge Function — no Google key on the client.
+  const { url: photoUrl } = usePlacePhotoUrl(photo.name, { maxWidthPx: 600 });
   return (
     <View style={{ gap: 4, width: 200 }}>
       {photoUrl ? (
@@ -331,18 +370,6 @@ function ReviewsFooter({
   );
 }
 
-function buildPhotoUrl(photoName: string, maxWidth: number): string | null {
-  const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
-  const key =
-    // Static read inlines at build; dynamic read is the dev/jest fallback
-    // (production web has no runtime process.env).
-    process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY ||
-    (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY) ||
-    (typeof extra.googleMapsWebKey === 'string' ? (extra.googleMapsWebKey as string) : null);
-  if (!key) return null;
-  return `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidth}&key=${key}`;
-}
-
 const styles = StyleSheet.create({
   photo: { width: 200, height: 140 },
   avatar: { width: 32, height: 32, borderRadius: 16 },
@@ -351,4 +378,5 @@ const styles = StyleSheet.create({
   reviewToggle: { marginTop: 6, minHeight: 44, justifyContent: 'center' },
   // Phase 24 Step 24.4: reaction control container.
   reactionContainer: { borderWidth: 1 },
+  link: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', maxWidth: '100%' },
 });

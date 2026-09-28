@@ -10,28 +10,25 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.tripvisor.app",
-      "config": {
-        "googleMapsApiKey": "REPLACE_WITH_IOS_MAPS_KEY"
-      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to show where you are on the map and to build a route from your current location to the first place on your itinerary."
       }
     },
     "android": {
       "package": "com.tripvisor.app",
-      "config": {
-        "googleMaps": {
-          "apiKey": "REPLACE_WITH_ANDROID_MAPS_KEY"
-        }
-      },
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0C8578"
+      }
     },
     "web": {
       "bundler": "metro",
-      "output": "static"
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
       "expo-router",
@@ -39,10 +36,27 @@
       "expo-secure-store",
       "@sentry/react-native",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/adaptive-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0C8578",
+          "dark": {
+            "image": "./assets/images/adaptive-icon.png",
+            "backgroundColor": "#0A6A5F"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "icon": "./assets/images/icon-1024.png",
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }

@@ -7,6 +7,12 @@
 
 import type { ObservablePersistPlugin } from '@legendapp/state/sync';
 
+/**
+ * The platform factories share one ASYNC signature (S2.8.13/B1):
+ * `createSyncPersistence(): Promise<SyncPersistenceResult>`. Web awaits a
+ * bounded OPFS worker warm-up; native resolves immediately. Keep both
+ * variants' explicit return annotations in sync with this contract.
+ */
 export interface SyncPersistenceResult {
   /** undefined = no durable persistence; the store runs in-memory only. */
   plugin: ObservablePersistPlugin | undefined;

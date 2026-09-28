@@ -2,7 +2,7 @@
 
 > **Status:** v2.1 roadmap (2026-06-10) — **Fable-revised** after a 5-lens Fable review panel (product/UX, architecture, sequencing, feature-gaps, debt). Supersedes the 2026-06-09 16-phase plan.
 > Detail docs: [`docs/v2/architecture.md`](docs/v2/architecture.md) · [`docs/v2/features.md`](docs/v2/features.md) · [`docs/v2/tech-stack.md`](docs/v2/tech-stack.md) · [`docs/v2/migration.md`](docs/v2/migration.md) · [`docs/v2/risks-and-decisions.md`](docs/v2/risks-and-decisions.md) · [`docs/v2/ux-principles.md`](docs/v2/ux-principles.md) · step tracker: [`docs/v2/BUILD-LOG.md`](docs/v2/BUILD-LOG.md)
-> **All sub-agents (incl. planner) and the orchestrator run on Fable.** `test-specialist` is disabled (token-saving); the per-phase verification gate below replaces it.
+> **All sub-agents and the orchestrator run on Opus 5.5 (`model: opus`, switched 2026-09-28).** `test-specialist` is disabled (token-saving); the per-phase verification gate below replaces it.
 
 ## Vision
 
@@ -57,6 +57,7 @@
 | **P1** | Optimizer & route-adjust | Time-windows (user-confirmed `arrive_after`/`leave_before`) + **user-facing conflict warnings** ("arrives 18:40, closes 18:00" — computed against Tier-2 live hours, never persisted) + override; real multi-leg transit; per-day start/end anchor UX; preserve + polish "Best route vs My order" | N5 |
 | **P2** | Depth: weather + packing + documents | Open-Meteo per-day forecast + rainy-day indoor swaps (pairs with gap-fill); packing lists; Storage-backed ticket/doc upload (RLS path-prefix guard) | N2, N3 |
 | **P3** | Charts + analytics | gifted-charts (needs React 19) across analytics + budget; wire the N2 analytics MV (cap properly fixed server-side) | S1, N2 |
+| **M4** | Mobile-first experience & useful features (X-track, planned 2026-09-28; not Monetization) | Bottom-tab shell; a **Today** live-trip view (next stop, ETA, Navigate, check-off); phone-first trip detail (Plan/Map/Trip hub, FAB quick-add) and itinerary; budget, stays and packing usability; offline writes for expenses and packing; **S2.8 flip folded in** (local/APK in X1.3, live in X3.4); brand assets plus an Android preview APK; onboarding, legal pages, sharing polish, a dark-mode sweep. 3 waves, 12 steps; see BUILD-LOG §M4 | S2 (code), P3 |
 | **P4** | Native parity + push | iOS+Android EAS builds + native smoke checklist; Expo Push with **defined content** (trip countdown, collaborator activity, day-before weather); Sign-in-with-Apple (App Store requires it once Google OAuth exists); WCAG 2.2 AA + desktop polish | S1, S2 |
 | **P5** | Launch hardening | **DROP `trips.cost_per_km`** (grep-gated); quota/cost counters → simple threshold alerts (ledger exists since N3; this is presentation only); final smoke; deploy; docs sign-off | all |
 

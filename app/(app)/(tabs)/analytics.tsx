@@ -32,7 +32,8 @@ import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQueries } from '@tanstack/react-query';
-import { BackButton, Button, Heading, Screen } from '@/components';
+import { Button, Heading, Screen, TAB_SCREEN_EDGES } from '@/components';
+import { TAB_RAIL_WIDTH } from '@/components/navigation/AppTabBar';
 import { BarChart } from '@/components/charts/BarChart';
 import { PieChart } from '@/components/charts/PieChart';
 import { LineChart } from '@/components/charts/LineChart';
@@ -297,7 +298,7 @@ export default function AnalyticsScreen() {
 
   // Chart width: on desktop two charts sit side-by-side; on mobile full width.
   const chartContainerWidth = isDesktop
-    ? Math.min(windowWidth / 2 - 48, 560)
+    ? Math.min((windowWidth - TAB_RAIL_WIDTH) / 2 - 48, 560) // left tab rail (M4 X1.1)
     : windowWidth - 48; // subtract padding
 
   // ── Liked/disliked bar chart — render two bars per trip ──────────────────
@@ -313,9 +314,8 @@ export default function AnalyticsScreen() {
   );
 
   return (
-    <Screen padded={false}>
+    <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 24 }}>
-        <BackButton onPress={() => router.back()} label="Trips" />
         <Heading level={1}>Insights</Heading>
 
         {/* Loading state */}

@@ -32,7 +32,8 @@
  */
 import { useMemo } from 'react';
 import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { Map } from '@/components/Map';
@@ -100,6 +101,10 @@ function SharedTripHead({ trip, places }: SharedTripHeadProps) {
 export default function SharedTripView() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const t = useTheme();
+  const router = useRouter();
+  // Public page: the only way forward is into the app. /login bounces
+  // already-signed-in visitors on to /trips via the (auth) layout.
+  const goPlan = () => router.push('/login');
   const { data: shared, isLoading, isError } = useSharedTrip(token ?? '');
 
   // ── Loading ──────────────────────────────────────────────────────────────
@@ -123,6 +128,8 @@ export default function SharedTripView() {
         <EmptyState
           title="Link not found"
           body="This trip has been deleted or the share link was revoked."
+          ctaLabel="Plan your own trip"
+          onPress={goPlan}
         />
       </View>
     );
@@ -138,6 +145,7 @@ export default function SharedTripView() {
         trip={trip}
         places={places}
         legs={legs}
+        onPlanOwn={goPlan}
       />
     </>
   );
@@ -161,10 +169,12 @@ function SharedTripContent({
   trip,
   places,
   legs,
+  onPlanOwn,
 }: {
   trip: SharedTripMeta;
   places: SharedPlace[];
   legs: SharedLeg[];
+  onPlanOwn: () => void;
 }) {
   const t = useTheme();
 
@@ -310,6 +320,28 @@ function SharedTripContent({
           <PoweredByGoogle />
         </View>
       ) : null}
+
+      {/* ── CTA: public viewers otherwise have nowhere to go ─────────────── */}
+      <View
+        style={{
+          margin: t.spacing.lg,
+          padding: t.spacing.lg,
+          gap: t.spacing.md,
+          borderRadius: t.radius.lg,
+          backgroundColor: t.colors.bgMuted,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={[t.typography.bodyStrong, { color: t.colors.text, textAlign: 'center' }]}>
+          Like this itinerary? Build your own route in minutes with Tripvisor.
+        </Text>
+        <Button
+          label="Plan your own trip"
+          fullWidth={false}
+          onPress={onPlanOwn}
+          accessibilityLabel="Plan your own trip with Tripvisor. Opens sign in."
+        />
+      </View>
     </ScrollView>
   );
 }

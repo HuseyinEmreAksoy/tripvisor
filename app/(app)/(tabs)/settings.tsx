@@ -11,9 +11,8 @@
  */
 import { useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { BackButton, Button, Heading, Screen } from '@/components';
+import { Button, Heading, Screen, TAB_SCREEN_EDGES } from '@/components';
 import { useSession, useSignOut, useExportAccount, supabase, useChangeEmail, useChangePassword, AuthMutationError } from '@/api';
 import { teardownTier1Sync } from '@/sync/hydrate';
 import { wipeTier1PersistedStorage } from '@/sync/wipe';
@@ -29,7 +28,6 @@ const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: string }> = 
 
 export default function SettingsScreen() {
   const t = useTheme();
-  const router = useRouter();
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
   const { data: session } = useSession();
@@ -111,10 +109,10 @@ export default function SettingsScreen() {
   const contentStyle = isDesktop ? styles.desktopContainer : undefined;
 
   return (
-    <Screen padded={false}>
+    <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       <ScrollView contentContainerStyle={[{ padding: t.spacing.lg, gap: t.spacing.lg }, contentStyle]}>
-        <BackButton onPress={() => router.back()} label="Trips" />
-        <Heading level={1}>Settings</Heading>
+        {/* Tab root (Profile tab, M4 X1.1) — the tab bar is the way back. */}
+        <Heading level={1}>Profile & settings</Heading>
 
         {/* ─── Profile / Account section ───────────────────────────────── */}
         <Text
