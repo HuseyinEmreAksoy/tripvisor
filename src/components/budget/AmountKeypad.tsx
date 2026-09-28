@@ -10,6 +10,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
+import { Icon } from '@/components/Icon';
 import type { AmountKey } from './expenseMath';
 
 const ROWS: AmountKey[][] = [
@@ -53,9 +54,11 @@ export function AmountKeypad({ onKey }: AmountKeypadProps) {
                 },
               ]}
             >
-              <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
-                {key === 'back' ? '⌫' : key}
-              </Text>
+              {key === 'back' ? (
+                <Icon name="delete" size={22} color={t.colors.text} />
+              ) : (
+                <Text style={[t.typography.subtitle, { color: t.colors.text }]}>{key}</Text>
+              )}
             </Pressable>
           ))}
         </View>

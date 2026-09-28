@@ -5,23 +5,21 @@
  * Desktop layout (≥ 1024px): hero fills the left half, form sits in the right
  * half centred at max-width 440px, mirroring the login.tsx desktop treatment.
  *
+ * v2 M4 X3.2: keyboard-avoiding on both platforms, return-key submit, plain
+ * "no password" copy, and the Terms / Privacy links required for the store
+ * listing.
+ *
  * Imagery: bundled brand photo (assets/images/hero-signup.jpg).
  */
 import { useState } from 'react';
-import { useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { Button, GoogleSignInButton, Heading, TextField } from '@/components';
+import { HeroValueChips } from '@/components/HeroValueChips';
+import { LegalLinks } from '@/components/legal/LegalLinks';
 import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -37,10 +35,9 @@ type FormValues = z.infer<typeof Schema>;
 
 export default function Signup() {
   const t = useTheme();
-  const router = useRouter();
   const goBack = useSafeBack('/login');
   const signIn = useSignInWithMagicLink();
-  const [sent, setSent] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
 
@@ -54,36 +51,50 @@ export default function Signup() {
   });
 
   const onSubmit = async ({ email }: FormValues) => {
-    await signIn.mutateAsync(email);
-    setSent(true);
+    try {
+      await signIn.mutateAsync(email.trim());
+      setSentTo(email.trim());
+    } catch {
+      // Error surfaces via signIn.error
+    }
   };
 
   // Shared form content — rendered identically on desktop and mobile.
   const formContent = (
     <>
-      <Heading level={2}>Create account</Heading>
+      <Heading level={2}>Create your free account</Heading>
 
       {/* v2 N1 1.6: Google OAuth above the magic-link form */}
       <GoogleSignInButton />
 
+      <View style={[styles.orRow, { gap: t.spacing.sm }]} accessibilityElementsHidden importantForAccessibility="no">
+        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
+        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>or with email</Text>
+        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
+      </View>
+
       <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-        Enter your email to get started. We'll send a magic link — no password needed.
+        No password to create or remember. Enter your email and we’ll send a one-time link that sets up your account
+        and signs you in.
       </Text>
 
       <Controller
         control={control}
         name="email"
         rules={{
-          validate: (v) =>
-            Schema.shape.email.safeParse(v).success || 'Enter a valid email',
+          validate: (v) => Schema.shape.email.safeParse(v.trim()).success || 'Enter a valid email',
         }}
         render={({ field: { value, onChange, onBlur } }) => (
           <TextField
             label="Email address"
             autoCapitalize="none"
             autoComplete="email"
+            autoCorrect={false}
             keyboardType="email-address"
             inputMode="email"
+            textContentType="emailAddress"
+            returnKeyType="send"
+            onSubmitEditing={handleSubmit(onSubmit)}
             value={value}
             onChangeText={onChange}
             onBlur={onBlur}
@@ -92,36 +103,58 @@ export default function Signup() {
         )}
       />
 
-      {sent ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[t.typography.body, { color: t.colors.success }]}
-        >
-          Magic link sent. Check your inbox and tap the link to sign in.
+      {sentTo ? (
+        <Text accessibilityLiveRegion="polite" style={[t.typography.body, { color: t.colors.success }]}>
+          {`Link sent to ${sentTo}. Open it on this device to finish. Can’t find it? Check your spam folder.`}
         </Text>
       ) : null}
 
       {signIn.error ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[t.typography.small, { color: t.colors.danger }]}
-        >
+        <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[t.typography.small, { color: t.colors.danger }]}>
           {(signIn.error as Error).message}
         </Text>
       ) : null}
 
       <Button
-        label={sent ? 'Resend magic link' : 'Send magic link'}
+        label={sentTo ? 'Resend link' : 'Email me a sign-up link'}
         onPress={handleSubmit(onSubmit)}
         loading={signIn.isPending}
         disabled={!isValid}
       />
 
-      <Button
-        variant="ghost"
-        label="Already have an account? Sign in"
-        onPress={goBack}
+      <Button variant="ghost" label="Already have an account? Sign in" onPress={goBack} />
+
+      <LegalLinks prefix="By creating an account you agree to the" />
+    </>
+  );
+
+  const heroBackdrop = (
+    <>
+      <Image
+        source={HERO_SOURCE}
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
+        contentFit="cover"
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        aria-hidden
+        transition={400}
       />
+      <View
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        aria-hidden
+      />
+    </>
+  );
+
+  const heroCopy = (
+    <>
+      <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>Start your{'\n'}adventure.</Text>
+      <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
+        Free forever. No credit card. Just great trips.
+      </Text>
+      <HeroValueChips />
     </>
   );
 
@@ -129,50 +162,14 @@ export default function Signup() {
   if (isDesktop) {
     return (
       <View style={[styles.root, styles.desktopRoot, { backgroundColor: t.colors.bg }]}>
-        {/* Left column — hero image fills the full height */}
         <View style={styles.desktopHero}>
-          <Image
-            source={HERO_SOURCE}
-            style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
-            contentFit="cover"
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-            aria-hidden
-            transition={400}
-          />
-          <View
-            style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-            aria-hidden
-          />
-          <View style={[styles.desktopHeroCopy, { padding: t.spacing.xxl }]}>
-            <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>
-              Start your{'\n'}adventure.
-            </Text>
-            <Text
-              style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}
-            >
-              Free forever. No credit card. Just great trips.
-            </Text>
-            {/* Value prop chips */}
-            <View style={styles.chipRow}>
-              {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
-                <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
-                  <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
+          {heroBackdrop}
+          <View style={[styles.desktopHeroCopy, { padding: t.spacing.xxl }]}>{heroCopy}</View>
         </View>
 
-        {/* Right column — form, vertically centred, max-width 440px */}
         <View style={[styles.desktopFormOuter, { backgroundColor: t.colors.bg }]}>
           <ScrollView
-            contentContainerStyle={[
-              styles.desktopFormInner,
-              { padding: t.spacing.xxl, gap: t.spacing.lg },
-            ]}
+            contentContainerStyle={[styles.desktopFormInner, { padding: t.spacing.xxl, gap: t.spacing.lg }]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
@@ -187,58 +184,22 @@ export default function Signup() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: t.colors.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'web' ? undefined : 'padding'}
     >
-      {/* ── Hero section ─────────────────────────────────────────────────── */}
-      <View style={styles.heroContainer}>
-        <Image
-          source={HERO_SOURCE}
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: '#16332E' }]}
-          contentFit="cover"
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-          aria-hidden
-          transition={400}
-        />
-        <View
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: t.colors.heroOverlay }]}
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-          aria-hidden
-        />
-
-        <View style={[styles.heroCopy, { padding: t.spacing.xl }]}>
-          <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>
-            Start your{'\n'}adventure.
-          </Text>
-          <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
-            Free forever. No credit card. Just great trips.
-          </Text>
-          {/* Value prop chips */}
-          <View style={styles.chipRow}>
-            {['✈️ Plan', '🗺️ Optimize', '👥 Share'].map((chip) => (
-              <View key={chip} style={[styles.valueChip, { backgroundColor: t.colors.heroChipBg, borderRadius: t.radius.pill }]}>
-                <Text style={[t.typography.caption, { color: t.colors.heroChipText }]}>{chip}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </View>
-
-      {/* ── Form card ────────────────────────────────────────────────────── */}
       <ScrollView
-        contentContainerStyle={[
-          styles.formCard,
-          {
-            backgroundColor: t.colors.bg,
-            padding: t.spacing.xl,
-            gap: t.spacing.lg,
-          },
-        ]}
+        contentContainerStyle={styles.mobileScroll}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
-        {formContent}
+        <View style={styles.heroContainer}>
+          {heroBackdrop}
+          <View style={[styles.heroCopy, { padding: t.spacing.xl, paddingBottom: t.spacing.xl + 28 }]}>{heroCopy}</View>
+        </View>
+
+        <View style={[styles.formCard, { backgroundColor: t.colors.bg, padding: t.spacing.xl, gap: t.spacing.lg }]}>
+          {formContent}
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -247,21 +208,10 @@ export default function Signup() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  desktopRoot: {
-    flexDirection: 'row',
-  },
-  desktopHero: {
-    flex: 1,
-    overflow: 'hidden',
-  },
-  desktopHeroCopy: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  desktopFormOuter: {
-    width: 520,
-    justifyContent: 'center',
-  },
+  desktopRoot: { flexDirection: 'row' },
+  desktopHero: { flex: 1, overflow: 'hidden' },
+  desktopHeroCopy: { flex: 1, justifyContent: 'flex-end' },
+  desktopFormOuter: { width: 520, justifyContent: 'center' },
   desktopFormInner: {
     width: '100%',
     maxWidth: 440,
@@ -270,15 +220,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  // One scroll view holds hero + form so the keyboard never hides the button.
+  mobileScroll: { flexGrow: 1 },
   heroContainer: {
     minHeight: 240,
-    maxHeight: 360,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
-  heroCopy: {
-    justifyContent: 'flex-end',
-  },
+  heroCopy: { justifyContent: 'flex-end' },
   heroTitle: {
     fontSize: 34,
     lineHeight: 40,
@@ -290,15 +239,10 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     marginTop: -28,
     flexGrow: 1,
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
-  chipRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 16,
-    flexWrap: 'wrap',
-  },
-  valueChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
+  orRow: { flexDirection: 'row', alignItems: 'center' },
+  orLine: { flex: 1, height: StyleSheet.hairlineWidth },
 });

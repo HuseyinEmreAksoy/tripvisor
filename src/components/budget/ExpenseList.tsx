@@ -288,7 +288,7 @@ function ExpenseRow({
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary }]}>Edit</Text>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>Edit</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"

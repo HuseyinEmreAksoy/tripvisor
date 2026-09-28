@@ -18,7 +18,15 @@ import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useIsOnline, useTrips } from '@/api';
-import { EmptyState, Heading, Screen, Skeleton, SkeletonGroup, TAB_SCREEN_EDGES } from '@/components';
+import {
+  EmptyState,
+  Heading,
+  Screen,
+  Skeleton,
+  SkeletonGroup,
+  TAB_SCREEN_EDGES,
+  themedRefresh,
+} from '@/components';
 import { noTrips } from '@/components/emptyStates';
 import { LiveTripView } from '@/components/today/LiveTripView';
 import { TripSwitcher } from '@/components/today/TripSwitcher';
@@ -108,7 +116,7 @@ export default function TodayScreen() {
   return (
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} {...themedRefresh(t)} />}
         contentContainerStyle={[
           { padding: t.spacing.lg, gap: t.spacing.lg },
           isDesktop ? styles.desktop : styles.narrow,

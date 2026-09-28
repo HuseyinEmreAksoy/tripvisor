@@ -218,7 +218,7 @@ export function PlaceRow({
                   accessibilityLabel={`${place.category ?? 'Unclassified'}, visit duration ${place.visit_duration_minutes} minutes`}
                 >
                   {place.category ?? 'Unclassified'}
-                  {' · ⏱ ~'}
+                  {' · ~'}
                   {visitLabel}
                 </Text>
               ) : (
@@ -227,13 +227,16 @@ export function PlaceRow({
                     {place.category ?? 'Unclassified'}
                   </Text>
                   {/* Step 23.8: Visit duration label */}
-                  <Text
-                    style={[t.typography.caption, { color: t.colors.textMuted }]}
-                    accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
-                  >
-                    {'⏱ Visit ~'}
-                    {visitLabel}
-                  </Text>
+                  <View style={styles.iconLine}>
+                    <Icon name="timer" size={13} color={t.colors.textMuted} />
+                    <Text
+                      style={[t.typography.caption, { color: t.colors.textMuted }]}
+                      accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+                    >
+                      {'Visit ~'}
+                      {visitLabel}
+                    </Text>
+                  </View>
                 </>
               )}
               <TimeChips place={place} timeline={timeline} pendingRecompute={pendingRecompute} />
@@ -372,9 +375,6 @@ function TimeChips({
               // T1: pinned arrivals read as deliberate — primary outline.
               borderWidth: timeline.pinnedAt ? 1 : 0,
               borderColor: timeline.pinnedAt ? t.colors.primary : 'transparent',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
             },
           ]}
           accessible
@@ -385,7 +385,7 @@ function TimeChips({
           }
         >
           {timeline.pinnedAt ? <Icon name="pin" size={11} color={t.colors.primary} /> : null}
-          <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>
             {timeline.arrival}
             {' → '}
             {timeline.departure}
@@ -395,10 +395,8 @@ function TimeChips({
 
       {windowLabel ? (
         <View style={muted} accessible accessibilityLabel={windowA11y ?? undefined}>
-          <Text style={mutedText}>
-            {'⏰ '}
-            {windowLabel}
-          </Text>
+          <Icon name="alarm-clock" size={12} color={t.colors.textMuted} />
+          <Text style={mutedText}>{windowLabel}</Text>
         </View>
       ) : null}
 
@@ -408,8 +406,9 @@ function TimeChips({
           accessible
           accessibilityLabel={`Arrives before the time window opens — waits until ${timeline.waitUntil}`}
         >
+          <Icon name="hourglass" size={12} color={t.colors.textMuted} />
           <Text style={mutedText}>
-            {'⏳ waits until '}
+            {'waits until '}
             {timeline.waitUntil}
           </Text>
         </View>
@@ -435,8 +434,8 @@ function TimeChips({
           accessible
           accessibilityLabel={`Warning: ${timeline.warning}. This is just a heads-up — your plan is unchanged.`}
         >
+          <Icon name="alert-triangle" size={12} color={t.colors.warningText} />
           <Text style={[t.typography.caption, { color: t.colors.warningText, fontWeight: '600' }]}>
-            {'⚠ '}
             {timeline.warning}
           </Text>
         </View>
@@ -460,7 +459,11 @@ const styles = StyleSheet.create({
   timelineChip: {
     paddingHorizontal: 10,
     paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
+  iconLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // right-side chip rail (comments + reaction + web kebab)
   chipRail: {
     flexDirection: 'row',

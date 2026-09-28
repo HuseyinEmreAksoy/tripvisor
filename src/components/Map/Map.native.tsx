@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
+import { useThemeNameOptional } from '@/theme';
 import { MapUnavailable } from '../MapUnavailable';
+import { DARK_GOOGLE_MAP_STYLE } from './darkMapStyle';
 import { nativeMapsMode } from './nativeMapsConfig';
 import { dayColor, polylineColor, type MapViewProps } from './types';
 import { FIT_EDGE_PADDING, SINGLE_MARKER_DELTA, markerSignature } from './fit';
@@ -47,6 +49,9 @@ export function Map(props: MapViewProps) {
 function NativeMap(props: MapViewProps) {
   const region = useMemo(() => toRegion(props), [props]);
   const mapRef = useRef<MapView | null>(null);
+  // X3.1 dark basemap: Google provider takes a JSON style; Apple Maps (iOS
+  // default provider) follows userInterfaceStyle.
+  const isDark = useThemeNameOptional() === 'dark';
 
   // initialRegion only applies on mount; refit whenever the marker set
   // (ids + coords) changes afterwards — e.g. places added, day filter
@@ -87,6 +92,8 @@ function NativeMap(props: MapViewProps) {
         style={StyleSheet.absoluteFillObject}
         initialRegion={region}
         accessibilityLabel="Trip map"
+        userInterfaceStyle={isDark ? 'dark' : 'light'}
+        customMapStyle={isDark && MODE === 'google' ? DARK_GOOGLE_MAP_STYLE : undefined}
       >
         {props.polylines.map((line) => {
           // v2 P1.2: geometry resolution is uniform across providers —

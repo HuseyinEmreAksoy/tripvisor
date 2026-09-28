@@ -59,6 +59,12 @@ users ──► Cloudflare Pages (web, free, auto-deploys master)
    EXPO_PUBLIC_SENTRY_DSN=<optional, Sentry free>
    EXPO_PUBLIC_POSTHOG_KEY=<optional, decision D5>
    ```
+   Plus two **runtime** variables for the share-link preview Function (`functions/share/[token].ts`, which rewrites og:title/og:description per trip for crawlers). Add them for Production *and* Preview; they are read at request time, not baked into the bundle, and the Function fails open (serves the plain page) when they are missing:
+   ```
+   SUPABASE_URL=https://<ref>.supabase.co          # same value as EXPO_PUBLIC_SUPABASE_URL
+   SUPABASE_ANON_KEY=<cloud anon key>               # same value as EXPO_PUBLIC_SUPABASE_ANON_KEY (public, RLS-gated)
+   ```
+   Root directory must stay the repo root so Pages picks up `functions/` (it sits beside `dist/`, not inside it). Note: Pages does not apply `_redirects`/`_headers` to Function routes, so `/share/*` serves its shell and COOP/COEP headers from the Function itself.
 4. Deploy → every push to `master` ships automatically. (Local `.env` keeps pointing at `127.0.0.1` — dev and prod stay separate by construction.)
 
 ## Step 4 — Keep-alive + ops (~5 min)

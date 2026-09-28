@@ -21,7 +21,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { BottomSheet, Button, Heading } from '@/components';
+import { BottomSheet, Button, Heading, Icon } from '@/components';
 import { useTheme } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 import type { TripPlace, Uuid } from '@/api';
@@ -116,7 +116,12 @@ export function PlaceCommentsSheet({
       accessibilityLabel={`Comments on ${placeTitle}`}
     >
       <View style={{ gap: t.spacing.md }}>
-        <Heading level={3}>{`💬 ${placeTitle}`}</Heading>
+        <View style={styles.headingRow}>
+          <Icon name="message-circle" size={20} color={t.colors.primary} />
+          <View style={styles.headingText}>
+            <Heading level={3}>{placeTitle}</Heading>
+          </View>
+        </View>
 
         {/* ── Thread (oldest first, newest at the bottom) ─────────────────── */}
         {isLoading ? (
@@ -160,7 +165,7 @@ export function PlaceCommentsSheet({
                     <Text
                       style={[
                         t.typography.small,
-                        { color: mine ? t.colors.primary : t.colors.textMuted, fontWeight: '600' },
+                        { color: mine ? t.colors.primaryInk : t.colors.textMuted, fontWeight: '600' },
                       ]}
                     >
                       {authorLabel(comment.author_id)}
@@ -257,6 +262,8 @@ function formatCommentTime(iso: string): string {
 }
 
 const styles = StyleSheet.create({
+  headingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headingText: { flex: 1 },
   // Bounded thread height so the composer + close button stay reachable
   // inside the sheet (native sheet caps at 80% viewport).
   thread: { maxHeight: 300 },

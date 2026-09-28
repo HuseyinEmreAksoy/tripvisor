@@ -80,6 +80,7 @@ import {
   EmptyState,
   PlaceActionsSheet,
   DaySummaryCard,
+  themedRefresh,
   type DraggableItem,
 } from '@/components';
 import { noPlaces } from '@/components/emptyStates';
@@ -453,19 +454,22 @@ export function ItineraryTab({
   const assistItems: AssistItem[] = [
     {
       key: 'ai-edit',
-      title: '✨ Edit with AI',
+      title: 'Edit with AI',
+      icon: 'sparkles',
       description: 'Describe a change — preview every edit before it applies.',
       onPress: () => setAiEditOpen(true),
     },
     {
       key: 'import',
-      title: '📥 Import a list',
+      title: 'Import a list',
+      icon: 'download',
       description: 'Paste places or a Takeout CSV into your Ideas.',
       onPress: () => setImportOpen(true),
     },
     {
       key: 'gap-fill',
-      title: '🕳 Fill free time',
+      title: 'Fill free time',
+      icon: 'hourglass',
       description: gapFillTarget
         ? `Day ${gapFillTarget.dayIndex + 1} has ~${formatDuration(gapFillTarget.slack)} free — see ideas to fill it.`
         : 'No day has an hour or more free right now.',
@@ -522,7 +526,7 @@ export function ItineraryTab({
         keyboardShouldPersistTaps="handled"
         onScroll={onScroll}
         scrollEventThrottle={64}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} {...themedRefresh(t)} />}
         contentContainerStyle={{
           padding: compact ? t.spacing.md : t.spacing.lg,
           gap: compact ? t.spacing.sm : t.spacing.md,

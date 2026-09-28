@@ -17,6 +17,7 @@ import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'rea
 import type { TripPackingItem } from '@/api';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
+import { Icon } from '@/components/Icon';
 
 export interface PackingItemRowProps {
   item: TripPackingItem;
@@ -76,7 +77,7 @@ export function PackingItemRow({ item, canEdit, onToggle, onDelete }: PackingIte
           importantForAccessibility="no"
         >
           {item.checked ? (
-            <Text style={[styles.tick, { color: t.colors.primaryText }]}>✓</Text>
+            <Icon name="check" size={14} strokeWidth={3} color={t.colors.primaryText} />
           ) : null}
         </View>
         <Text
@@ -113,7 +114,7 @@ export function PackingItemRow({ item, canEdit, onToggle, onDelete }: PackingIte
             Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
           ]}
         >
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>✕</Text>
+          <Icon name="x" size={18} color={t.colors.textMuted} />
         </Pressable>
       ) : null}
     </View>
@@ -140,7 +141,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tick: { fontSize: 14, fontWeight: '700', lineHeight: 18 },
   deleteBtn: {
     minWidth: 44,
     minHeight: 44,

@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
+import { Icon } from '@/components/Icon';
 import { copyToClipboard } from '@/lib/clipboard';
 import { confirmDestructive } from '@/lib/confirm';
 import type { TripAccommodation } from '@/api/types';
@@ -86,7 +87,7 @@ export function AccommodationCard({
 
         <View style={[styles.row, { gap: t.spacing.lg }]}>
           <DateColumn label="Check-in" value={checkIn} />
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>→</Text>
+          <Icon name="arrow-right" size={18} color={t.colors.textMuted} />
           <DateColumn label="Check-out" value={checkOut} />
         </View>
       </View>
@@ -162,7 +163,7 @@ export function AccommodationCard({
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary }]}>Edit</Text>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>Edit</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -198,7 +199,7 @@ function Pill({ text, subtle }: { text: string; subtle?: boolean }) {
         },
       ]}
     >
-      <Text style={[t.typography.small, { color: subtle ? t.colors.textMuted : t.colors.primary, fontWeight: '600' }]}>
+      <Text style={[t.typography.small, { color: subtle ? t.colors.textMuted : t.colors.primaryInk, fontWeight: '600' }]}>
         {text}
       </Text>
     </View>
@@ -256,7 +257,7 @@ function ConfirmationCode({ code }: { code: string }) {
           Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
         ]}
       >
-        <Text style={[t.typography.caption, { color: copied ? t.colors.success : t.colors.primary, fontWeight: '700' }]}>
+        <Text style={[t.typography.caption, { color: copied ? t.colors.success : t.colors.primaryInk, fontWeight: '700' }]}>
           {copied ? 'Copied ✓' : 'Copy'}
         </Text>
       </Pressable>

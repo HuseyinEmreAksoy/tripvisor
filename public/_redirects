@@ -10,6 +10,12 @@
 /trip/new                       /trip/new.html                  200
 /trip/plan                      /trip/plan.html                 200
 
+# Public legal pages (store listing / Data-safety links). Pretty URLs would
+# resolve these anyway; explicit rules keep hard refresh + shared links
+# deterministic, same pattern as /trip/new.
+/legal/privacy                  /legal/privacy.html             200
+/legal/terms                    /legal/terms.html               200
+
 # Nested trip routes.
 /trip/:id/add                   /trip/[id]/add.html             200
 /trip/:id/collaborators         /trip/[id]/collaborators.html   200

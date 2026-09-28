@@ -143,7 +143,7 @@ export function DayPicker({ dayCount, selected, onSelect }: DayPickerProps) {
             },
           ]}
         >
-          <Text style={[t.typography.caption, { color: t.colors.primary }]}>→ {nextLabel}</Text>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>→ {nextLabel}</Text>
         </Pressable>
       ) : null}
     </View>

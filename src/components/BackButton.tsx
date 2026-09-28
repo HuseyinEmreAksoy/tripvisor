@@ -20,7 +20,9 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
 
   const printProps =
     noPrint && Platform.OS === 'web'
-      ? ({ 'data-no-print': '' } as object)
+      ? // dataSet → data-no-print="true" on react-native-web. A raw
+        // 'data-no-print' prop is dropped by RNW's prop allow-list.
+        ({ dataSet: { noPrint: 'true' } } as object)
       : {};
 
   return (

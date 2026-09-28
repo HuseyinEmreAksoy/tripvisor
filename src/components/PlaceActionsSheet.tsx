@@ -545,7 +545,7 @@ function TimeWindowField({
         hitSlop={6}
         style={{ opacity: value === '' ? 0.35 : 1 }}
       >
-        <Text style={[t.typography.body, { color: t.colors.primary }]}>Clear</Text>
+        <Text style={[t.typography.body, { color: t.colors.primaryInk }]}>Clear</Text>
       </Pressable>
     </View>
   );

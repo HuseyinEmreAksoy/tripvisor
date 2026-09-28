@@ -21,6 +21,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 
 export interface PromptFieldProps
   extends Pick<TextInputProps, 'value' | 'onChangeText' | 'onBlur' | 'placeholder' | 'maxLength'> {
@@ -53,7 +54,7 @@ export function PromptField({
         style={[
           t.typography.caption,
           {
-            color: focused ? t.colors.primary : t.colors.textMuted,
+            color: focused ? t.colors.primaryInk : t.colors.textMuted,
             marginBottom: 6,
             fontWeight: '600',
             letterSpacing: 0.3,
@@ -107,12 +108,15 @@ export function PromptField({
       <View style={styles.footer}>
         <View style={styles.message}>
           {error ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={[t.typography.small, { color: t.colors.danger, fontWeight: '500' }]}
-            >
-              ⚠ {error}
-            </Text>
+            <View style={styles.errorRow}>
+              <Icon name="alert-triangle" size={13} color={t.colors.danger} />
+              <Text
+                accessibilityLiveRegion="polite"
+                style={[t.typography.small, styles.errorText, { color: t.colors.danger, fontWeight: '500' }]}
+              >
+                {error}
+              </Text>
+            </View>
           ) : hint ? (
             <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{hint}</Text>
           ) : null}
@@ -132,6 +136,8 @@ export function PromptField({
 
 const styles = StyleSheet.create({
   wrapper: { alignSelf: 'stretch' },
+  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  errorText: { flexShrink: 1 },
   footer: {
     flexDirection: 'row',
     alignItems: 'flex-start',

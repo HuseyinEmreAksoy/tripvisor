@@ -291,6 +291,7 @@ export default function TripDetail() {
   const hubTab = (
     <TripHubTab
       tripId={trip.id}
+      tripTitle={trip.title}
       tripStartDate={trip.start_date}
       currency={trip.currency}
       tripDayCount={tripDayCount}
@@ -358,7 +359,7 @@ export default function TripDetail() {
       <BottomSheet visible={shareOpen} onClose={() => setShareOpen(false)} accessibilityLabel="Share trip">
         <Heading level={3}>Share this trip</Heading>
         {canEditTrip ? (
-          <ShareLinkCard tripId={trip.id} />
+          <ShareLinkCard tripId={trip.id} tripTitle={trip.title} />
         ) : (
           <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
             Only the owner or an editor can create a share link. Ask them to send you one.

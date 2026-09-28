@@ -103,7 +103,7 @@ export function DailySpendStrip({ spend, currency, tripStartDate, todayIndex, se
               <Text
                 style={[
                   t.typography.small,
-                  { color: col.today ? t.colors.primary : t.colors.textMuted, fontWeight: col.today ? '700' : '500' },
+                  { color: col.today ? t.colors.primaryInk : t.colors.textMuted, fontWeight: col.today ? '700' : '500' },
                 ]}
                 numberOfLines={1}
               >

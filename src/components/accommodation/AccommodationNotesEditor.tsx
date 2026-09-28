@@ -87,7 +87,7 @@ export function AccommodationNotesEditor({
       style={styles.tapArea}
     >
       <Text
-        style={[t.typography.caption, { color: displayText ? t.colors.textMuted : t.colors.primary }]}
+        style={[t.typography.caption, { color: displayText ? t.colors.textMuted : t.colors.primaryInk }]}
         numberOfLines={displayText ? 2 : undefined}
       >
         {displayText || 'Add note…'}

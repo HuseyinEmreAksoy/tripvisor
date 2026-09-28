@@ -28,11 +28,25 @@
  *
  * Phase 24 Step 24.10 / 24.12; v2 P3.1 (gifted-charts) + P3.2 (MV wiring).
  */
-import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQueries } from '@tanstack/react-query';
-import { Button, Heading, Screen, TAB_SCREEN_EDGES } from '@/components';
+import { Button, Heading, Screen, TAB_SCREEN_EDGES, themedRefresh } from '@/components';
+import {
+  ChartCard,
+  InsightsSkeleton,
+  PlaceCatalogRow,
+  ReactionLegend,
+  categoryColor,
+} from '@/components/analytics/InsightCards';
 import { TAB_RAIL_WIDTH } from '@/components/navigation/AppTabBar';
 import { BarChart } from '@/components/charts/BarChart';
 import { PieChart } from '@/components/charts/PieChart';
@@ -47,16 +61,6 @@ import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { dayColor } from '@/components/Map';
 import type { TripExpenseCategory, TripPlace } from '@/api/types';
-
-// ── Category colors (visual identity for pie chart slices) ──────────────────
-const CATEGORY_COLORS: Record<TripExpenseCategory, string> = {
-  accommodation: '#6366F1',
-  food: '#F59E0B',
-  transport: '#3B82F6',
-  shopping: '#EC4899',
-  activities: '#10B981',
-  other: '#9CA3AF',
-};
 
 const CATEGORY_LABELS: Record<TripExpenseCategory, string> = {
   accommodation: 'Accommodation',
@@ -86,12 +90,16 @@ export default function AnalyticsScreen() {
   const isDesktop = bp === 'desktop';
 
   // ── Server state ─────────────────────────────────────────────────────────
-  const { data: allTrips = [], isLoading: tripsLoading } = useTrips({ archived: false });
-  const { data: allExpenses = [], isLoading: expensesLoading } = useAllUserExpenses();
-  const { data: allReactions = [], isLoading: reactionsLoading } = useAllUserReactions();
+  const tripsQuery = useTrips({ archived: false });
+  const expensesQuery = useAllUserExpenses();
+  const reactionsQuery = useAllUserReactions();
+  const { data: allTrips = [], isLoading: tripsLoading } = tripsQuery;
+  const { data: allExpenses = [], isLoading: expensesLoading } = expensesQuery;
+  const { data: allReactions = [], isLoading: reactionsLoading } = reactionsQuery;
   // MV aggregates — [] when the RPC is missing or the MV hasn't refreshed yet,
   // in which case every trip takes the live-fallback path below.
-  const { data: tripStats = [] } = useTripStats();
+  const statsQuery = useTripStats();
+  const { data: tripStats = [] } = statsQuery;
 
   const statsByTrip = useMemo(
     () => new Map(tripStats.map((row) => [row.trip_id, row])),
@@ -188,9 +196,9 @@ export default function AnalyticsScreen() {
       .map((cat) => ({
         label: CATEGORY_LABELS[cat],
         value: byCategory.get(cat) ?? 0,
-        color: CATEGORY_COLORS[cat],
+        color: categoryColor(t, cat),
       }));
-  }, [allExpenses]);
+  }, [allExpenses, t]);
 
   // ── Chart 3: Liked vs disliked per trip ───────────────────────────────────
   // MV-first: trips with an MV row use liked_count/disliked_count; trips
@@ -289,6 +297,25 @@ export default function AnalyticsScreen() {
   }, [allReactions, placeMeta]);
 
   const isLoading = tripsLoading || expensesLoading || reactionsLoading;
+
+  // Pull-to-refresh (X3.1): refetch every source, including the per-trip
+  // place lists that name the catalog rows. allSettled — one failing source
+  // must not leave the spinner stuck.
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        tripsQuery.refetch(),
+        expensesQuery.refetch(),
+        reactionsQuery.refetch(),
+        statsQuery.refetch(),
+        ...placeQueryResults.map((q) => q.refetch()),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [tripsQuery, expensesQuery, reactionsQuery, statsQuery, placeQueryResults]);
   const hasNoTrips = !isLoading && allTrips.length === 0;
   const hasNoData =
     !isLoading &&
@@ -302,25 +329,39 @@ export default function AnalyticsScreen() {
     : windowWidth - 48; // subtract padding
 
   // ── Liked/disliked bar chart — render two bars per trip ──────────────────
-  // We flatten the grouped data into alternating like/dislike bars,
-  // color-coding each pair. Gap rows help visual separation.
+  // We flatten the grouped data into alternating like/dislike bars. X3.1:
+  // liked = success, didn't like = danger in every pair (the legend explains
+  // both); the trip title labels the pair once. The old per-bar "Title 👍"
+  // labels were cut to 9 chars by the chart, so the emoji never showed.
   const reactionBarData = useMemo(
     () =>
       reactionsByTrip.flatMap((r) => [
-        { label: `${r.tripTitle.slice(0, 8)} 👍`, value: r.liked, color: dayColor(r.colorIndex) },
-        { label: `${r.tripTitle.slice(0, 8)} 👎`, value: r.disliked, color: '#F87171' },
+        { label: r.tripTitle, value: r.liked, color: t.colors.success },
+        { label: '', value: r.disliked, color: t.colors.danger },
       ]),
-    [reactionsByTrip],
+    [reactionsByTrip, t],
   );
 
   return (
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 24 }}>
+      <ScrollView
+        contentContainerStyle={[
+          { padding: t.spacing.lg, gap: t.spacing.xl },
+          isDesktop && styles.desktopColumn,
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void onRefresh()}
+            {...themedRefresh(t)}
+          />
+        }
+      >
         <Heading level={1}>Insights</Heading>
 
         {/* Loading state */}
         {isLoading ? (
-          <View style={[styles.skeleton, { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.md }]} />
+          <InsightsSkeleton />
         ) : hasNoTrips ? (
           // Empty state — zero trips
           <View style={styles.emptyContainer}>
@@ -342,11 +383,11 @@ export default function AnalyticsScreen() {
           </View>
         ) : (
           // ── Charts ──────────────────────────────────────────────────────
-          <View style={[styles.chartsContainer, isDesktop && styles.chartsDesktop]}>
+          <View style={styles.chartsContainer}>
 
             {/* Chart 1: Spending per trip */}
             {spendingPerTrip.length > 0 ? (
-              <ChartCard title="Spending per trip" t={t}>
+              <ChartCard title="Spending per trip">
                 <BarChart
                   data={spendingPerTrip}
                   width={chartContainerWidth}
@@ -358,7 +399,7 @@ export default function AnalyticsScreen() {
 
             {/* Chart 2: Spending by category */}
             {spendingByCategory.length > 0 ? (
-              <ChartCard title="Spending by category" t={t}>
+              <ChartCard title="Spending by category">
                 <PieChart
                   data={spendingByCategory}
                   size={Math.min(160, chartContainerWidth * 0.5)}
@@ -368,7 +409,8 @@ export default function AnalyticsScreen() {
 
             {/* Chart 3: Liked vs disliked per trip */}
             {reactionsByTrip.length > 0 ? (
-              <ChartCard title="Liked vs didn't like per trip" t={t}>
+              <ChartCard title="Liked vs didn't like per trip">
+                <ReactionLegend />
                 <BarChart
                   data={reactionBarData}
                   width={chartContainerWidth}
@@ -381,7 +423,7 @@ export default function AnalyticsScreen() {
 
             {/* Chart 4: Spending over time */}
             {spendingOverTime.length >= 3 ? (
-              <ChartCard title="Spending over time" t={t}>
+              <ChartCard title="Spending over time">
                 <LineChart
                   data={spendingOverTime}
                   width={chartContainerWidth}
@@ -393,30 +435,30 @@ export default function AnalyticsScreen() {
 
             {/* Textual catalogs */}
             {topLiked.length > 0 ? (
-              <ChartCard title="Most liked places" t={t}>
+              <ChartCard title="Most liked places">
                 {topLiked.map((item) => (
                   <PlaceCatalogRow
                     key={item.id}
                     title={item.meta?.title ?? 'Unknown'}
                     tripTitle={item.meta?.tripTitle ?? ''}
                     dayIndex={item.meta?.dayIndex ?? null}
-                    badge={`👍 ${item.count}`}
-                    t={t}
+                    count={item.count}
+                    kind="liked"
                   />
                 ))}
               </ChartCard>
             ) : null}
 
             {topDisliked.length > 0 ? (
-              <ChartCard title="Places you didn't like" t={t}>
+              <ChartCard title="Places you didn't like">
                 {topDisliked.map((item) => (
                   <PlaceCatalogRow
                     key={item.id}
                     title={item.meta?.title ?? 'Unknown'}
                     tripTitle={item.meta?.tripTitle ?? ''}
                     dayIndex={item.meta?.dayIndex ?? null}
-                    badge={`👎 ${item.count}`}
-                    t={t}
+                    count={item.count}
+                    kind="disliked"
                   />
                 ))}
               </ChartCard>
@@ -444,81 +486,6 @@ export default function AnalyticsScreen() {
   );
 }
 
-// ── ChartCard ─────────────────────────────────────────────────────────────────
-
-function ChartCard({
-  title,
-  children,
-  t,
-}: {
-  title: string;
-  children: React.ReactNode;
-  t: ReturnType<typeof useTheme>;
-}) {
-  return (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: t.colors.bgElevated,
-          borderColor: t.colors.border,
-          borderRadius: t.radius.lg,
-          padding: 16,
-          gap: 12,
-          ...t.shadows.sm(t.colors.shadowColor),
-        },
-      ]}
-    >
-      <Text
-        style={[t.typography.subtitle, { color: t.colors.text }]}
-        accessibilityRole="header"
-        aria-level={2}
-      >
-        {title}
-      </Text>
-      {children}
-    </View>
-  );
-}
-
-// ── PlaceCatalogRow ───────────────────────────────────────────────────────────
-
-function PlaceCatalogRow({
-  title,
-  tripTitle,
-  dayIndex,
-  badge,
-  t,
-}: {
-  title: string;
-  tripTitle: string;
-  dayIndex: number | null;
-  badge: string;
-  t: ReturnType<typeof useTheme>;
-}) {
-  return (
-    <View style={styles.catalogRow}>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
-          {title}
-        </Text>
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={1}>
-          {tripTitle}
-          {dayIndex !== null ? ` · Day ${dayIndex + 1}` : ''}
-        </Text>
-      </View>
-      <View
-        style={[
-          styles.catalogBadge,
-          { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill },
-        ]}
-      >
-        <Text style={[t.typography.caption, { color: t.colors.text }]}>{badge}</Text>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center',
@@ -528,29 +495,6 @@ const styles = StyleSheet.create({
   chartsContainer: {
     gap: 20,
   },
-  chartsDesktop: {
-    // On desktop we let cards flow in a single column but they'll be wider
-    // due to chartContainerWidth being half the window. Two-column layout
-    // would require a wrapping grid; single column is simpler and still
-    // good on desktop at 560px card width.
-  },
-  card: {
-    borderWidth: 1,
-  },
-  skeleton: {
-    height: 200,
-    width: '100%',
-    opacity: 0.5,
-  },
-  catalogRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  catalogBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
+  // Desktop: one centered reading column (charts are sized to ≤560px).
+  desktopColumn: { width: '100%', maxWidth: 720, alignSelf: 'center' },
 });

@@ -7,6 +7,7 @@
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
 
 interface TabBarProps<T extends string> {
   tabs: Array<{ key: T; label: string }>;
@@ -36,7 +37,10 @@ export function TabBar<T extends string>({ tabs, activeKey, onSelect }: TabBarPr
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             accessibilityLabel={tab.label}
-            onPress={() => onSelect(tab.key)}
+            onPress={() => {
+              if (!active) haptics.select();
+              onSelect(tab.key);
+            }}
             style={({ pressed }) => [
               styles.tab,
               {
@@ -54,7 +58,7 @@ export function TabBar<T extends string>({ tabs, activeKey, onSelect }: TabBarPr
               style={[
                 active ? t.typography.bodyStrong : t.typography.body,
                 {
-                  color: active ? t.colors.primary : t.colors.textMuted,
+                  color: active ? t.colors.primaryInk : t.colors.textMuted,
                   fontSize: 15,
                   fontWeight: active ? '700' : '500',
                   textAlign: 'center',
@@ -79,7 +83,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 40,
+    minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 8,
   },

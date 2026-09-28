@@ -66,6 +66,7 @@ import {
   SkeletonGroup,
   SyncStatusPill,
   TAB_SCREEN_EDGES,
+  themedRefresh,
 } from '@/components';
 import { noTrips } from '@/components/emptyStates';
 import { TripCard } from '@/components/TripCard';
@@ -268,7 +269,8 @@ export default function TripsList() {
     <View style={{ gap: t.spacing.sm, alignItems: 'center' }}>
       <Button
         variant="secondary"
-        label="🧳 Try a sample trip"
+        label="Try a sample trip"
+        leftIcon={<Icon name="luggage" size={18} />}
         fullWidth={false}
         loading={sampleTrip.isCreating}
         onPress={handleSampleTrip}
@@ -324,13 +326,9 @@ export default function TripsList() {
       padding: 0,
     },
     clearBtn: {
-      paddingHorizontal: t.spacing.xs,
-      paddingVertical: t.spacing.xs,
-    },
-    clearBtnText: {
-      ...(t.typography.bodyStrong as object),
-      color: t.colors.textMuted,
-      lineHeight: 20,
+      padding: t.spacing.xs,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     sortBtn: {
       alignItems: 'center',
@@ -414,9 +412,9 @@ export default function TripsList() {
               accessibilityRole="button"
               accessibilityLabel="Clear search"
               style={({ pressed }) => [s.clearBtn, { opacity: pressed ? 0.5 : 1 }]}
-              hitSlop={8}
+              hitSlop={10}
             >
-              <Text style={s.clearBtnText}>✕</Text>
+              <Icon name="x" size={18} color={t.colors.textMuted} />
             </Pressable>
           ) : null}
         </View>
@@ -477,7 +475,7 @@ export default function TripsList() {
   );
 
   // ── Reusable list-area fragments ──────────────────────────────────────────
-  const refreshControl = <RefreshControl refreshing={isRefetching} onRefresh={refetch} />;
+  const refreshControl = <RefreshControl refreshing={isRefetching} onRefresh={refetch} {...themedRefresh(t)} />;
   const gridGutter = t.spacing.md;
 
   // Desktop grid: no flex `gap` (percentage widths + gap overflow and wrap to
@@ -701,23 +699,24 @@ function EdgeRuntimeBanner({ onDismiss }: { onDismiss: () => void }) {
       style={[
         edgeBannerStyles.banner,
         {
-          backgroundColor: t.colors.dangerLight ?? '#FEF2F2',
+          backgroundColor: t.colors.dangerLight,
           borderColor: t.colors.danger,
           borderRadius: t.radius.md,
         },
       ]}
     >
+      <Icon name="alert-triangle" size={16} color={t.colors.danger} />
       <Text
         style={[t.typography.caption, { color: t.colors.danger, flex: 1 }]}
         accessibilityLiveRegion="polite"
       >
-        {'⚠️ Local Edge Functions not reachable. Run `npx supabase functions serve` in another terminal.'}
+        {'Local Edge Functions not reachable. Run `npx supabase functions serve` in another terminal.'}
       </Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Dismiss Edge Functions warning"
         onPress={onDismiss}
-        hitSlop={8}
+        hitSlop={12}
         style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
       >
         <Text style={[t.typography.caption, { color: t.colors.danger, fontWeight: '600' }]}>

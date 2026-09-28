@@ -18,6 +18,7 @@ import { useTheme } from '@/theme';
 import { TodayAction } from './TodayAction';
 import { approxTravelMinutes, formatMinutesLeft, type LatLng, type NextStopResult } from './todayPlan';
 import { useTodayCardStyle } from './todayStyles';
+import { useLocationExplainer } from '@/components/permissions';
 
 export interface NextStopPlace {
   id: string;
@@ -47,6 +48,8 @@ export interface NextStopCardProps {
 export function NextStopCard(props: NextStopCardProps) {
   const t = useTheme();
   const card = useTodayCardStyle();
+  // v2 M4 X3.2: explain before the OS prompt.
+  const locationExplainer = useLocationExplainer({ reason: 'distance', onProceed: props.onRequestLocation });
   const { result, place } = props;
 
   const secondaryActions = (
@@ -68,7 +71,7 @@ export function NextStopCard(props: NextStopCardProps) {
     const finished = result.kind === 'finished';
     return (
       <View style={card}>
-        <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+        <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
           {finished ? 'Day complete' : 'Free day'}
         </Text>
         <Text style={[t.typography.subtitle, { color: t.colors.text }]} accessibilityRole="header" aria-level={2}>
@@ -98,7 +101,7 @@ export function NextStopCard(props: NextStopCardProps) {
 
   return (
     <View style={card}>
-      <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+      <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
         {phase === 'late' ? 'Running late' : phase === 'now' ? "You're here now" : 'Next stop'}
       </Text>
       <Text
@@ -135,7 +138,7 @@ export function NextStopCard(props: NextStopCardProps) {
           label="How far am I?"
           icon="map-pin"
           variant="ghost"
-          onPress={props.onRequestLocation}
+          onPress={locationExplainer.ask}
           accessibilityHint="Uses your location once to estimate the distance. Nothing is sent anywhere."
         />
       ) : props.locationStatus === 'requesting' ? (
@@ -143,6 +146,7 @@ export function NextStopCard(props: NextStopCardProps) {
           Finding you…
         </Text>
       ) : null}
+      {locationExplainer.sheet}
 
       <TodayAction
         label="Navigate"

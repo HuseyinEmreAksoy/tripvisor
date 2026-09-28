@@ -4,6 +4,7 @@ import {
   PENDING_REDIRECT_KEY,
   PENDING_REDIRECT_TTL_MS,
   isSafeRedirectPath,
+  parsePendingRedirect,
   setPendingRedirect,
   takePendingRedirect,
 } from '../pendingRedirect';
@@ -62,5 +63,21 @@ describe('set / take', () => {
     const [a, b] = await Promise.all([takePendingRedirect(), takePendingRedirect()]);
     expect(a).toBe('/invite/x');
     expect(b).toBe('/invite/x');
+  });
+});
+
+describe('parsePendingRedirect', () => {
+  it('returns the path for a fresh, safe entry without touching storage', async () => {
+    const raw = JSON.stringify({ path: '/invite/x', at: Date.now() });
+    await AsyncStorage.setItem(PENDING_REDIRECT_KEY, raw);
+    expect(parsePendingRedirect(raw)).toBe('/invite/x');
+    expect(await AsyncStorage.getItem(PENDING_REDIRECT_KEY)).toBe(raw);
+  });
+
+  it('rejects stale, unsafe and unparseable entries', () => {
+    expect(parsePendingRedirect(JSON.stringify({ path: '/invite/x', at: Date.now() - PENDING_REDIRECT_TTL_MS - 1 }))).toBeNull();
+    expect(parsePendingRedirect(JSON.stringify({ path: '//evil.com', at: Date.now() }))).toBeNull();
+    expect(parsePendingRedirect(JSON.stringify({ path: '/invite/x' }))).toBeNull();
+    expect(parsePendingRedirect('{')).toBeNull();
   });
 });

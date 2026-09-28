@@ -33,7 +33,7 @@ import { useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
-import { BackButton, Button, Screen } from '@/components';
+import { BackButton, Button, Icon, KeyboardAvoid, Screen } from '@/components';
 import { Skeleton, SkeletonGroup } from '@/components/Skeleton';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -223,174 +223,181 @@ export default function PackingScreen() {
 
   return (
     <Screen padded={false}>
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[
-          { padding: t.spacing.lg, gap: t.spacing.lg },
-          isDesktop && { maxWidth: PACKING_MAX_WIDTH, alignSelf: 'center', width: '100%' },
-        ]}
-      >
-        <BackButton onPress={goBack} label="Trip" />
+      <KeyboardAvoid>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[
+            { padding: t.spacing.lg, gap: t.spacing.lg },
+            isDesktop && { maxWidth: PACKING_MAX_WIDTH, alignSelf: 'center', width: '100%' },
+          ]}
+        >
+          <BackButton onPress={goBack} label="Trip" />
 
-        {/* ── Header: title + progress ─────────────────────────────────── */}
-        <View style={{ gap: t.spacing.xs }}>
-          <Text
-            style={[t.typography.title, { color: t.colors.text }]}
-            accessibilityRole="header"
-            aria-level={1}
-          >
-            🧳 Packing list
-          </Text>
-          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{trip.title}</Text>
-          {items.length > 0 ? (
-            <View style={{ gap: t.spacing.xs, paddingTop: t.spacing.xs }}>
-              <View style={styles.progressHead}>
+          {/* ── Header: title + progress ─────────────────────────────────── */}
+          <View style={{ gap: t.spacing.xs }}>
+            <View style={styles.titleRow}>
+              <Icon name="luggage" size={26} color={t.colors.primary} />
+              <Text
+                style={[t.typography.title, { color: t.colors.text, flexShrink: 1 }]}
+                accessibilityRole="header"
+                aria-level={1}
+              >
+                Packing list
+              </Text>
+            </View>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{trip.title}</Text>
+            {items.length > 0 ? (
+              <View style={{ gap: t.spacing.xs, paddingTop: t.spacing.xs }}>
+                <View style={styles.progressHead}>
+                  <View style={styles.progressLabel}>
+                    {allPacked ? <Icon name="circle-check" size={16} color={t.colors.success} /> : null}
+                    <Text
+                      style={[t.typography.caption, { color: allPacked ? t.colors.success : t.colors.text, fontWeight: '600', flexShrink: 1 }]}
+                      accessibilityLiveRegion="polite"
+                    >
+                      {allPacked ? `All ${items.length} packed — you're ready!` : `${checkedCount} of ${items.length} packed`}
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityLabel="Hide packed items"
+                    accessibilityState={{ checked: hidePacked }}
+                    onPress={() => {
+                      haptics.select();
+                      setHidePacked((v) => !v);
+                    }}
+                    hitSlop={6}
+                    style={({ pressed }) => [
+                      styles.toggle,
+                      {
+                        borderColor: hidePacked ? t.colors.primary : t.colors.border,
+                        backgroundColor: hidePacked ? t.colors.gradientSubtle : 'transparent',
+                        borderRadius: t.radius.pill,
+                        opacity: pressed ? 0.7 : 1,
+                      },
+                      Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+                    ]}
+                  >
+                    {hidePacked ? <Icon name="check" size={14} color={t.colors.primaryInk} /> : null}
+                    <Text style={[t.typography.small, { color: hidePacked ? t.colors.primaryInk : t.colors.textMuted, fontWeight: '600' }]}>
+                      {hidePacked ? 'Hiding packed' : 'Hide packed'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View
+                  style={[styles.progressTrack, { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill }]}
+                  accessibilityRole="progressbar"
+                  accessibilityLabel="Packing progress"
+                  accessibilityValue={{ min: 0, max: 100, now: progressPct }}
+                >
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        backgroundColor: allPacked ? t.colors.success : t.colors.primary,
+                        borderRadius: t.radius.pill,
+                        width: `${progressPct}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          {itemsError ? (
+            <Text style={[t.typography.body, { color: t.colors.danger }]}>
+              Couldn't load your packing list. Please try again.
+            </Text>
+          ) : null}
+
+          {/* ── Suggest (editors only) ───────────────────────────────────── */}
+          {canEditTrip ? (
+            <View style={{ gap: t.spacing.xs }}>
+              {items.length === 0 ? (
+                <Button
+                  label="✨ Suggest items"
+                  variant="secondary"
+                  onPress={() => void handleSuggest()}
+                  loading={createItems.isPending}
+                  disabled={createItems.isPending}
+                  accessibilityLabel="Suggest packing items based on your trip dates and the weather"
+                />
+              ) : (
+                <PackingSuggestionChips
+                  chips={pending.slice(0, MAX_SUGGESTION_CHIPS)}
+                  totalPending={pending.length}
+                  onAddOne={(s) => void handleAddSuggestion(s)}
+                  onAddAll={() => void handleSuggest()}
+                  disabled={createItems.isPending}
+                />
+              )}
+              {suggestNote ? (
                 <Text
-                  style={[t.typography.caption, { color: allPacked ? t.colors.success : t.colors.text, fontWeight: '600', flexShrink: 1 }]}
+                  style={[t.typography.caption, { color: t.colors.textMuted }]}
                   accessibilityLiveRegion="polite"
                 >
-                  {allPacked ? `All ${items.length} packed — you're ready! 🎉` : `${checkedCount} of ${items.length} packed`}
+                  {suggestNote}
                 </Text>
-                <Pressable
-                  accessibilityRole="switch"
-                  accessibilityLabel="Hide packed items"
-                  accessibilityState={{ checked: hidePacked }}
-                  onPress={() => {
-                    haptics.select();
-                    setHidePacked((v) => !v);
-                  }}
-                  hitSlop={6}
-                  style={({ pressed }) => [
-                    styles.toggle,
-                    {
-                      borderColor: hidePacked ? t.colors.primary : t.colors.border,
-                      backgroundColor: hidePacked ? t.colors.gradientSubtle : 'transparent',
-                      borderRadius: t.radius.pill,
-                      opacity: pressed ? 0.7 : 1,
-                    },
-                    Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
-                  ]}
-                >
-                  <Text style={[t.typography.small, { color: hidePacked ? t.colors.primary : t.colors.textMuted, fontWeight: '600' }]}>
-                    {hidePacked ? '✓ Hiding packed' : 'Hide packed'}
-                  </Text>
-                </Pressable>
-              </View>
-              <View
-                style={[styles.progressTrack, { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill }]}
-                accessibilityRole="progressbar"
-                accessibilityLabel="Packing progress"
-                accessibilityValue={{ min: 0, max: 100, now: progressPct }}
-              >
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      backgroundColor: allPacked ? t.colors.success : t.colors.primary,
-                      borderRadius: t.radius.pill,
-                      width: `${progressPct}%`,
-                    },
-                  ]}
-                />
-              </View>
+              ) : null}
             </View>
           ) : null}
-        </View>
 
-        {itemsError ? (
-          <Text style={[t.typography.body, { color: t.colors.danger }]}>
-            Couldn't load your packing list. Please try again.
-          </Text>
-        ) : null}
-
-        {/* ── Suggest (editors only) ───────────────────────────────────── */}
-        {canEditTrip ? (
-          <View style={{ gap: t.spacing.xs }}>
-            {items.length === 0 ? (
-              <Button
-                label="✨ Suggest items"
-                variant="secondary"
-                onPress={() => void handleSuggest()}
-                loading={createItems.isPending}
-                disabled={createItems.isPending}
-                accessibilityLabel="Suggest packing items based on your trip dates and the weather"
-              />
-            ) : (
-              <PackingSuggestionChips
-                chips={pending.slice(0, MAX_SUGGESTION_CHIPS)}
-                totalPending={pending.length}
-                onAddOne={(s) => void handleAddSuggestion(s)}
-                onAddAll={() => void handleSuggest()}
-                disabled={createItems.isPending}
-              />
-            )}
-            {suggestNote ? (
-              <Text
-                style={[t.typography.caption, { color: t.colors.textMuted }]}
-                accessibilityLiveRegion="polite"
-              >
-                {suggestNote}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* ── Empty state / grouped checklist ──────────────────────────── */}
-        {items.length === 0 ? (
-          <View
-            style={[
-              styles.emptyCard,
-              {
-                backgroundColor: t.colors.bgElevated,
-                borderColor: t.colors.border,
-                borderRadius: t.radius.md,
-                padding: t.spacing.lg,
-                gap: t.spacing.xs,
-              },
-            ]}
-          >
-            <Text style={styles.emptyEmoji} accessibilityElementsHidden importantForAccessibility="no">
-              🧳
-            </Text>
-            <Text style={[t.typography.bodyStrong, { color: t.colors.text, textAlign: 'center' }]}>
-              Nothing on the list yet
-            </Text>
-            <Text
-              style={[t.typography.caption, { color: t.colors.textMuted, textAlign: 'center', lineHeight: 18 }]}
+          {/* ── Empty state / grouped checklist ──────────────────────────── */}
+          {items.length === 0 ? (
+            <View
+              style={[
+                styles.emptyCard,
+                {
+                  backgroundColor: t.colors.bgElevated,
+                  borderColor: t.colors.border,
+                  borderRadius: t.radius.md,
+                  padding: t.spacing.lg,
+                  gap: t.spacing.xs,
+                },
+              ]}
             >
-              {canEditTrip
-                ? 'Start from smart suggestions based on your trip dates and the weather, or add your own items below.'
-                : 'The trip owner hasn’t added any packing items yet.'}
-            </Text>
-          </View>
-        ) : (
-          <>
-            {groupViews.length === 0 ? (
-              <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-                Everything is packed. Turn off “Hide packed” to see the full list.
+              <Icon name="luggage" size={40} color={t.colors.primary} />
+              <Text style={[t.typography.bodyStrong, { color: t.colors.text, textAlign: 'center' }]}>
+                Nothing on the list yet
               </Text>
-            ) : null}
-            {groupViews.map((group) => (
-              <PackingCategorySection
-                key={group.key}
-                group={group}
-                collapsed={collapsed.has(group.key)}
-                onToggleCollapsed={() => toggleCollapsed(group.key)}
-                canEdit={canEditTrip}
-                onToggleItem={(item, checked) => {
-                  if (id) updateItem.mutate({ itemId: item.id, tripId: id, patch: { checked } });
-                }}
-                onDeleteItem={(item) => void handleDelete(item)}
-              />
-            ))}
-          </>
-        )}
+              <Text
+                style={[t.typography.caption, { color: t.colors.textMuted, textAlign: 'center', lineHeight: 18 }]}
+              >
+                {canEditTrip
+                  ? 'Start from smart suggestions based on your trip dates and the weather, or add your own items below.'
+                  : 'The trip owner hasn’t added any packing items yet.'}
+              </Text>
+            </View>
+          ) : (
+            <>
+              {groupViews.length === 0 ? (
+                <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
+                  Everything is packed. Turn off “Hide packed” to see the full list.
+                </Text>
+              ) : null}
+              {groupViews.map((group) => (
+                <PackingCategorySection
+                  key={group.key}
+                  group={group}
+                  collapsed={collapsed.has(group.key)}
+                  onToggleCollapsed={() => toggleCollapsed(group.key)}
+                  canEdit={canEditTrip}
+                  onToggleItem={(item, checked) => {
+                    if (id) updateItem.mutate({ itemId: item.id, tripId: id, patch: { checked } });
+                  }}
+                  onDeleteItem={(item) => void handleDelete(item)}
+                />
+              ))}
+            </>
+          )}
 
-        {/* ── Manual add (editors only) ────────────────────────────────── */}
-        {canEditTrip ? (
-          <AddPackingItemRow onAdd={handleAdd} pending={createItems.isPending} />
-        ) : null}
-      </ScrollView>
+          {/* ── Manual add (editors only) ────────────────────────────────── */}
+          {canEditTrip ? (
+            <AddPackingItemRow onAdd={handleAdd} pending={createItems.isPending} />
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoid>
     </Screen>
   );
 }
@@ -399,7 +406,16 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, overflow: 'hidden' },
   progressFill: { height: 8 },
   progressHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  toggle: { borderWidth: 1.5, paddingHorizontal: 12, minHeight: 32, justifyContent: 'center' },
+  toggle: {
+    borderWidth: 1.5,
+    paddingHorizontal: 12,
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    justifyContent: 'center',
+  },
   emptyCard: { borderWidth: 1, alignItems: 'center' },
-  emptyEmoji: { fontSize: 40, lineHeight: 48 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  progressLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
 });

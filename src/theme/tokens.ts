@@ -169,6 +169,11 @@ export const lightColors = {
   primaryLight: '#2BAD9E',
   primaryDark: '#0A6A5F',
   primaryText: '#FFFFFF',
+  // primaryInk: teal for TEXT on page surfaces (links, text buttons, counts).
+  // `primary` itself is 4.2:1 on the paper bg and 3.8:1 on bgMuted — fine for
+  // fills/icons/large text, short of AA for body text (X3.1 audit). 6.0:1 on
+  // bg, 5.4:1 on bgMuted, 6.5:1 on white.
+  primaryInk: '#0A6A5F',
 
   // Accent — sunset terracotta (4.9:1 with white label text)
   accent: '#C8431D',
@@ -178,6 +183,8 @@ export const lightColors = {
   // Semantic
   danger: '#B73232',
   dangerLight: '#FAE6E1',
+  // Label text on a solid `danger` fill (6.0:1).
+  dangerText: '#FFFFFF',
   success: '#177A4C',
   successLight: '#DDF2E4',
   warning: '#B45309',
@@ -189,8 +196,22 @@ export const lightColors = {
   info: '#2767C4',
   infoLight: '#E3EDFB',
 
-  // Attribution
-  attribution: '#8E8478',
+  // Attribution — X3.1: darkened from #8E8478 (3.4:1) so the small photo /
+  // review credits hold AA (4.8:1 on bg, 5.1:1 on white).
+  attribution: '#766C60',
+
+  // Modal scrim behind sheets and dialogs.
+  scrim: 'rgba(18, 14, 10, 0.42)',
+
+  // Chart category palette (X3.1). Each is ≥5:1 against bgElevated, so
+  // slices and bars clear WCAG 1.4.11 (non-text 3:1) with margin. The keys
+  // mirror TripExpenseCategory.
+  chartAccommodation: '#5B5BD6',
+  chartFood: '#B45309',
+  chartTransport: '#2767C4',
+  chartShopping: '#C0307A',
+  chartActivities: '#177A4C',
+  chartOther: '#6C6155',
 
   // Gradients (teal sea → terracotta sunset) — v3: wash strengthened to 0.10
   gradientStart: '#0C8578',
@@ -247,6 +268,7 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   primaryLight: '#7BE0D2',
   primaryDark: '#2AA193',
   primaryText: '#06231E',
+  primaryInk: '#3ECCBB',
 
   // Accent — glowing sunset coral (dark-ink label text)
   accent: '#FF8B62',
@@ -256,6 +278,8 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   // Semantic
   danger: '#F07A6A',
   dangerLight: 'rgba(240, 122, 106, 0.16)',
+  // White on the light-coral dark `danger` is only 2.7:1; dark ink is 6.6:1.
+  dangerText: '#2B0E0A',
   success: '#52CE8D',
   successLight: 'rgba(82, 206, 141, 0.16)',
   warning: '#F5B83D',
@@ -265,8 +289,18 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   info: '#6FA8F5',
   infoLight: 'rgba(111, 168, 245, 0.16)',
 
-  // Attribution
-  attribution: '#7D746A',
+  // Attribution — X3.1: lifted from #7D746A (3.7:1 on cards) to 5.5:1.
+  attribution: '#9A9082',
+
+  scrim: 'rgba(0, 0, 0, 0.6)',
+
+  // Chart category palette — each ≥6:1 against the dark bgElevated.
+  chartAccommodation: '#9B9BF5',
+  chartFood: '#F5B83D',
+  chartTransport: '#6FA8F5',
+  chartShopping: '#F07AB8',
+  chartActivities: '#52CE8D',
+  chartOther: '#A89E8E',
 
   // Gradients
   gradientStart: '#3ECCBB',

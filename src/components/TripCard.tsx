@@ -18,6 +18,7 @@ import { useRef, useState, type ComponentProps } from 'react';
 import { Animated, Image, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 import { StatusPill } from './StatusPill';
+import { Icon, type IconName } from './Icon';
 import { TripActionsSheet } from './TripActionsSheet';
 import { usePlaceDetails } from '@/api/places';
 import { usePlacePhotoUrl } from '@/api/place-photos';
@@ -33,10 +34,11 @@ export interface TripCardProps {
   onDelete?: (id: string) => void;
 }
 
-const TRANSPORT_EMOJI: Record<string, string> = {
-  driving: '🚗',
-  walking: '🚶',
-  transit: '🚆',
+const TRANSPORT_ICON: Record<string, IconName> = {
+  driving: 'car',
+  walking: 'footprints',
+  bicycling: 'bike',
+  transit: 'train-front',
 };
 
 const COVER_HEIGHT = 150;
@@ -97,7 +99,7 @@ function InitialPlaceholder({ title }: { title: string }) {
       importantForAccessibility="no"
       aria-hidden
     >
-      <Text style={[styles.placeholderInitial, { color: t.colors.primary }]}>{initial}</Text>
+      <Text style={[styles.placeholderInitial, { color: t.colors.primaryInk }]}>{initial}</Text>
     </View>
   );
 }
@@ -143,7 +145,7 @@ export function TripCard({
     setSheetOpen(true);
   };
 
-  const transportEmoji = TRANSPORT_EMOJI[trip.transport_mode] ?? '🚗';
+  const transportIcon = TRANSPORT_ICON[trip.transport_mode] ?? 'car';
 
   return (
     <>
@@ -194,8 +196,9 @@ export function TripCard({
                 </Text>
                 {dateRange ? (
                   <View style={styles.dateRow}>
+                    <Icon name="calendar" size={13} color={t.colors.textMuted} />
                     <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                      📅 {dateRange}
+                      {dateRange}
                     </Text>
                   </View>
                 ) : null}
@@ -231,8 +234,9 @@ export function TripCard({
                   paddingVertical: 4,
                 },
               ]}>
-                <Text style={[t.typography.small, { color: t.colors.primary, fontWeight: '700' }]}>
-                  {transportEmoji} {trip.daily_hours_budget}h / day · {trip.transport_mode}
+                <Icon name={transportIcon} size={13} color={t.colors.primaryInk} />
+                <Text style={[t.typography.small, { color: t.colors.primaryInk, fontWeight: '700' }]}>
+                  {trip.daily_hours_budget}h / day · {trip.transport_mode}
                 </Text>
               </View>
 
@@ -288,6 +292,7 @@ const styles = StyleSheet.create({
   dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
     marginTop: 2,
   },
   overflowTrigger: {
@@ -308,5 +313,6 @@ const styles = StyleSheet.create({
   metaPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
   },
 });

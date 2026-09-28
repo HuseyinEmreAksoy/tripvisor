@@ -1,339 +1,237 @@
 /**
- * app/share/[token].tsx — Public read-only trip view.
+ * app/share/[token].tsx — public, read-only trip page (mobile-first).
  *
- * This route requires NO authentication. It is reachable via:
- *   Web:    https://<domain>/share/<token>
- *   Native: tripvisor://share/<token>  (deep-link via Expo Router + scheme in app.json)
+ * NO authentication: reachable at https://<domain>/share/<token> and via the
+ * tripvisor://share/<token> deep link. Nothing here reads the session.
  *
- * Renders a read-only trip — no edit affordances anywhere:
- *   - No drag handles
- *   - No visit-duration steppers
- *   - No "Add a place" / "Delete" / "Settings" controls
+ * Layout
+ *   Phone/tablet: top bar (brand · Share) → hero (title, dates, stats) →
+ *   day tabs (Overview / Day 1…) → map for the selected day → timeline →
+ *   "Powered by Google" → "Plan your own trip" CTA.
+ *   Desktop (≥1024): scrolling itinerary column on the left, full-height map
+ *   on the right.
  *
- * Google ToS compliance:
- *   - Only renders place names, lat/lng, and day assignments (safe to display publicly).
- *   - Reviews, photos, ratings, and opening hours are NEVER fetched by useSharedTrip.
- *   - PoweredByGoogle is rendered in the footer when any place data is present.
+ * Google ToS: `useSharedTrip` returns only Tier-1 trip fields (user titles,
+ * lat/lng, day assignment, durations, user notes, cached legs). No reviews,
+ * photos, ratings or hours are fetched, nothing is persisted, and
+ * `google_place_id` is never rendered. "Powered by Google" is shown whenever
+ * place data renders.
  *
- * API contract assumed (to verify against backend-specialist's src/api/share.ts):
- *   useSharedTrip(token) → UseQueryResult<SharedTrip | null, Error>
- *   where SharedTrip = {
- *     trip: { title, start_date, end_date, daily_hours_budget, transport_mode }
- *     places: Array<{ id, user_title, lat, lng, day_index, order_in_day, visit_duration_minutes }>
- *     legs:   Array<{ id, day_index, from_place_id, to_place_id, duration_seconds, distance_meters, polyline }>
- *   }
- *
- * Open Graph / Twitter card meta tags (web only):
- *   - Rendered by <SharedTripHead> once trip data is loaded so crawlers/unfurlers
- *     see real trip data rather than loading-state placeholders.
- *   - Follows the same require()-at-runtime pattern from app/(app)/trip/[id]/print.tsx
- *     to keep expo-router/head out of the native bundle entirely.
- *   - No og:image — "summary" card variant is used (no image required by Slack/Twitter).
+ * OG/Twitter meta: <SharedTripHead> (web only), mounted once data loads.
  */
-import { useMemo } from 'react';
-import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
+import { Icon } from '@/components/Icon';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
-import { Map } from '@/components/Map';
-import { decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
+import { Screen } from '@/components/Screen';
+import { Map as TripMap, decodePolyline, type MapMarker, type MapPolyline } from '@/components/Map';
+import { buildAppUrl, useShareAction } from '@/components/share';
+import { SharedDayTabs } from '@/components/share/SharedDayTabs';
+import { SharedTimeline } from '@/components/share/SharedTimeline';
+import { SharedTripHead } from '@/components/share/SharedTripHead';
+import {
+  buildDayTabs,
+  formatTripRange,
+  groupByDay,
+  indexLegs,
+  tripDayCount,
+  type DayKey,
+} from '@/components/share/sharedTripModel';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTheme } from '@/theme';
-// Will resolve once backend-specialist lands src/api/share.ts
 import { useSharedTrip } from '@/api/share';
-import { buildSummary } from '@/lib/buildSummary';
-import type { SharedTripMeta, SharedPlace } from '@/lib/buildSummary';
+import type { SharedTrip } from '@/api/types';
 
-// ── Open Graph / Twitter card head ───────────────────────────────────────────
-//
-// Web-only: injects per-trip meta tags for social unfurling (Slack, iMessage,
-// Twitter, Discord, etc.).  Follows the runtime-require pattern from print.tsx
-// so expo-router/head is never evaluated in the native bundle.
-//
-// Rendered only once `shared` data is available — we never emit meta tags in
-// loading or error states, so crawlers fall back cleanly to the root-layout
-// baseline tags rather than reading misleading or empty values.
-
-interface SharedTripHeadProps {
-  trip: SharedTripMeta;
-  places: SharedPlace[];
-}
-
-function SharedTripHead({ trip, places }: SharedTripHeadProps) {
-  // Only mount on web; returning null on native means the require() below is
-  // never reached, so expo-router/head stays out of the native bundle.
-  if (Platform.OS !== 'web') return null;
-
-  const tripTitle = trip.title || 'Untitled trip';
-  const summary = buildSummary(places, trip);
-
-  // expo-router/head.js exports `Head` as the default export only
-  // (`export { Head as default } from './build/head/ExpoHead'`).
-  // Destructuring `{ Head }` would yield `undefined` and crash this component.
-  // Fall back to `.Head` for any future SDK that might re-add a named export.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const headModule = require('expo-router/head') as {
-    default?: React.ComponentType<{ children: React.ReactNode }>;
-    Head?: React.ComponentType<{ children: React.ReactNode }>;
-  };
-  const Head = headModule.default ?? headModule.Head;
-  if (!Head) return null;
-
-  return (
-    <Head>
-      <title>{tripTitle} · Tripvisor</title>
-      <meta name="description" content={summary} />
-
-      {/* Open Graph */}
-      <meta property="og:title" content={tripTitle} />
-      <meta property="og:description" content={summary} />
-      <meta property="og:type" content="website" />
-      <meta property="og:site_name" content="Tripvisor" />
-
-      {/* Twitter card — "summary" variant (no og:image required) */}
-      <meta name="twitter:card" content="summary" />
-      <meta name="twitter:title" content={tripTitle} />
-      <meta name="twitter:description" content={summary} />
-    </Head>
-  );
-}
+const COLUMN_MAX_WIDTH = 720;
+const DESKTOP_LIST_WIDTH = 520;
 
 export default function SharedTripView() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const t = useTheme();
   const router = useRouter();
-  // Public page: the only way forward is into the app. /login bounces
+  // The only way forward from a public page is into the app. /login bounces
   // already-signed-in visitors on to /trips via the (auth) layout.
   const goPlan = () => router.push('/login');
-  const { data: shared, isLoading, isError } = useSharedTrip(token ?? '');
+  const { data: shared, isLoading, isError, refetch } = useSharedTrip(token ?? '');
 
-  // ── Loading ──────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <View style={[styles.centered, { backgroundColor: t.colors.bg }]}>
-        <ActivityIndicator size="large" color={t.colors.primary} />
-        <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.md }]}>
-          Loading trip…
-        </Text>
-      </View>
+      <Screen>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={t.colors.primary} accessibilityLabel="Loading trip" />
+          <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.md }]}>Loading trip…</Text>
+        </View>
+      </Screen>
     );
   }
 
-  // ── Error / not found (revoked or deleted) ───────────────────────────────
-  // No <SharedTripHead> here — we deliberately fall back to the root-layout
-  // baseline tags rather than advertising a deleted or invalid trip.
-  if (isError || !shared) {
+  // No <SharedTripHead> in error states — fall back to the baseline tags
+  // rather than advertising a deleted or invalid trip.
+  if (isError) {
     return (
-      <View style={[styles.centered, { backgroundColor: t.colors.bg, padding: t.spacing.xl }]}>
-        <EmptyState
-          title="Link not found"
-          body="This trip has been deleted or the share link was revoked."
-          ctaLabel="Plan your own trip"
-          onPress={goPlan}
-        />
-      </View>
+      <Screen>
+        <View style={styles.centered}>
+          <EmptyState
+            title="Couldn't load this trip"
+            body="Check your connection and try again."
+            ctaLabel="Try again"
+            onPress={() => void refetch()}
+          />
+        </View>
+      </Screen>
     );
   }
 
-  const { trip, places, legs } = shared;
+  if (!shared) {
+    return (
+      <Screen>
+        <View style={styles.centered}>
+          <EmptyState
+            title="Link not found"
+            body="This trip has been deleted or the share link was revoked."
+            ctaLabel="Plan your own trip"
+            onPress={goPlan}
+          />
+        </View>
+      </Screen>
+    );
+  }
 
+  const shareUrl = buildAppUrl(`share/${token ?? ''}`);
   return (
     <>
-      {/* Per-trip OG/Twitter meta tags — web only, no-op on native */}
-      <SharedTripHead trip={trip} places={places} />
-      <SharedTripContent
-        trip={trip}
-        places={places}
-        legs={legs}
-        onPlanOwn={goPlan}
+      <SharedTripHead
+        trip={shared.trip}
+        places={shared.places}
+        url={shareUrl.usingDeepLink ? undefined : shareUrl.url}
       />
+      <SharedTripContent shared={shared} shareUrl={shareUrl.url} onPlanOwn={goPlan} />
     </>
   );
 }
 
-// SharedTripMeta and SharedPlace are imported from @/lib/buildSummary.
-
-// ── Types inferred from expected API shape ───────────────────────────────────
-interface SharedLeg {
-  id: string;
-  day_index: number;
-  from_place_id: string;
-  to_place_id: string;
-  duration_seconds: number;
-  distance_meters: number;
-  polyline: string | null;
-}
-
-// ── Read-only content ────────────────────────────────────────────────────────
 function SharedTripContent({
-  trip,
-  places,
-  legs,
+  shared,
+  shareUrl,
   onPlanOwn,
 }: {
-  trip: SharedTripMeta;
-  places: SharedPlace[];
-  legs: SharedLeg[];
+  shared: SharedTrip;
+  shareUrl: string;
   onPlanOwn: () => void;
 }) {
   const t = useTheme();
+  const isDesktop = useBreakpoint() === 'desktop';
+  const { trip, places, legs } = shared;
+  const [selected, setSelected] = useState<DayKey>('all');
+  const { share, feedback } = useShareAction();
 
-  const markers: MapMarker[] = places.map((p) => ({
-    id: p.id,
-    lat: p.lat,
-    lng: p.lng,
-    title: p.user_title ?? 'Place',
-    dayIndex: p.day_index,
-    orderInDay: p.order_in_day,
-  }));
+  const sections = useMemo(() => groupByDay(places), [places]);
+  const tabs = useMemo(() => buildDayTabs(trip.start_date, sections), [trip.start_date, sections]);
+  const legIndex = useMemo(() => indexLegs(legs), [legs]);
+  const visibleSections = selected === 'all' ? sections : sections.filter((s) => s.dayIndex === selected);
+  const dayCount = tripDayCount(trip, sections);
 
-  const polylines: MapPolyline[] = legs
-    .filter((l) => l.polyline && l.day_index >= 0)
-    .map((l) => ({
-      id: l.id,
-      dayIndex: l.day_index,
-      points: decodePolyline(l.polyline!),
-    }));
+  const markers: MapMarker[] = useMemo(
+    () =>
+      places
+        .filter((p) => selected === 'all' || (p.day_index ?? -1) === selected)
+        .map((p) => ({
+          id: p.id,
+          lat: p.lat,
+          lng: p.lng,
+          title: p.user_title ?? 'Place',
+          dayIndex: p.day_index,
+          orderInDay: p.order_in_day,
+        })),
+    [places, selected],
+  );
+  const polylines: MapPolyline[] = useMemo(
+    () =>
+      legs
+        .filter((l) => l.polyline && l.day_index >= 0 && (selected === 'all' || l.day_index === selected))
+        .map((l) => ({ id: l.id, dayIndex: l.day_index, points: decodePolyline(l.polyline!) })),
+    [legs, selected],
+  );
 
-  const byDay = useMemo(() => groupByDay(places), [places]);
+  const title = trip.title || 'Untitled trip';
+  const onShare = () =>
+    void share({ url: shareUrl, title: `${title} · Tripvisor`, message: `Take a look at ${title} on Tripvisor.` });
 
-  const legIndex = useMemo(() => {
-    const m = new Map<string, SharedLeg>();
-    for (const l of legs) m.set(`${l.day_index}|${l.from_place_id}|${l.to_place_id}`, l);
-    return m;
-  }, [legs]);
+  // Keyed by the selected tab so the map re-fits to that day's stops.
+  const map = (
+    <View
+      style={[
+        isDesktop ? styles.desktopMap : styles.phoneMap,
+        !isDesktop && { marginHorizontal: t.spacing.lg, borderRadius: t.radius.xl, overflow: 'hidden' },
+      ]}
+      accessibilityLabel={selected === 'all' ? 'Map of the whole trip' : `Map of day ${Number(selected) + 1}`}
+    >
+      <TripMap key={String(selected)} markers={markers} polylines={polylines} />
+    </View>
+  );
 
-  return (
+  const list = (
     <ScrollView
       style={{ flex: 1, backgroundColor: t.colors.bg }}
-      contentContainerStyle={{ paddingBottom: t.spacing.huge }}
+      contentContainerStyle={[
+        { paddingBottom: t.spacing.huge, gap: t.spacing.lg },
+        !isDesktop && styles.column,
+      ]}
     >
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <View
-        style={{
-          padding: t.spacing.lg,
-          gap: t.spacing.xs,
-          borderBottomWidth: 1,
-          borderBottomColor: t.colors.border,
-        }}
-      >
+      <TopBar onShare={onShare} onPlanOwn={onPlanOwn} showPlan={isDesktop} />
+      {feedback ? (
         <Text
-          style={[t.typography.title, { color: t.colors.text }]}
-          accessibilityRole="header"
-          aria-level={1}
+          style={[t.typography.caption, { color: t.colors.textMuted, paddingHorizontal: t.spacing.lg }]}
+          accessibilityLiveRegion="polite"
         >
-          {trip.title}
+          {feedback}
         </Text>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day ·{' '}
-          {trip.transport_mode}
-        </Text>
-        {/* Read-only badge — accessibilityRole="text" + label so VoiceOver/TalkBack
-            announce this status explicitly rather than merging it into surrounding text. */}
-        <View
-          style={[
-            styles.readOnlyBadge,
-            {
-              backgroundColor: t.colors.bgMuted,
-              borderRadius: t.radius.pill,
-              borderColor: t.colors.border,
-              paddingHorizontal: t.spacing.sm,
-              paddingVertical: t.spacing.xs,
-              alignSelf: 'flex-start',
-              marginTop: t.spacing.xs,
-            },
-          ]}
-          accessibilityRole="text"
-          accessibilityLabel="This is a read-only view of someone else's trip"
-        >
-          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-            Read-only view
-          </Text>
-        </View>
-      </View>
-
-      {/* ── Map (auto-degrades to MapUnavailable on web when key missing) ──── */}
-      <View style={styles.mapContainer}>
-        <Map markers={markers} polylines={polylines} />
-      </View>
-
-      {/* ── Itinerary list ────────────────────────────────────────────────── */}
-      <View style={{ padding: t.spacing.lg, gap: t.spacing.lg }}>
-        {byDay.map((section) => (
-          <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
-            {/* Day header */}
-            <View style={[styles.dayHeader, { borderColor: dayColor(section.dayIndex) }]}>
-              <Text
-                style={[t.typography.subtitle, { color: t.colors.text }]}
-                accessibilityRole="header"
-                aria-level={2}
-              >
-                {section.dayIndex < 0 ? 'Unscheduled' : `Day ${section.dayIndex + 1}`}
-              </Text>
-            </View>
-
-            {/* Place rows — no drag handles, no duration steppers, no delete */}
-            {section.places.map((place, idx) => {
-              const next = section.places[idx + 1];
-              const leg = next
-                ? legIndex.get(`${section.dayIndex}|${place.id}|${next.id}`)
-                : undefined;
-              return (
-                <View key={place.id} style={{ gap: t.spacing.xs }}>
-                  <View
-                    style={[
-                      styles.placeCard,
-                      {
-                        borderColor: t.colors.border,
-                        borderRadius: t.radius.md,
-                        backgroundColor: t.colors.bgElevated,
-                        padding: t.spacing.md,
-                      },
-                    ]}
-                    accessible
-                    accessibilityLabel={`${place.user_title ?? 'Place'}, ${place.visit_duration_minutes} minutes`}
-                  >
-                    <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-                      {place.user_title ?? 'Place'}
-                    </Text>
-                    <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                      {place.visit_duration_minutes} min
-                    </Text>
-                  </View>
-                  {next ? (
-                    <Text
-                      style={[t.typography.small, { color: t.colors.textMuted, paddingHorizontal: 12 }]}
-                    >
-                      ↓ {leg ? formatTravel(leg.duration_seconds, leg.distance_meters) : 'travel time unknown'}
-                    </Text>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-        ))}
-      </View>
-
-      {/* ── Footer: Google attribution required when place data is shown ───── */}
-      {places.length > 0 ? (
-        <View style={{ paddingHorizontal: t.spacing.lg }}>
-          <PoweredByGoogle />
-        </View>
       ) : null}
 
-      {/* ── CTA: public viewers otherwise have nowhere to go ─────────────── */}
+      {/* Hero */}
+      <View style={{ paddingHorizontal: t.spacing.lg, gap: t.spacing.sm }}>
+        <Text style={[t.typography.overline, { color: t.colors.primary }]}>Shared itinerary · read-only</Text>
+        <Text style={[t.typography.display, { color: t.colors.text }]} accessibilityRole="header" aria-level={1}>
+          {title}
+        </Text>
+        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{formatTripRange(trip.start_date, trip.end_date)}</Text>
+        <View style={[styles.statRow, { gap: t.spacing.sm }]}>
+          <Stat label={`${dayCount} day${dayCount === 1 ? '' : 's'}`} />
+          <Stat label={`${places.length} stop${places.length === 1 ? '' : 's'}`} />
+          <Stat label={`${trip.daily_hours_budget}h / day`} />
+          <Stat label={capitalize(trip.transport_mode)} />
+        </View>
+      </View>
+
+      {sections.length > 0 ? <SharedDayTabs tabs={tabs} selected={selected} onSelect={setSelected} /> : null}
+
+      {!isDesktop && places.length > 0 ? map : null}
+
+      <View style={{ paddingHorizontal: t.spacing.lg }}>
+        <SharedTimeline sections={visibleSections} startDate={trip.start_date} legIndex={legIndex} />
+      </View>
+
+      {places.length > 0 ? <PoweredByGoogle /> : null}
+
+      {/* CTA — public viewers otherwise have nowhere to go */}
       <View
         style={{
-          margin: t.spacing.lg,
-          padding: t.spacing.lg,
+          marginHorizontal: t.spacing.lg,
+          padding: t.spacing.xl,
           gap: t.spacing.md,
-          borderRadius: t.radius.lg,
-          backgroundColor: t.colors.bgMuted,
+          borderRadius: t.radius.xl,
+          backgroundColor: t.colors.gradientSubtle,
           alignItems: 'center',
         }}
       >
-        <Text style={[t.typography.bodyStrong, { color: t.colors.text, textAlign: 'center' }]}>
-          Like this itinerary? Build your own route in minutes with Tripvisor.
+        <Text style={[t.typography.subtitle, { color: t.colors.text, textAlign: 'center' }]}>
+          Like this itinerary?
+        </Text>
+        <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
+          Build your own day-by-day route in minutes with Tripvisor.
         </Text>
         <Button
           label="Plan your own trip"
@@ -344,40 +242,68 @@ function SharedTripContent({
       </View>
     </ScrollView>
   );
+
+  return (
+    <Screen padded={false}>
+      {isDesktop ? (
+        <View style={styles.desktopRow}>
+          <View style={[styles.desktopList, { borderRightColor: t.colors.border }]}>{list}</View>
+          {map}
+        </View>
+      ) : (
+        list
+      )}
+    </Screen>
+  );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function groupByDay(places: SharedPlace[]): Array<{ dayIndex: number; places: SharedPlace[] }> {
-  const map = new Map<number, SharedPlace[]>();
-  for (const p of places) {
-    const key = p.day_index ?? -1;
-    const arr = map.get(key) ?? [];
-    arr.push(p);
-    map.set(key, arr);
-  }
-  for (const [, arr] of map) {
-    arr.sort((a: SharedPlace, b: SharedPlace) => (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
-  }
-  return [...map.entries()]
-    .sort(([a]: [number, SharedPlace[]], [b]: [number, SharedPlace[]]) => a - b)
-    .map(([dayIndex, ps]) => ({ dayIndex, places: ps }));
+function TopBar({ onShare, onPlanOwn, showPlan }: { onShare: () => void; onPlanOwn: () => void; showPlan: boolean }) {
+  const t = useTheme();
+  return (
+    <View style={[styles.topBar, { paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.md, gap: t.spacing.sm }]}>
+      <Text style={[t.typography.bodyStrong, { color: t.colors.primary, flex: 1 }]} accessibilityRole="header">
+        Tripvisor
+      </Text>
+      {showPlan ? (
+        <Button label="Plan your own" variant="ghost" fullWidth={false} onPress={onPlanOwn} accessibilityLabel="Plan your own trip with Tripvisor" />
+      ) : null}
+      <Pressable
+        onPress={onShare}
+        accessibilityRole="button"
+        accessibilityLabel="Share this trip"
+        hitSlop={8}
+        style={({ pressed }) => [
+          styles.iconBtn,
+          { borderRadius: t.radius.pill, borderColor: t.colors.border, backgroundColor: pressed ? t.colors.bgMuted : t.colors.cardBgSolid },
+        ]}
+      >
+        <Icon name="share-2" size={18} color={t.colors.text} />
+      </Pressable>
+    </View>
+  );
 }
 
-function formatRange(start: string | null, end: string | null): string {
-  if (start && end) return `${start} → ${end}`;
-  return start ?? end ?? 'Dates not set';
+function Stat({ label }: { label: string }) {
+  const t = useTheme();
+  return (
+    <View style={{ backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill, paddingHorizontal: t.spacing.md, paddingVertical: t.spacing.xs }}>
+      <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}>{label}</Text>
+    </View>
+  );
 }
 
-function formatTravel(seconds: number, meters: number): string {
-  const mins = Math.max(1, Math.round(seconds / 60));
-  const km = meters / 1000;
-  return `${mins} min · ${km.toFixed(km < 10 ? 1 : 0)} km`;
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  mapContainer: { height: 300 },
-  readOnlyBadge: { borderWidth: 1 },
-  dayHeader: { borderLeftWidth: 4, paddingLeft: 12 },
-  placeCard: { borderWidth: 1 },
+  column: { maxWidth: COLUMN_MAX_WIDTH, width: '100%', alignSelf: 'center' },
+  topBar: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: { width: 44, height: 44, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  statRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
+  phoneMap: { height: 260 },
+  desktopRow: { flex: 1, flexDirection: 'row' },
+  desktopList: { width: DESKTOP_LIST_WIDTH, borderRightWidth: 1 },
+  desktopMap: { flex: 1 },
 });

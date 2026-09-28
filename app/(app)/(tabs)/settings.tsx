@@ -4,26 +4,30 @@
  *
  * Phase 25 Step 25.9: added "Account" section with:
  *   - Change email modal (calls useChangeEmail)
- *   - Change password modal (calls useChangePassword)
  *   - Sign out button (calls useSignOut)
+ *
+ * Auth is passwordless (magic link + Google), so there is no "Change
+ * password" entry — it would contradict the sign-in model.
  *
  * Desktop: max-width 720px centered.
  */
 import { useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
-import { Button, Heading, Screen, TAB_SCREEN_EDGES } from '@/components';
-import { useSession, useSignOut, useExportAccount, supabase, useChangeEmail, useChangePassword, AuthMutationError } from '@/api';
+import { Button, Heading, Icon, Screen, TAB_SCREEN_EDGES, type IconName } from '@/components';
+import { useSession, useSignOut, useExportAccount, supabase, useChangeEmail, AuthMutationError } from '@/api';
 import { teardownTier1Sync } from '@/sync/hydrate';
 import { wipeTier1PersistedStorage } from '@/sync/wipe';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
 import { confirmDestructive } from '@/lib/confirm';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useRouter } from 'expo-router';
+import { PRIVACY_HREF, TERMS_HREF } from '@/components/legal/LegalLinks';
 
-const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: string }> = [
-  { value: 'light', label: 'Light', icon: '☀️' },
-  { value: 'dark', label: 'Dark', icon: '🌙' },
-  { value: 'system', label: 'System', icon: '🔄' },
+const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: IconName }> = [
+  { value: 'light', label: 'Light', icon: 'sun' },
+  { value: 'dark', label: 'Dark', icon: 'moon' },
+  { value: 'system', label: 'System', icon: 'sun-moon' },
 ];
 
 export default function SettingsScreen() {
@@ -35,13 +39,13 @@ export default function SettingsScreen() {
   const signOut = useSignOut();
   const exportAccount = useExportAccount();
   const qc = useQueryClient();
+  const router = useRouter();
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Phase 25 Step 25.9: change email / password modals
+  // Phase 25 Step 25.9: change email modal
   const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
 
   const email = session?.user?.email ?? '—';
   const initial = email[0]?.toUpperCase() ?? '?';
@@ -107,6 +111,14 @@ export default function SettingsScreen() {
   const screenDisabled = isDeleting || signOut.isPending || exportAccount.isPending;
 
   const contentStyle = isDesktop ? styles.desktopContainer : undefined;
+  const cardStyle: ViewStyle = {
+    borderRadius: t.radius.xl,
+    backgroundColor: t.colors.cardBgSolid,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    ...t.shadows.sm(t.colors.shadowColor),
+    overflow: 'hidden',
+  };
 
   return (
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
@@ -166,7 +178,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Change email + Change password buttons */}
+        {/* Change email (passwordless auth — no password to change) */}
         <View
           style={[
             styles.actionsCard,
@@ -182,18 +194,11 @@ export default function SettingsScreen() {
         >
           <Button
             variant="ghost"
-            label="✉️ Change email"
+            label="Change email"
+            leftIcon={<Icon name="mail" size={18} color={t.colors.primaryInk} />}
             onPress={() => setEmailModalOpen(true)}
             disabled={screenDisabled}
             accessibilityLabel="Change email address"
-          />
-          <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
-          <Button
-            variant="ghost"
-            label="🔑 Change password"
-            onPress={() => setPasswordModalOpen(true)}
-            disabled={screenDisabled}
-            accessibilityLabel="Change password"
           />
         </View>
 
@@ -229,7 +234,7 @@ export default function SettingsScreen() {
                   } as ViewStyle),
                 ]}
               >
-                <Text style={styles.themeIcon}>{opt.icon}</Text>
+                <Icon name={opt.icon} size={24} color={active ? t.colors.primary : t.colors.text} />
                 <Text
                   style={[
                     t.typography.caption,
@@ -251,25 +256,14 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           aria-level={2}
         >
-          Data & Account
+          Your data
         </Text>
-        <View
-          style={[
-            styles.actionsCard,
-            {
-              borderRadius: t.radius.xl,
-              backgroundColor: t.colors.cardBgSolid,
-              borderWidth: 1,
-              borderColor: t.colors.border,
-              ...t.shadows.sm(t.colors.shadowColor),
-              overflow: 'hidden',
-            },
-          ]}
-        >
+        <View style={[styles.actionsCard, cardStyle]}>
           {/* Export */}
           <Button
             variant="ghost"
-            label="📦 Export my data"
+            label="Export my data"
+            leftIcon={<Icon name="download" size={18} color={t.colors.primaryInk} />}
             onPress={handleExport}
             loading={exportAccount.isPending}
             disabled={screenDisabled || exportAccount.isPending}
@@ -282,18 +276,43 @@ export default function SettingsScreen() {
           {/* Sign out */}
           <Button
             variant="ghost"
-            label="🚪 Sign out"
+            label="Sign out"
+            leftIcon={<Icon name="log-out" size={18} color={t.colors.primaryInk} />}
             onPress={handleSignOut}
             loading={signOut.isPending}
             disabled={screenDisabled}
           />
+        </View>
 
+        {/* ─── Privacy & legal (v2 M4 X3.2) ─────────────────────────────── */}
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}
+          accessibilityRole="header"
+          aria-level={2}
+        >
+          Privacy & legal
+        </Text>
+        <View style={[styles.actionsCard, cardStyle]}>
+          <Button variant="ghost" label="Privacy policy" leftIcon={<Icon name="lock" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(PRIVACY_HREF)} accessibilityRole="link" accessibilityLabel="Privacy policy" />
           <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
+          <Button variant="ghost" label="Terms of use" leftIcon={<Icon name="file-text" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(TERMS_HREF)} accessibilityRole="link" accessibilityLabel="Terms of use" />
+        </View>
 
-          {/* Delete account */}
+        {/* ─── Delete account (Play policy: easy to find, own section) ─────── */}
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}
+          accessibilityRole="header"
+          aria-level={2}
+        >
+          Delete account
+        </Text>
+        <View style={[cardStyle, { padding: t.spacing.lg, gap: t.spacing.md }]}>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+            Permanently deletes your account and everything in it: trips, places, expenses, packing lists, uploaded
+            documents and share links. Trips shared with you stay with their owners. Export your data first if you want a copy.
+          </Text>
           <Button
             variant="danger"
-            label="🗑️ Delete account"
+            label="Delete account"
+            leftIcon={<Icon name="trash" size={18} color={t.colors.dangerText} />}
             onPress={handleDeleteAccount}
             loading={isDeleting}
             disabled={screenDisabled}
@@ -329,12 +348,6 @@ export default function SettingsScreen() {
         visible={emailModalOpen}
         currentEmail={email}
         onClose={() => setEmailModalOpen(false)}
-      />
-
-      {/* ─── Change Password modal ──────────────────────────────────────── */}
-      <ChangePasswordModal
-        visible={passwordModalOpen}
-        onClose={() => setPasswordModalOpen(false)}
       />
     </Screen>
   );
@@ -469,154 +482,6 @@ function ChangeEmailModal({
   );
 }
 
-// ── ChangePasswordModal ───────────────────────────────────────────────────────
-
-function ChangePasswordModal({
-  visible,
-  onClose,
-}: {
-  visible: boolean;
-  onClose: () => void;
-}) {
-  const t = useTheme();
-  const changePassword = useChangePassword();
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
-  function reset() {
-    setNewPassword('');
-    setConfirmPassword('');
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    changePassword.reset();
-  }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
-
-  async function handleSubmit() {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    if (!newPassword) {
-      setErrorMsg('Password is required.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
-      return;
-    }
-    try {
-      await changePassword.mutateAsync({ newPassword });
-      setSuccessMsg('Password changed.');
-    } catch (err) {
-      if (err instanceof AuthMutationError) {
-        if (err.code === 'weak_password') {
-          setErrorMsg('Use at least 8 characters.');
-        } else if (err.code === 'same_password') {
-          setErrorMsg('Use a different password from your current one.');
-        } else {
-          setErrorMsg(err.message ?? 'Something went wrong. Please try again.');
-        }
-      } else {
-        setErrorMsg('Something went wrong. Please try again.');
-      }
-    }
-  }
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
-      accessibilityViewIsModal
-    >
-      <View style={modalStyles.overlay}>
-      <View style={[modalStyles.sheet, { backgroundColor: t.colors.bgElevated, borderRadius: t.radius.xl }]}>
-        <Text style={[t.typography.subtitle, { color: t.colors.text, marginBottom: t.spacing.md }]}>
-          Change password
-        </Text>
-        <TextInput
-          value={newPassword}
-          onChangeText={(v) => { setNewPassword(v); setErrorMsg(null); setSuccessMsg(null); }}
-          placeholder="New password"
-          placeholderTextColor={t.colors.textMuted}
-          secureTextEntry
-          accessibilityLabel="New password"
-          style={[
-            modalStyles.input,
-            {
-              borderColor: errorMsg ? t.colors.danger : t.colors.border,
-              borderRadius: t.radius.sm,
-              color: t.colors.text,
-              backgroundColor: t.colors.bg,
-              ...t.typography.body,
-            },
-          ]}
-        />
-        <TextInput
-          value={confirmPassword}
-          onChangeText={(v) => { setConfirmPassword(v); setErrorMsg(null); setSuccessMsg(null); }}
-          placeholder="Confirm new password"
-          placeholderTextColor={t.colors.textMuted}
-          secureTextEntry
-          accessibilityLabel="Confirm new password"
-          style={[
-            modalStyles.input,
-            {
-              marginTop: t.spacing.sm,
-              borderColor: errorMsg ? t.colors.danger : t.colors.border,
-              borderRadius: t.radius.sm,
-              color: t.colors.text,
-              backgroundColor: t.colors.bg,
-              ...t.typography.body,
-            },
-          ]}
-        />
-        {errorMsg ? (
-          <Text
-            style={[t.typography.caption, { color: t.colors.danger, marginTop: t.spacing.xs }]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            {errorMsg}
-          </Text>
-        ) : null}
-        {successMsg ? (
-          <Text
-            style={[t.typography.caption, { color: t.colors.success, marginTop: t.spacing.xs }]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            {successMsg}
-          </Text>
-        ) : null}
-        <View style={{ flexDirection: 'row', gap: t.spacing.sm, marginTop: t.spacing.md }}>
-          <Button
-            variant="ghost"
-            label="Cancel"
-            onPress={handleClose}
-            fullWidth={false}
-          />
-          <View style={{ flex: 1 }}>
-            <Button
-              label={successMsg ? 'Done' : 'Change password'}
-              onPress={successMsg ? handleClose : handleSubmit}
-              loading={changePassword.isPending}
-              disabled={changePassword.isPending}
-            />
-          </View>
-        </View>
-      </View>
-      </View>
-    </Modal>
-  );
-}
-
 const styles = StyleSheet.create({
   profileCard: {
     flexDirection: 'row',
@@ -645,9 +510,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 14,
     gap: 6,
-  },
-  themeIcon: {
-    fontSize: 24,
   },
   actionsCard: {},
   divider: {

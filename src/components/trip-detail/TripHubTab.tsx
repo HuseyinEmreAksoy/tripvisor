@@ -49,6 +49,8 @@ export type HubSection = 'budget' | 'stays' | 'docs' | 'share';
 
 export interface TripHubTabProps {
   tripId: string;
+  /** Used in the share message ("Check out <title> on Tripvisor"). */
+  tripTitle?: string;
   tripStartDate: string | null;
   currency: TripCurrency;
   tripDayCount: number;
@@ -64,6 +66,7 @@ export interface TripHubTabProps {
 
 export function TripHubTab({
   tripId,
+  tripTitle,
   tripStartDate,
   currency,
   tripDayCount,
@@ -263,7 +266,7 @@ export function TripHubTab({
         expanded={canEdit ? open.has('share') : undefined}
         onPress={() => (canEdit ? toggle('share') : router.push(`/trip/${tripId}/collaborators`))}
       >
-        <ShareLinkCard tripId={tripId} />
+        <ShareLinkCard tripId={tripId} tripTitle={tripTitle} />
       </HubCard>
 
       {/* ── Phase 24 Step 24.5: Liked / disliked catalog ────────────────── */}

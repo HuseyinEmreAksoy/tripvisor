@@ -13,6 +13,7 @@
 import { memo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 
 export interface DiffRowProps {
   /** Stable row identity inside the diff (also handed back by onToggle). */
@@ -77,7 +78,7 @@ export const DiffRow = memo(function DiffRow({
           },
         ]}
       >
-        {included ? <Text style={[styles.checkmark, { color: t.colors.primaryText }]}>✓</Text> : null}
+        {included ? <Icon name="check" size={14} strokeWidth={3} color={t.colors.primaryText} /> : null}
       </View>
 
       <View style={styles.textBlock}>
@@ -131,7 +132,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkmark: { fontSize: 14, fontWeight: '700', lineHeight: 16 },
   textBlock: { flex: 1, gap: 2 },
   chip: { paddingVertical: 2 },
 });

@@ -68,7 +68,7 @@ export function DayTimelineList({ heading, items, onToggle }: DayTimelineListPro
                 style={[
                   t.typography.caption,
                   styles.time,
-                  { color: item.isNext ? t.colors.primary : t.colors.textMuted },
+                  { color: item.isNext ? t.colors.primaryInk : t.colors.textMuted },
                 ]}
               >
                 {formatClockTime(item.arrivalMinutes)}

@@ -131,7 +131,7 @@ export function DayNotesEditor({
         onPress={() => setExpanded(false)}
         style={{ alignSelf: 'flex-end' }}
       >
-        <Text style={[t.typography.caption, { color: t.colors.primary }]}>Done</Text>
+        <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>Done</Text>
       </Pressable>
     </View>
   );
@@ -240,7 +240,7 @@ export function PlaceNotesEditor({ place, canEdit = true }: { place: TripPlace; 
           accessibilityLabel={showMore ? 'Show less notes' : 'Show more notes'}
           onPress={() => setShowMore((v) => !v)}
         >
-          <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>
             {showMore ? 'Show less' : 'Show more'}
           </Text>
         </Pressable>

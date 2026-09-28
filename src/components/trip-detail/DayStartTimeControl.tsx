@@ -29,6 +29,7 @@
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { useUpdateTripDay, type TripDay, type UpdateTripDayInput } from '@/api';
 import {
@@ -135,8 +136,9 @@ export function DayStartTimeControl({
           },
         ]}
       >
+        <Icon name="clock" size={14} color={t.colors.textMuted} />
         <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}>
-          {'🕘 Starts '}
+          {'Starts '}
           {label}
         </Text>
       </Pressable>
@@ -192,7 +194,7 @@ export function DayStartTimeControl({
           }}
           style={styles.doneBtn}
         >
-          <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>
             Done
           </Text>
         </Pressable>
@@ -254,7 +256,15 @@ function StepButton({
 }
 
 const styles = StyleSheet.create({
-  chip: { borderWidth: 1, alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' },
+  chip: {
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'center',
+  },
   editorRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   timeInput: {
     borderWidth: 1,

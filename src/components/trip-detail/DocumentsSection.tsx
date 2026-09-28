@@ -27,6 +27,7 @@ import {
 import { useDeleteTripDocument, useTripDocuments, useTripDocumentUrl } from '@/api';
 import type { TripDocument } from '@/api';
 import { useTheme } from '@/theme';
+import { Icon, type IconName } from '@/components/Icon';
 import { confirmDestructive } from '@/lib/confirm';
 import { DocumentUploadButton } from './DocumentUploadButton';
 
@@ -45,10 +46,10 @@ export function formatBytes(bytes: number | null): string {
 }
 
 /** Mime → row icon. Decorative only — rows carry full spoken labels. */
-function docIcon(mime: string | null): string {
-  if (mime === 'application/pdf') return '📄';
-  if (mime?.startsWith('image/')) return '🖼️';
-  return '📎';
+function docIcon(mime: string | null): IconName {
+  if (mime === 'application/pdf') return 'file-text';
+  if (mime?.startsWith('image/')) return 'image';
+  return 'paperclip';
 }
 
 function formatDocDate(iso: string): string {
@@ -139,9 +140,7 @@ export function DocumentsSection({ tripId, canEdit }: DocumentsSectionProps) {
                   Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
                 ]}
               >
-                <Text style={styles.icon} accessibilityElementsHidden importantForAccessibility="no">
-                  {docIcon(doc.mime)}
-                </Text>
+                <Icon name={docIcon(doc.mime)} size={20} color={t.colors.textMuted} />
                 <View style={styles.nameBlock}>
                   <Text
                     style={[t.typography.body, { color: t.colors.text }]}
@@ -156,7 +155,7 @@ export function DocumentsSection({ tripId, canEdit }: DocumentsSectionProps) {
                 {opening ? (
                   <ActivityIndicator size="small" color={t.colors.primary} />
                 ) : (
-                  <Text style={{ fontSize: 14, color: t.colors.textMuted }}>›</Text>
+                  <Icon name="chevron-right" size={18} color={t.colors.textMuted} />
                 )}
               </Pressable>
 
@@ -175,7 +174,7 @@ export function DocumentsSection({ tripId, canEdit }: DocumentsSectionProps) {
                     Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
                   ]}
                 >
-                  <Text style={[t.typography.body, { color: t.colors.textMuted }]}>✕</Text>
+                  <Icon name="x" size={18} color={t.colors.textMuted} />
                 </Pressable>
               ) : null}
             </View>
@@ -195,9 +194,12 @@ export function DocumentsSection({ tripId, canEdit }: DocumentsSectionProps) {
       {/* Upload: real picker on web, muted "use the web app" note on native. */}
       {canEdit ? <DocumentUploadButton tripId={tripId} /> : null}
 
-      <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-        🔒 Stored privately — only trip members can access.
-      </Text>
+      <View style={styles.privacyRow}>
+        <Icon name="lock" size={12} color={t.colors.textMuted} />
+        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+          Stored privately — only trip members can access.
+        </Text>
+      </View>
     </View>
   );
 }
@@ -215,11 +217,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
   },
-  icon: { fontSize: 18 },
+  privacyRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   nameBlock: { flex: 1, gap: 2 },
   deleteBtn: {
-    minWidth: 32,
-    minHeight: 32,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

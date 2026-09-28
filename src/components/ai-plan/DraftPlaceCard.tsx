@@ -73,7 +73,7 @@ export const DraftPlaceCard = memo(function DraftPlaceCard({
         >
           {place.name}
         </Text>
-        <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+        <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>
           Removed — tap to restore
         </Text>
       </Pressable>

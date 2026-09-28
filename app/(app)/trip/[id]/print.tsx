@@ -21,7 +21,17 @@ import { useMemo } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
-import { BackButton, Button, Heading, MarkdownText, Screen, TripCostRollup, DaySummaryCard } from '@/components';
+import {
+  BackButton,
+  Button,
+  Heading,
+  MarkdownText,
+  Screen,
+  Skeleton,
+  SkeletonGroup,
+  TripCostRollup,
+  DaySummaryCard,
+} from '@/components';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { useTheme } from '@/theme';
 import { useTrip, useTripDays, useTripLegs, useTripPlaces, type TripDay, type TripPlace, type TripLeg } from '@/api';
@@ -39,13 +49,23 @@ function PrintHead() {
   // expo-router re-exports <Head> from expo-router/head which maps to
   // react-helmet-async on web. We use an inline <style> tag so we don't
   // need a separate CSS file in the static export.
-  // The tripvisor-print-root class targets our root view (applied via
-  // dataSet below) to avoid clobbering Expo's own body resets.
+  // #tripvisor-print-root targets our root view (nativeID below → DOM id on
+  // react-native-web) to avoid clobbering Expo's own body resets. A
+  // className prop would NOT work: RNW drops unknown props (className
+  // included) and builds the DOM class list from StyleSheet only.
   const css = `
 @media print {
-  .tripvisor-print-root {
+  #tripvisor-print-root {
     background: #fff !important;
     color: #000 !important;
+  }
+  /* X3.1: text colors are inline theme tokens, so printing from dark mode
+     would put bone-colored text on white paper. Force ink-on-paper. */
+  #tripvisor-print-root * {
+    color: #000 !important;
+    background-color: transparent !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
   }
   [data-no-print] {
     display: none !important;
@@ -103,7 +123,13 @@ export default function PrintRoute() {
   if (isLoading) {
     return (
       <Screen>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>Loading…</Text>
+        <SkeletonGroup label="Loading itinerary" style={{ gap: t.spacing.md }}>
+          <Skeleton width="60%" height={30} />
+          <Skeleton width="40%" height={18} />
+          <Skeleton height={72} radius="lg" />
+          <Skeleton height={72} radius="lg" />
+          <Skeleton height={72} radius="lg" />
+        </SkeletonGroup>
       </Screen>
     );
   }
@@ -125,17 +151,11 @@ export default function PrintRoute() {
       <PrintHead />
 
       <Screen padded={false}>
-        {/*
-         * dataSet={{ printRoot: '' }} compiles to data-print-root="" on web,
-         * which is NOT the same as the className we inject in CSS. For the
-         * className-based print CSS to work we need to add the class name
-         * separately. On RN Web, className is supported on View as a prop.
-         * We use a platform guard so native never sees the web-only prop.
-         */}
+        {/* nativeID renders as id="tripvisor-print-root" on web (the print CSS
+            hook); on native it is an inert view tag. */}
         <ScrollView
+          nativeID="tripvisor-print-root"
           contentContainerStyle={[styles.container, { padding: t.spacing.lg, gap: t.spacing.lg }]}
-          // Platform.OS check prevents the className prop appearing on native.
-          {...(Platform.OS === 'web' ? ({ className: 'tripvisor-print-root' } as object) : {})}
         >
           {/* ── Itinerary header ─────────────────────────────────────────── */}
           <View style={{ gap: t.spacing.xs }}>

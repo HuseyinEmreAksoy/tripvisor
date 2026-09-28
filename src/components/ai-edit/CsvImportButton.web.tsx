@@ -14,6 +14,7 @@
 import { useRef } from 'react';
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import { parseTakeoutCsvTitles } from '@/lib/importParse';
 
 export interface CsvImportButtonProps {
@@ -63,9 +64,12 @@ export function CsvImportButton({ onNames, onError, disabled }: CsvImportButtonP
           } as ViewStyle,
         ]}
       >
-        <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>
-          📄 Upload .csv (Google Takeout)
-        </Text>
+        <View style={styles.pillContent}>
+          <Icon name="file-text" size={16} color={t.colors.textMuted} />
+          <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>
+            Upload .csv (Google Takeout)
+          </Text>
+        </View>
       </Pressable>
       <input
         ref={inputRef}
@@ -87,8 +91,9 @@ export function CsvImportButton({ onNames, onError, disabled }: CsvImportButtonP
 
 const styles = StyleSheet.create({
   wrap: { alignSelf: 'flex-start' },
+  pillContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   pill: {
-    minHeight: 32,
+    minHeight: 44,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',

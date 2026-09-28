@@ -278,7 +278,7 @@ export function UndoToast() {
               Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
             ]}
           >
-            <Text style={[t.typography.bodyStrong, { color: t.colors.primary, letterSpacing: 0.2 }]}>
+            <Text style={[t.typography.bodyStrong, { color: t.colors.primaryInk, letterSpacing: 0.2 }]}>
               Undo
             </Text>
           </Pressable>

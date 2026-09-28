@@ -52,8 +52,9 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
       aria-label={accessibilityLabel ?? 'Dialog'}
     >
       <Pressable
-        style={styles.backdrop}
+        style={[styles.backdrop, { backgroundColor: t.colors.scrim }]}
         onPress={onClose}
+        accessibilityRole="button"
         accessibilityLabel="Close dialog"
       />
       <View
@@ -66,7 +67,7 @@ export function BottomSheet({ visible, onClose, accessibilityLabel, children }: 
           styles.sheet,
           {
             backgroundColor: t.colors.bg,
-            borderRadius: t.radius.lg,
+            borderRadius: t.radius.xl,
             padding: t.spacing.lg,
             gap: t.spacing.md,
           },
@@ -95,17 +96,24 @@ const styles = StyleSheet.create({
     ...fixedFill,
     alignItems: 'center',
     justifyContent: 'flex-end',
+    // X3.1: the side gutter lives on the container. The old sheet combined
+    // width:100% with marginHorizontal:24, which overflowed the viewport by
+    // 48px on phones (the sheet ran off both edges at 375px).
+    paddingHorizontal: 16,
     zIndex: 100,
   },
   backdrop: {
     ...fixedFill,
-    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sheet: {
     width: '100%',
     maxWidth: 520,
-    marginBottom: 24,
-    marginHorizontal: 24,
+    // Clear the home indicator on notched phones (iOS Safari / PWA); 16px min.
+    marginBottom: 'max(16px, env(safe-area-inset-bottom))' as unknown as number,
+    // Tall forms scroll inside the sheet instead of running off-screen
+    // (short laptop screens, phone browsers with the soft keyboard up).
+    maxHeight: '90%',
+    overflow: 'auto' as unknown as 'scroll',
     // RN Web 0.19+ deprecates the native shadow* properties for web-only files.
     // Using boxShadow (CSS shorthand) avoids the deprecation warning and maps
     // directly to the browser's box-shadow without requiring elevation hacks.

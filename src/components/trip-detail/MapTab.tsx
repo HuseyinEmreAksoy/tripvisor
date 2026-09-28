@@ -19,6 +19,8 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 // undefined (reading 'markers')") on first render.
 import { Map as TripMap, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
+import { Icon, type IconName } from '@/components/Icon';
+import { haptics } from '@/lib/haptics';
 import {
   useUpdateRouteRenderMode,
   type RouteRenderMode,
@@ -29,6 +31,7 @@ import {
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
 import { getLocationPermissionState } from './locationPermission';
+import { useLocationExplainer } from '@/components/permissions';
 
 // v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
 // in a muted gray (same neutral as dayColor()'s unscheduled fallback) so the
@@ -87,6 +90,8 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
   // ── Phase 24: "From my location" toggle (Step 24.9) ───────────────────────
   const { location: userLocation, status: locationStatus, request: requestLocation } = useCurrentLocation();
   const { enabled: useMyLocation, setEnabled: setUseMyLocation } = useTripUseMyLocation(tripId);
+  // v2 M4 X3.2: explain before the OS prompt.
+  const locationExplainer = useLocationExplainer({ reason: 'route', onProceed: () => void requestLocation() });
 
   // ── Day filter state ───────────────────────────────────────────────────────
   // 'all' shows everything; a number filters to that day_index (0-indexed).
@@ -263,8 +268,8 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
       setUseMyLocation(true);
       return;
     }
-    // Need to request permission.
-    await requestLocation();
+    // Need to request permission (via the pre-permission explainer).
+    locationExplainer.ask();
     // After request(), `locationStatus` will update asynchronously.
     // We enable the toggle only if granted — checked in the effect below.
   }
@@ -442,15 +447,11 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
                 color={locationOn ? t.colors.primaryText : t.colors.primary}
               />
             ) : (
-              <Text
-                style={{
-                  fontSize: 14,
-                  color: locationOn ? t.colors.primaryText : t.colors.textMuted,
-                }}
-                accessible={false}
-              >
-                {'📍'}
-              </Text>
+              <Icon
+                name="locate-fixed"
+                size={16}
+                color={locationOn ? t.colors.primaryText : t.colors.textMuted}
+              />
             )}
             <Text
               style={[
@@ -481,7 +482,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
                   void requestLocation();
                 }}
               >
-                <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+                <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>
                   {'Try again'}
                 </Text>
               </Pressable>
@@ -503,7 +504,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
                   void requestLocation();
                 }}
               >
-                <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+                <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>
                   {'Retry'}
                 </Text>
               </Pressable>
@@ -524,6 +525,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
           }}
         />
       </View>
+      {locationExplainer.sheet}
     </View>
   );
 }
@@ -549,9 +551,9 @@ function RouteRenderModeControl({
 }) {
   const t = useTheme();
 
-  const options: Array<{ value: RouteRenderMode; label: string; icon: string }> = [
-    { value: 'optimized', label: 'Best route', icon: '✦' },
-    { value: 'manual', label: 'My order', icon: '≡' },
+  const options: Array<{ value: RouteRenderMode; label: string; icon: IconName }> = [
+    { value: 'optimized', label: 'Best route', icon: 'route' },
+    { value: 'manual', label: 'My order', icon: 'list-ordered' },
   ];
 
   return (
@@ -573,7 +575,14 @@ function RouteRenderModeControl({
                 : opt.label
             }
             accessibilityState={{ checked: isActive, disabled: isDisabled || !canEdit }}
-            onPress={canEdit && !pending ? () => onSelect(opt.value) : undefined}
+            onPress={
+              canEdit && !pending
+                ? () => {
+                    if (!isActive) haptics.select();
+                    onSelect(opt.value);
+                  }
+                : undefined
+            }
             style={[
               styles.renderModeChip,
               {
@@ -584,16 +593,11 @@ function RouteRenderModeControl({
               },
             ]}
           >
-            <Text
-              style={{
-                fontSize: 13,
-                color: isActive ? t.colors.primaryText : t.colors.text,
-              }}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            >
-              {opt.icon}
-            </Text>
+            <Icon
+              name={opt.icon}
+              size={15}
+              color={isActive ? t.colors.primaryText : t.colors.textMuted}
+            />
             <Text
               style={[
                 t.typography.caption,
@@ -619,7 +623,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     paddingHorizontal: 12, // t.spacing.md = 12
-    minHeight: 36,
+    minHeight: 44,
     gap: 6,
   },
   dayChipDot: {
@@ -634,7 +638,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    minHeight: 36,
+    minHeight: 44,
     gap: 6,
     alignSelf: 'flex-start',
   },
@@ -650,7 +654,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    minHeight: 36,
+    minHeight: 44,
     gap: 6,
     flex: 1,
     justifyContent: 'center',

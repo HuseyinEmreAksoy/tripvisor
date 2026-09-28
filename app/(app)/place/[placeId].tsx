@@ -1,12 +1,23 @@
 import { useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams } from 'expo-router';
-import { BackButton, Button, Heading, PoweredByGoogle, Screen } from '@/components';
+import {
+  BackButton,
+  Button,
+  Heading,
+  Icon,
+  PoweredByGoogle,
+  Screen,
+  Skeleton,
+  SkeletonGroup,
+  themedRefresh,
+} from '@/components';
 import { ReactionChip } from '@/components/ReactionChip';
 import { usePlaceDetails } from '@/api';
 import { usePlacePhotoUrl } from '@/api/place-photos';
 import { useSafeBack } from '@/hooks/useSafeBack';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTripPlaceReaction, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
 import { useSession } from '@/api/auth';
 import { useTheme } from '@/theme';
@@ -20,6 +31,9 @@ const REVIEW_TRUNCATE_CHARS = 280;
 const REVIEW_COLLAPSED_LINES = 5;
 // Max number of reviews we render (Google Places API hard limit = 5).
 const GOOGLE_REVIEW_LIMIT = 5;
+// Place Details is a paid Google call. Pull-to-refresh within this window of
+// the last successful fetch just ends the spinner instead of re-billing.
+const PULL_REFRESH_MIN_AGE_MS = 5 * 60 * 1000;
 
 export default function PlaceDetailsScreen() {
   // `tripPlaceId` is optionally passed when navigating from a trip context,
@@ -32,7 +46,31 @@ export default function PlaceDetailsScreen() {
   }>();
   const goBack = useSafeBack('/trips');
   const t = useTheme();
-  const { data: place, isLoading, error } = usePlaceDetails({ placeId });
+  const isDesktop = useBreakpoint() === 'desktop';
+  const {
+    data: place,
+    isLoading,
+    error,
+    refetch,
+    isRefetching,
+    dataUpdatedAt,
+  } = usePlaceDetails({ placeId });
+  // Brief spinner for a skipped (data still fresh) pull, so the gesture
+  // still gets visible feedback and the native control always settles.
+  const [skippedPull, setSkippedPull] = useState(false);
+  const onPullRefresh = () => {
+    if (dataUpdatedAt > 0 && Date.now() - dataUpdatedAt < PULL_REFRESH_MIN_AGE_MS) {
+      setSkippedPull(true);
+      setTimeout(() => setSkippedPull(false), 350);
+      return;
+    }
+    void refetch();
+  };
+  // Desktop: a readable centered column instead of a full-bleed stretch.
+  const column = [
+    { padding: t.spacing.lg, gap: t.spacing.md },
+    isDesktop && styles.desktopColumn,
+  ];
 
   // Phase 24 Step 24.4: reaction control — only shown when reached from a trip context.
   const { data: session } = useSession();
@@ -44,20 +82,30 @@ export default function PlaceDetailsScreen() {
 
   if (isLoading) {
     return (
-      <Screen>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>Loading…</Text>
+      <Screen padded={false}>
+        <View style={column}>
+          <BackButton onPress={goBack} />
+          <PlaceDetailSkeleton />
+        </View>
       </Screen>
     );
   }
 
   if (error || !place) {
     return (
-      <Screen>
-        <Heading level={2}>Couldn't load place</Heading>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          {(error as Error | null)?.message ?? 'Unknown error'}
-        </Text>
-        <Button label="Back" onPress={goBack} />
+      <Screen padded={false}>
+        <View style={column}>
+          <BackButton onPress={goBack} />
+          <Heading level={2}>Couldn't load place</Heading>
+          <Text
+            style={[t.typography.body, { color: t.colors.textMuted }]}
+            accessibilityLiveRegion="polite"
+          >
+            {(error as Error | null)?.message ?? 'Unknown error'}
+          </Text>
+          <Button label="Try again" onPress={() => void refetch()} loading={isRefetching} />
+          <Button variant="secondary" label="Back" onPress={goBack} />
+        </View>
       </Screen>
     );
   }
@@ -67,7 +115,16 @@ export default function PlaceDetailsScreen() {
 
   return (
     <Screen padded={false}>
-      <ScrollView contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}>
+      <ScrollView
+        contentContainerStyle={column}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefetching || skippedPull}
+            onRefresh={onPullRefresh}
+            {...themedRefresh(t)}
+          />
+        }
+      >
         <BackButton onPress={goBack} />
 
         <Heading level={1}>{place.displayName}</Heading>
@@ -104,15 +161,18 @@ export default function PlaceDetailsScreen() {
         ) : null}
 
         {place.rating != null ? (
-          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-            ★ {place.rating.toFixed(1)}
-            {place.userRatingCount != null ? (
-              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-                {' '}
-                ({place.userRatingCount.toLocaleString()} reviews)
-              </Text>
-            ) : null}
-          </Text>
+          <View style={styles.ratingRow}>
+            <Icon name="star" size={18} color={t.colors.warning} />
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+              {place.rating.toFixed(1)}
+              {place.userRatingCount != null ? (
+                <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+                  {' '}
+                  ({place.userRatingCount.toLocaleString()} reviews)
+                </Text>
+              ) : null}
+            </Text>
+          </View>
         ) : null}
 
         {place.regularOpeningHours ? (
@@ -206,14 +266,19 @@ function ExternalLink({
           // No handler for this URL on the device — nothing to recover.
         });
       }}
-      style={styles.link}
+      style={({ pressed }) => [styles.link, pressed && { opacity: 0.6 }]}
     >
       <Text
-        style={[t.typography.body, { color: t.colors.primary, textDecorationLine: 'underline' }]}
+        style={[
+          t.typography.body,
+          styles.linkText,
+          { color: t.colors.primaryInk, textDecorationLine: 'underline' },
+        ]}
         numberOfLines={1}
       >
         {label}
       </Text>
+      <Icon name="external-link" size={16} color={t.colors.primaryInk} />
     </Pressable>
   );
 }
@@ -303,9 +368,18 @@ function ReviewCard({ review }: { review: PlaceReview }) {
           <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
             {authorName}
           </Text>
-          <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-            {review.relativePublishTimeDescription} · ★ {review.rating.toFixed(1)}
-          </Text>
+          <View style={styles.ratingRow}>
+            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+              {review.relativePublishTimeDescription} ·
+            </Text>
+            <Icon name="star" size={12} color={t.colors.warning} />
+            <Text
+              style={[t.typography.small, { color: t.colors.textMuted }]}
+              accessibilityLabel={`Rated ${review.rating.toFixed(1)} of 5`}
+            >
+              {review.rating.toFixed(1)}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -327,14 +401,33 @@ function ReviewCard({ review }: { review: PlaceReview }) {
             expanded ? `Collapse review by ${authorName}` : `Expand review by ${authorName}`
           }
           onPress={() => setExpanded((v) => !v)}
-          style={styles.reviewToggle}
+          style={({ pressed }) => [styles.reviewToggle, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[t.typography.caption, { color: t.colors.primary }]}>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>
             {expanded ? 'Show less' : 'Show more'}
           </Text>
         </Pressable>
       ) : null}
     </View>
+  );
+}
+
+/** Loading placeholder shaped like the real screen (title, address, rating,
+ * photo strip, two review cards) so the layout doesn't jump on arrival. */
+function PlaceDetailSkeleton() {
+  const t = useTheme();
+  return (
+    <SkeletonGroup label="Loading place details" style={{ gap: t.spacing.md }}>
+      <Skeleton width="70%" height={34} />
+      <Skeleton width="90%" height={18} />
+      <Skeleton width={140} height={20} />
+      <View style={{ flexDirection: 'row', gap: t.spacing.sm }}>
+        <Skeleton width={200} height={140} />
+        <Skeleton width={200} height={140} />
+      </View>
+      <Skeleton height={110} radius="lg" />
+      <Skeleton height={110} radius="lg" />
+    </SkeletonGroup>
   );
 }
 
@@ -378,5 +471,15 @@ const styles = StyleSheet.create({
   reviewToggle: { marginTop: 6, minHeight: 44, justifyContent: 'center' },
   // Phase 24 Step 24.4: reaction control container.
   reactionContainer: { borderWidth: 1 },
-  link: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', maxWidth: '100%' },
+  link: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  linkText: { flexShrink: 1 },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  desktopColumn: { width: '100%', maxWidth: 760, alignSelf: 'center' },
 });

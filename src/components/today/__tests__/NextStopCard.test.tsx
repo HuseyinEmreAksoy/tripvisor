@@ -1,9 +1,17 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider } from '@/theme';
 import { NextStopCard, type NextStopCardProps } from '../NextStopCard';
 
+const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
+
 const place = { id: 'p1', title: 'Colosseum', lat: 41.8902, lng: 12.4922 };
+
+// v2 M4 X3.2: the pre-permission explainer reads the permission state first.
+jest.mock('@/components/trip-detail/locationPermission', () => ({
+  getLocationPermissionState: async () => 'prompt',
+}));
 
 function setup(overrides: Partial<NextStopCardProps> = {}) {
   const props: NextStopCardProps = {
@@ -30,9 +38,11 @@ function setup(overrides: Partial<NextStopCardProps> = {}) {
     ...overrides,
   };
   const utils = render(
+    <SafeAreaProvider initialMetrics={METRICS}>
     <ThemeProvider>
       <NextStopCard {...props} />
-    </ThemeProvider>,
+    </ThemeProvider>
+    </SafeAreaProvider>,
   );
   return { ...utils, props };
 }
@@ -52,10 +62,12 @@ describe('NextStopCard', () => {
     expect(props.onAddPlace).toHaveBeenCalledTimes(1);
   });
 
-  it('hides the distance estimate until location is granted', () => {
-    const { queryByText, getByRole, props } = setup();
+  it('hides the distance estimate until location is granted (explainer first)', async () => {
+    const { queryByText, getByRole, findByRole, props } = setup();
     expect(queryByText(/from you/)).toBeNull();
     fireEvent.press(getByRole('button', { name: 'How far am I?' }));
+    expect(props.onRequestLocation).not.toHaveBeenCalled();
+    fireEvent.press(await findByRole('button', { name: 'Continue' }));
     expect(props.onRequestLocation).toHaveBeenCalled();
   });
 

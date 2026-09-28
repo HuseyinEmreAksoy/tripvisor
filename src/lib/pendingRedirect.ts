@@ -45,8 +45,13 @@ export async function setPendingRedirect(path: string): Promise<void> {
   }
 }
 
-/** Unparseable, stale or unsafe entries resolve null (and are already cleared). */
-function parseStored(raw: string): string | null {
+/**
+ * Parse a raw stored entry. Unparseable, stale (older than the TTL) or unsafe
+ * entries resolve null. Pure — never touches storage; `takePendingRedirect`
+ * clears the key itself, and read-only callers (the onboarding gate) use this
+ * to tell a live pending redirect from a leftover one.
+ */
+export function parsePendingRedirect(raw: string): string | null {
   let entry: Partial<StoredRedirect>;
   try {
     entry = JSON.parse(raw) as Partial<StoredRedirect>;
@@ -70,7 +75,7 @@ export function takePendingRedirect(): Promise<string | null> {
       const raw = await AsyncStorage.getItem(PENDING_REDIRECT_KEY);
       if (raw === null) return null;
       await AsyncStorage.removeItem(PENDING_REDIRECT_KEY);
-      return parseStored(raw);
+      return parsePendingRedirect(raw);
     } catch {
       return null;
     }

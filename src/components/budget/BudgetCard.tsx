@@ -97,7 +97,7 @@ export function BudgetCard({ rollup, currency, onSetBudget, canEdit, onAddExpens
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>
               {hasBudget ? 'Edit' : 'Set budget'}
             </Text>
           </Pressable>
@@ -223,7 +223,7 @@ export function BudgetCard({ rollup, currency, onSetBudget, canEdit, onAddExpens
             },
           ]}
         >
-          <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '700' }]}>
+          <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '700' }]}>
             + Add expense
           </Text>
         </Pressable>

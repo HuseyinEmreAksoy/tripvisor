@@ -131,7 +131,7 @@ export function TripHeader({
         <BackButton onPress={onBack} label="Trips" />
         <View style={styles.titleRow}>
           <View style={{ flex: 1, minWidth: 200, gap: 2 }}>
-            <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+            <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
               Itinerary
             </Text>
             <Heading level={1}>{trip.title}</Heading>
@@ -155,10 +155,14 @@ export function TripHeader({
             borderRadius: t.radius.pill,
             paddingHorizontal: t.spacing.md,
             paddingVertical: 5,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
             ...t.shadows.sm(t.colors.shadowColor),
           }}>
+            <Icon name="calendar" size={13} color={t.colors.textMuted} />
             <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-              📅 {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day · {trip.transport_mode}
+              {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day · {trip.transport_mode}
             </Text>
           </View>
           {statusPill}

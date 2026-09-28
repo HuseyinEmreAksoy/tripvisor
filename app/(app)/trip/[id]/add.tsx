@@ -16,7 +16,16 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { BackButton, Button, EmptyState, Heading, PoweredByGoogle, Screen, TextField } from '@/components';
+import {
+  BackButton,
+  Button,
+  EmptyState,
+  Heading,
+  KeyboardAvoid,
+  PoweredByGoogle,
+  Screen,
+  TextField,
+} from '@/components';
 import { DayPicker, dayLabel, tripDayCount } from '@/components/add-place/DayPicker';
 import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
@@ -247,268 +256,271 @@ export default function AddPlace() {
 
   return (
     <Screen padded={false}>
-      <View style={[{ padding: t.spacing.lg, gap: t.spacing.sm }, desktopWrap]}>
-        <BackButton onPress={goBack} />
-        <View style={{ gap: t.spacing.xs }}>
-          <Heading level={2}>Add a place</Heading>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            Search for restaurants, museums, viewpoints, or any destination to add to your itinerary.
-          </Text>
-        </View>
-
-        {schedulingOffline ? (
-          <View
-            style={[
-              addStyles.setupBanner,
-              {
-                backgroundColor: t.colors.bgElevated,
-                borderLeftColor: t.colors.warning,
-                borderRadius: t.radius.md,
-                padding: t.spacing.md,
-              },
-            ]}
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={[t.typography.caption, { color: t.colors.text }]}>
-              {"You're offline. Scheduling needs a connection — it'll go to Ideas, and you can move it to a day later."}
+      <KeyboardAvoid>
+        <View style={[{ padding: t.spacing.lg, gap: t.spacing.sm }, desktopWrap]}>
+          <BackButton onPress={goBack} />
+          <View style={{ gap: t.spacing.xs }}>
+            <Heading level={2}>Add a place</Heading>
+            <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+              Search for restaurants, museums, viewpoints, or any destination to add to your itinerary.
             </Text>
           </View>
-        ) : (
-          <DayPicker
-            dayCount={dayCount}
-            selected={effectiveDayIndex}
-            onSelect={setSelectedDayIndex}
-          />
-        )}
 
-        <TextField
-          label="Search places"
-          autoFocus
-          autoCapitalize="none"
-          placeholder="Restaurant, museum, viewpoint…"
-          value={query}
-          onChangeText={setQuery}
-        />
-
-        {/* ── Toast notification (Step 23.7) ───────────────────────────── */}
-        {toastMessage ? (
-          <View
-            style={[
-              addStyles.toast,
-              {
-                backgroundColor: t.colors.primary,
-                borderRadius: t.radius.md,
-                padding: t.spacing.sm,
-              },
-            ]}
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={[t.typography.caption, { color: t.colors.primaryText }]}>
-              {toastMessage}
-            </Text>
-          </View>
-        ) : null}
-
-        {mapsSetupError ? (
-          <View
-            style={[
-              addStyles.setupBanner,
-              {
-                backgroundColor: t.colors.bgElevated,
-                borderLeftColor: t.colors.warning,
-                borderRadius: t.radius.md,
-                padding: t.spacing.md,
-              },
-            ]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-              Maps integration needs setup
-            </Text>
-            <Text
+          {schedulingOffline ? (
+            <View
               style={[
-                t.typography.caption,
-                { color: t.colors.textMuted, marginTop: t.spacing.xs },
+                addStyles.setupBanner,
+                {
+                  backgroundColor: t.colors.bgElevated,
+                  borderLeftColor: t.colors.warning,
+                  borderRadius: t.radius.md,
+                  padding: t.spacing.md,
+                },
               ]}
+              accessibilityLiveRegion="polite"
             >
-              {mapsSetupError.message}{' '}
-              See{' '}
-              <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
-                docs/google-maps-setup.md
-              </Text>{' '}
-              to set up your Google Maps server key.
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      {pickedId ? (
-        <View style={[{ flex: 1, padding: t.spacing.lg, gap: t.spacing.md }, desktopWrap]}>
-          {loadingDetails || !picked ? (
-            <ActivityIndicator />
-          ) : (
-            <>
-              <Text style={[t.typography.title, { color: t.colors.text }]} numberOfLines={2}>
-                {picked.displayName}
+              <Text style={[t.typography.caption, { color: t.colors.text }]}>
+                {"You're offline. Scheduling needs a connection — it'll go to Ideas, and you can move it to a day later."}
               </Text>
-              <Text style={[t.typography.body, { color: t.colors.textMuted }]} numberOfLines={2}>
-                {picked.formattedAddress}
-              </Text>
-              <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                Default visit duration:{' '}
-                {inferCategoryDefault(picked.types).durationMinutes} min
-              </Text>
-              <PoweredByGoogle />
-              {isDuplicate ? (
-                <View
-                  style={[
-                    addStyles.duplicateWarning,
-                    {
-                      backgroundColor: t.colors.bgElevated,
-                      borderLeftColor: t.colors.warning,
-                      borderRadius: t.radius.md,
-                      padding: t.spacing.md,
-                    },
-                  ]}
-                  accessibilityRole="alert"
-                  accessibilityLiveRegion="polite"
-                >
-                  <Text style={[t.typography.caption, { color: t.colors.text }]}>
-                    Already in this trip — confirm to add as a separate visit.
-                  </Text>
-                </View>
-              ) : null}
-              <Button
-                label={isDuplicate ? 'Add anyway' : 'Add to trip'}
-                accessibilityLabel={
-                  isDuplicate
-                    ? 'Add anyway, this place is already in your trip'
-                    : undefined
-                }
-                loading={saving}
-                onPress={handleConfirm}
-              />
-              {addError ? (
-                <Text
-                  accessibilityRole="alert"
-                  accessibilityLiveRegion="polite"
-                  style={[t.typography.caption, { color: t.colors.danger }]}
-                >
-                  {addError}
-                </Text>
-              ) : null}
-              <Button
-                variant="ghost"
-                label="Pick a different place"
-                onPress={() => {
-                  setAddError(null);
-                  setPickedId(null);
-                }}
-              />
-            </>
-          )}
-        </View>
-      ) : (
-        // ── Search / Recents area ─────────────────────────────────────────────
-        <View style={[addStyles.searchArea, desktopWrap]}>
-          {showRecents && (
-            <View style={{ paddingHorizontal: t.spacing.lg }}>
-              <View style={[addStyles.recentsSectionHeader, { marginVertical: t.spacing.sm }]}>
-                <Text
-                  style={[
-                    t.typography.caption,
-                    addStyles.recentsHeader,
-                    { color: t.colors.textMuted },
-                  ]}
-                >
-                  Recent searches
-                </Text>
-              </View>
-
-              {recents.map((item, index) => (
-                <View key={item.placeId}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Recent: ${item.mainText}`}
-                    onPress={() => setPickedId(item.placeId)}
-                    style={[addStyles.row, { paddingVertical: t.spacing.md }]}
-                  >
-                    <Text
-                      style={[t.typography.bodyStrong, { color: t.colors.text }]}
-                      numberOfLines={1}
-                    >
-                      {item.mainText}
-                    </Text>
-                    {item.secondaryText ? (
-                      <Text
-                        style={[t.typography.small, { color: t.colors.textMuted }]}
-                        numberOfLines={1}
-                      >
-                        {item.secondaryText}
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                  {index < recents.length - 1 && (
-                    <View style={{ height: 1, backgroundColor: t.colors.border }} />
-                  )}
-                </View>
-              ))}
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear recent searches"
-                onPress={handleClearRecents}
-                style={{ paddingVertical: t.spacing.md }}
-              >
-                <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-                  Clear recent searches
-                </Text>
-              </Pressable>
-
-              <View style={{ height: 1, backgroundColor: t.colors.border }} />
             </View>
+          ) : (
+            <DayPicker
+              dayCount={dayCount}
+              selected={effectiveDayIndex}
+              onSelect={setSelectedDayIndex}
+            />
           )}
 
-          <FlatList
-            data={suggestions}
-            keyExtractor={(s) => s.placeId}
-            contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
-            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
-            ListEmptyComponent={
-              debounced.length >= 2 ? (
-                isFetching ? (
-                  <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
-                    <ActivityIndicator />
-                  </View>
-                ) : (
-                  <EmptyState {...noSearchResults} />
-                )
-              ) : (
-                !showRecents ? <EmptyState {...searchPrompt} /> : null
-              )
-            }
-            ListFooterComponent={suggestions.length ? <PoweredByGoogle /> : null}
-            renderItem={({ item }) => (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Choose ${item.mainText}`}
-                onPress={() => setPickedId(item.placeId)}
-                style={[addStyles.row, { paddingVertical: t.spacing.md }]}
+          <TextField
+            label="Search places"
+            autoFocus
+            autoCapitalize="none"
+            placeholder="Restaurant, museum, viewpoint…"
+            value={query}
+            onChangeText={setQuery}
+          />
+
+          {/* ── Toast notification (Step 23.7) ───────────────────────────── */}
+          {toastMessage ? (
+            <View
+              style={[
+                addStyles.toast,
+                {
+                  backgroundColor: t.colors.primary,
+                  borderRadius: t.radius.md,
+                  padding: t.spacing.sm,
+                },
+              ]}
+              accessibilityLiveRegion="polite"
+            >
+              <Text style={[t.typography.caption, { color: t.colors.primaryText }]}>
+                {toastMessage}
+              </Text>
+            </View>
+          ) : null}
+
+          {mapsSetupError ? (
+            <View
+              style={[
+                addStyles.setupBanner,
+                {
+                  backgroundColor: t.colors.bgElevated,
+                  borderLeftColor: t.colors.warning,
+                  borderRadius: t.radius.md,
+                  padding: t.spacing.md,
+                },
+              ]}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
+                Maps integration needs setup
+              </Text>
+              <Text
+                style={[
+                  t.typography.caption,
+                  { color: t.colors.textMuted, marginTop: t.spacing.xs },
+                ]}
               >
-                <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
-                  {item.mainText}
+                {mapsSetupError.message}{' '}
+                See{' '}
+                <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
+                  docs/google-maps-setup.md
+                </Text>{' '}
+                to set up your Google Maps server key.
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {pickedId ? (
+          <View style={[{ flex: 1, padding: t.spacing.lg, gap: t.spacing.md }, desktopWrap]}>
+            {loadingDetails || !picked ? (
+              <ActivityIndicator />
+            ) : (
+              <>
+                <Text style={[t.typography.title, { color: t.colors.text }]} numberOfLines={2}>
+                  {picked.displayName}
                 </Text>
-                {item.secondaryText ? (
-                  <Text style={[t.typography.small, { color: t.colors.textMuted }]} numberOfLines={1}>
-                    {item.secondaryText}
+                <Text style={[t.typography.body, { color: t.colors.textMuted }]} numberOfLines={2}>
+                  {picked.formattedAddress}
+                </Text>
+                <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                  Default visit duration:{' '}
+                  {inferCategoryDefault(picked.types).durationMinutes} min
+                </Text>
+                <PoweredByGoogle />
+                {isDuplicate ? (
+                  <View
+                    style={[
+                      addStyles.duplicateWarning,
+                      {
+                        backgroundColor: t.colors.bgElevated,
+                        borderLeftColor: t.colors.warning,
+                        borderRadius: t.radius.md,
+                        padding: t.spacing.md,
+                      },
+                    ]}
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                  >
+                    <Text style={[t.typography.caption, { color: t.colors.text }]}>
+                      Already in this trip — confirm to add as a separate visit.
+                    </Text>
+                  </View>
+                ) : null}
+                <Button
+                  label={isDuplicate ? 'Add anyway' : 'Add to trip'}
+                  accessibilityLabel={
+                    isDuplicate
+                      ? 'Add anyway, this place is already in your trip'
+                      : undefined
+                  }
+                  loading={saving}
+                  onPress={handleConfirm}
+                />
+                {addError ? (
+                  <Text
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={[t.typography.caption, { color: t.colors.danger }]}
+                  >
+                    {addError}
                   </Text>
                 ) : null}
-              </Pressable>
+                <Button
+                  variant="ghost"
+                  label="Pick a different place"
+                  onPress={() => {
+                    setAddError(null);
+                    setPickedId(null);
+                  }}
+                />
+              </>
             )}
-          />
-        </View>
-      )}
+          </View>
+        ) : (
+          // ── Search / Recents area ─────────────────────────────────────────────
+          <View style={[addStyles.searchArea, desktopWrap]}>
+            {showRecents && (
+              <View style={{ paddingHorizontal: t.spacing.lg }}>
+                <View style={[addStyles.recentsSectionHeader, { marginVertical: t.spacing.sm }]}>
+                  <Text
+                    style={[
+                      t.typography.caption,
+                      addStyles.recentsHeader,
+                      { color: t.colors.textMuted },
+                    ]}
+                  >
+                    Recent searches
+                  </Text>
+                </View>
+
+                {recents.map((item, index) => (
+                  <View key={item.placeId}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Recent: ${item.mainText}`}
+                      onPress={() => setPickedId(item.placeId)}
+                      style={[addStyles.row, { paddingVertical: t.spacing.md }]}
+                    >
+                      <Text
+                        style={[t.typography.bodyStrong, { color: t.colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {item.mainText}
+                      </Text>
+                      {item.secondaryText ? (
+                        <Text
+                          style={[t.typography.small, { color: t.colors.textMuted }]}
+                          numberOfLines={1}
+                        >
+                          {item.secondaryText}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                    {index < recents.length - 1 && (
+                      <View style={{ height: 1, backgroundColor: t.colors.border }} />
+                    )}
+                  </View>
+                ))}
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear recent searches"
+                  onPress={handleClearRecents}
+                  style={{ paddingVertical: t.spacing.md }}
+                >
+                  <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+                    Clear recent searches
+                  </Text>
+                </Pressable>
+
+                <View style={{ height: 1, backgroundColor: t.colors.border }} />
+              </View>
+            )}
+
+            <FlatList
+              data={suggestions}
+              keyboardShouldPersistTaps="handled"
+              keyExtractor={(s) => s.placeId}
+              contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
+              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
+              ListEmptyComponent={
+                debounced.length >= 2 ? (
+                  isFetching ? (
+                    <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
+                      <ActivityIndicator />
+                    </View>
+                  ) : (
+                    <EmptyState {...noSearchResults} />
+                  )
+                ) : (
+                  !showRecents ? <EmptyState {...searchPrompt} /> : null
+                )
+              }
+              ListFooterComponent={suggestions.length ? <PoweredByGoogle /> : null}
+              renderItem={({ item }) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Choose ${item.mainText}`}
+                  onPress={() => setPickedId(item.placeId)}
+                  style={[addStyles.row, { paddingVertical: t.spacing.md }]}
+                >
+                  <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
+                    {item.mainText}
+                  </Text>
+                  {item.secondaryText ? (
+                    <Text style={[t.typography.small, { color: t.colors.textMuted }]} numberOfLines={1}>
+                      {item.secondaryText}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              )}
+            />
+          </View>
+        )}
+      </KeyboardAvoid>
     </Screen>
   );
 }

@@ -34,6 +34,11 @@ import { initSentry } from '@/lib/sentry';
 //
 // The runtime-require pattern keeps expo-router/head out of the native bundle —
 // same approach as app/(app)/trip/[id]/print.tsx:PrintHead.
+const SITE_ORIGIN = 'https://tripvisor.pages.dev';
+const SITE_TITLE = 'Tripvisor — holiday route planner';
+const SITE_DESCRIPTION =
+  'Tripvisor — plan multi-day holiday routes with optimized day splits, place reviews, and shareable itineraries.';
+
 function RootHead() {
   if (Platform.OS !== 'web') return null;
 
@@ -50,15 +55,27 @@ function RootHead() {
   const Head = headModule.default ?? headModule.Head;
   if (!Head) return null;
 
+  // These are statically prerendered into every exported HTML file (expo-router
+  // static output renders Head server-side), so plain-HTML crawlers see them.
+  // The Pages Function functions/share/[token].ts rewrites the title and
+  // description tags for /share/<token> by attribute selector, so every key it
+  // targets must exist here.
   return (
     <Head>
-      <meta
-        name="description"
-        content="Tripvisor — plan multi-day holiday routes with optimized day splits, place reviews, and shareable itineraries."
-      />
+      <meta name="description" content={SITE_DESCRIPTION} />
       <meta property="og:site_name" content="Tripvisor" />
       <meta property="og:type" content="website" />
-      <meta name="twitter:card" content="summary" />
+      <meta property="og:title" content={SITE_TITLE} />
+      <meta property="og:description" content={SITE_DESCRIPTION} />
+      <meta property="og:url" content={`${SITE_ORIGIN}/`} />
+      <meta property="og:image" content={`${SITE_ORIGIN}/og-image.jpg`} />
+      <meta property="og:image:width" content="1200" />
+      <meta property="og:image:height" content="630" />
+      <meta property="og:image:alt" content="Sunset over a cobbled Mediterranean village street above the sea" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content={SITE_TITLE} />
+      <meta name="twitter:description" content={SITE_DESCRIPTION} />
+      <meta name="twitter:image" content={`${SITE_ORIGIN}/og-image.jpg`} />
     </Head>
   );
 }

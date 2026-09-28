@@ -104,7 +104,7 @@ export function CoverPhotoSection({
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>
               {coverPhotoPlaceId ? 'Change' : 'Set cover'}
             </Text>
           </Pressable>

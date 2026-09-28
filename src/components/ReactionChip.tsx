@@ -15,6 +15,8 @@
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
+import { Icon } from './Icon';
 import type { TripPlaceReactionType } from '@/api/trip-place-reactions';
 
 export interface ReactionChipProps {
@@ -39,11 +41,15 @@ export function ReactionChip({
 }: ReactionChipProps) {
   const t = useTheme();
   const hitSize = size === 'lg' ? 48 : 36;
-  const iconFontSize = size === 'lg' ? 20 : 15;
+  const iconSize = size === 'lg' ? 20 : 16;
+  // 'sm' renders 36px chips in dense rows; hitSlop pads the touch target to
+  // the 44pt minimum without growing the visual (X3.1).
+  const slop = hitSize < 44 ? (44 - hitSize) / 2 : 0;
   const likedColor = accentColor ?? t.colors.primary;
 
   function handlePress(value: TripPlaceReactionType) {
     if (disabled) return;
+    haptics.select();
     // Tapping the active chip toggles it off (null = unrate).
     onChange(reaction === value ? null : value);
   }
@@ -57,6 +63,7 @@ export function ReactionChip({
         accessibilityState={{ checked: reaction === 'liked', disabled }}
         disabled={disabled}
         onPress={() => handlePress('liked')}
+        hitSlop={slop}
         style={({ pressed }) => [
           styles.btn,
           {
@@ -70,14 +77,11 @@ export function ReactionChip({
           },
         ]}
       >
-        <Text
-          accessible={false}
-          importantForAccessibility="no"
-          accessibilityElementsHidden
-          style={[styles.icon, { fontSize: iconFontSize }]}
-        >
-          {'👍'}
-        </Text>
+        <Icon
+          name="thumbs-up"
+          size={iconSize}
+          color={reaction === 'liked' ? t.colors.primaryText : t.colors.textMuted}
+        />
         {size === 'lg' ? (
           <Text
             style={[
@@ -100,6 +104,7 @@ export function ReactionChip({
         accessibilityState={{ checked: reaction === 'disliked', disabled }}
         disabled={disabled}
         onPress={() => handlePress('disliked')}
+        hitSlop={slop}
         style={({ pressed }) => [
           styles.btn,
           {
@@ -115,20 +120,17 @@ export function ReactionChip({
           },
         ]}
       >
-        <Text
-          accessible={false}
-          importantForAccessibility="no"
-          accessibilityElementsHidden
-          style={[styles.icon, { fontSize: iconFontSize }]}
-        >
-          {'👎'}
-        </Text>
+        <Icon
+          name="thumbs-down"
+          size={iconSize}
+          color={reaction === 'disliked' ? t.colors.dangerText : t.colors.textMuted}
+        />
         {size === 'lg' ? (
           <Text
             style={[
               t.typography.caption,
               {
-                color: reaction === 'disliked' ? t.colors.primaryText : t.colors.textMuted,
+                color: reaction === 'disliked' ? t.colors.dangerText : t.colors.textMuted,
                 marginLeft: 4,
               },
             ]}
@@ -152,8 +154,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-  },
-  icon: {
-    lineHeight: 22,
   },
 });

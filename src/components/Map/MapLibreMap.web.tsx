@@ -5,7 +5,9 @@
  * `Map.web.tsx` dispatcher selects this unless `app_config.map_provider_web`
  * (or EXPO_PUBLIC_MAP_PROVIDER) pins 'google'.
  *
- * Style URL: EXPO_PUBLIC_MAPLIBRE_STYLE_URL → default OpenFreeMap "liberty".
+ * Style URL: EXPO_PUBLIC_MAPLIBRE_STYLE_URL → default OpenFreeMap "liberty"
+ * (light theme) / "dark" (dark theme, X3.1 — keyless, same tiles + the same
+ * © OpenStreetMap attribution). An env override pins one style for both.
  *
  * ATTRIBUTION (do not remove): MapLibre's built-in AttributionControl is left
  * at its default — VISIBLE. OpenStreetMap data is ODbL-licensed and the
@@ -40,6 +42,7 @@ import {
   type LayerProps,
   type MapRef,
 } from '@vis.gl/react-maplibre';
+import { useThemeNameOptional } from '@/theme';
 import {
   dayColor,
   polylineColor,
@@ -50,15 +53,17 @@ import {
 } from './types';
 
 const DEFAULT_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const DEFAULT_DARK_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
 
 /** Style URL override for self-hosted/alternate tile styles; defaults to
- * OpenFreeMap. Static read inlines at build; dynamic read is the dev/jest
- * fallback (production web has no runtime process.env). */
-function getStyleUrl(): string {
+ * OpenFreeMap (liberty / dark by theme). Static read inlines at build; dynamic
+ * read is the dev/jest fallback (production web has no runtime process.env). */
+function getStyleUrl(dark: boolean): string {
   const fromEnv =
     process.env.EXPO_PUBLIC_MAPLIBRE_STYLE_URL ??
     (typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_MAPLIBRE_STYLE_URL : undefined);
-  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_STYLE_URL;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  return dark ? DEFAULT_DARK_STYLE_URL : DEFAULT_STYLE_URL;
 }
 
 /** [[west, south], [east, north]] — maplibre LngLatBoundsLike. */
@@ -151,6 +156,7 @@ export function MapLibreMap(props: MapViewProps) {
   const polylines = props.polylines ?? [];
 
   const mapRef = useRef<MapRef>(null);
+  const isDark = useThemeNameOptional() === 'dark';
 
   const bounds = useMemo(
     () => computeBounds(props.initialRegion, markers, polylines),
@@ -195,7 +201,7 @@ export function MapLibreMap(props: MapViewProps) {
     <View style={styles.container} accessibilityLabel="Trip map">
       <MapLibreView
         ref={mapRef}
-        mapStyle={getStyleUrl()}
+        mapStyle={getStyleUrl(isDark)}
         initialViewState={
           initialBounds
             ? { bounds: initialBounds, fitBoundsOptions: FIT_OPTIONS }

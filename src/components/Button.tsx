@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { useTheme } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { haptics } from '@/lib/haptics';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -32,6 +33,12 @@ interface ButtonProps extends Omit<PressableProps, 'children' | 'style'> {
   loading?: boolean;
   fullWidth?: boolean;
   leftIcon?: React.ReactNode;
+  /**
+   * Light haptic tick on press (native only; no-op on web and under reduced
+   * motion). Defaults ON for the `primary` and `danger` variants — the
+   * primary actions — and OFF for secondary/ghost (X3.1).
+   */
+  haptic?: boolean;
 }
 
 export function Button({
@@ -40,13 +47,16 @@ export function Button({
   loading = false,
   fullWidth = true,
   leftIcon,
+  haptic,
   disabled,
+  onPress,
   ...rest
 }: ButtonProps) {
   const t = useTheme();
   const reducedMotion = useReducedMotion();
   const { container, textColor, pressedStyle } = getStyles(t, variant);
   const isDisabled = disabled || loading;
+  const wantsHaptic = haptic ?? (variant === 'primary' || variant === 'danger');
 
   // Animated scale for press feedback (skipped under reduced motion).
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -83,6 +93,14 @@ export function Button({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         {...rest}
+        onPress={
+          onPress
+            ? (e) => {
+                if (wantsHaptic) haptics.tap();
+                onPress(e);
+              }
+            : undefined
+        }
         style={({ pressed }) => [
           styles.base,
           {
@@ -161,7 +179,7 @@ function getStyles(t: ReturnType<typeof useTheme>, variant: Variant) {
           backgroundColor: t.colors.danger,
           ...t.shadows.md(t.colors.shadowColor),
         } as ViewStyle,
-        textColor: '#FFFFFF',
+        textColor: t.colors.dangerText,
         pressedStyle: {
           opacity: 0.85,
         } as ViewStyle,
@@ -171,7 +189,8 @@ function getStyles(t: ReturnType<typeof useTheme>, variant: Variant) {
         container: {
           backgroundColor: 'transparent',
         } as ViewStyle,
-        textColor: t.colors.primary,
+        // primaryInk: 16px label text needs 4.5:1 on the paper bg (X3.1).
+        textColor: t.colors.primaryInk,
         pressedStyle: {
           backgroundColor: t.colors.gradientSubtle,
         } as ViewStyle,

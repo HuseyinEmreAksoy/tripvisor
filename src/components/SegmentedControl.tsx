@@ -11,6 +11,7 @@
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
 
 interface Props<T extends string> {
   label?: string;
@@ -44,7 +45,10 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
               accessibilityRole="radio"
               accessibilityState={{ checked: active }}
               accessibilityLabel={opt.label}
-              onPress={() => onChange(opt.value)}
+              onPress={() => {
+                if (!active) haptics.select();
+                onChange(opt.value);
+              }}
               style={({ pressed }) => [
                 styles.opt,
                 {
@@ -89,6 +93,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 10,
   },
 });

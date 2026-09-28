@@ -13,6 +13,7 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import type { TripAccommodation } from '@/api/types';
 
 export interface StayingAtPillProps {
@@ -65,17 +66,21 @@ export function StayingAtPill({ dayIndex, tripStartDate, accommodations }: Stayi
         },
       ]}
     >
-      <Text style={[t.typography.small, { color: t.colors.primary, fontWeight: '600' }]}>
+      <Icon name="bed" size={13} color={t.colors.primaryInk} />
+      <Text
+        style={[t.typography.small, styles.label, { color: t.colors.primaryInk, fontWeight: '600' }]}
+      >
         {expanded
-          ? `🏨 ${covering.map((a) => a.name).join(', ')}`
+          ? covering.map((a) => a.name).join(', ')
           : hasMore
-            ? `🏨 ${first.name} +${covering.length - 1}`
-            : `🏨 ${first.name}`}
+            ? `${first.name} +${covering.length - 1}`
+            : first.name}
       </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  pill: { borderWidth: 1 },
+  pill: { borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  label: { flexShrink: 1 },
 });

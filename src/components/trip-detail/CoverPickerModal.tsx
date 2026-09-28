@@ -9,8 +9,10 @@
  * useTripPlaces (row list; TanStack dedupes against the route shell's
  * subscription) and the Tier-2 photo hooks in CoverPickerRow.
  */
-import { Image, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useOptionalSafeAreaInsets } from '@/hooks/useOptionalSafeAreaInsets';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import { useTripPlaces, type TripPlace } from '@/api';
 import { usePlaceDetails } from '@/api/places';
 import { usePlacePhotoUrl } from '@/api/place-photos';
@@ -27,6 +29,7 @@ export function CoverPickerModal({
   onSelect: (placeId: string) => void;
 }) {
   const t = useTheme();
+  const insets = useOptionalSafeAreaInsets();
   const { data: placesForPicker = [] } = useTripPlaces(tripId);
 
   return (
@@ -35,22 +38,26 @@ export function CoverPickerModal({
       transparent
       animationType="slide"
       onRequestClose={onClose}
+      // X3.1: draw under the system bars like the rest of the app
+      // (Android edge-to-edge) and pad the home indicator via insets.
+      statusBarTranslucent
+      navigationBarTranslucent
       accessibilityViewIsModal
     >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          justifyContent: 'flex-end',
-        }}
-      >
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Pressable
+          style={[StyleSheet.absoluteFill, { backgroundColor: t.colors.scrim }]}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close cover photo picker"
+        />
         <View
           style={{
             backgroundColor: t.colors.bgElevated,
             borderTopLeftRadius: t.radius.xl,
             borderTopRightRadius: t.radius.xl,
             maxHeight: '70%',
-            paddingBottom: t.spacing.xl,
+            paddingBottom: Math.max(insets.bottom, t.spacing.lg),
           }}
           accessible
           accessibilityLabel="Choose cover photo"
@@ -73,10 +80,19 @@ export function CoverPickerModal({
               accessibilityRole="button"
               accessibilityLabel="Close cover photo picker"
               onPress={onClose}
-              hitSlop={8}
-              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+              hitSlop={6}
+              style={({ pressed }) => [
+                {
+                  width: 36,
+                  height: 36,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: t.radius.pill,
+                  backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
+                },
+              ]}
             >
-              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>✕</Text>
+              <Icon name="x" size={20} color={t.colors.textMuted} />
             </Pressable>
           </View>
 

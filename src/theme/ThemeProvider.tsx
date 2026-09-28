@@ -158,6 +158,15 @@ export function useTheme(): Theme {
   return ctx.theme;
 }
 
+/**
+ * Non-throwing variant for leaf components that may render outside the
+ * provider (isolated tests, map canvases): the active theme name, or null
+ * when no ThemeProvider is mounted.
+ */
+export function useThemeNameOptional(): ThemeName | null {
+  return useContext(ThemeContext)?.theme.name ?? null;
+}
+
 export function useThemeControls() {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error('useThemeControls must be used inside <ThemeProvider>');

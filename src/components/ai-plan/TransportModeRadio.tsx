@@ -13,6 +13,8 @@
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import type { TransportMode } from '@/api';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
+import { Icon, type IconName } from '@/components/Icon';
 
 export interface TransportModeRadioProps {
   label?: string;
@@ -22,11 +24,11 @@ export interface TransportModeRadioProps {
 
 // Same order + icons as trip/new.tsx (bicycling sits between walking and
 // transit per the Phase 23 spec).
-const OPTIONS: Array<{ value: TransportMode; icon: string; label: string }> = [
-  { value: 'driving', icon: '🚗', label: 'Drive' },
-  { value: 'walking', icon: '🚶', label: 'Walk' },
-  { value: 'bicycling', icon: '🚲', label: 'Bike' },
-  { value: 'transit', icon: '🚆', label: 'Transit' },
+const OPTIONS: Array<{ value: TransportMode; icon: IconName; label: string }> = [
+  { value: 'driving', icon: 'car', label: 'Drive' },
+  { value: 'walking', icon: 'footprints', label: 'Walk' },
+  { value: 'bicycling', icon: 'bike', label: 'Bike' },
+  { value: 'transit', icon: 'train-front', label: 'Transit' },
 ];
 
 export function TransportModeRadio({ label = 'Travel mode', value, onChange }: TransportModeRadioProps) {
@@ -45,7 +47,10 @@ export function TransportModeRadio({ label = 'Travel mode', value, onChange }: T
               accessibilityRole="radio"
               accessibilityState={{ selected: active }}
               accessibilityLabel={opt.label}
-              onPress={() => onChange(opt.value)}
+              onPress={() => {
+                haptics.select();
+                onChange(opt.value);
+              }}
               style={({ pressed }) => [
                 styles.opt,
                 {
@@ -62,19 +67,16 @@ export function TransportModeRadio({ label = 'Travel mode', value, onChange }: T
                   ({ transition: 'all 0.2s ease', cursor: 'pointer' } as ViewStyle),
               ]}
             >
-              <Text
-                style={{ fontSize: 28 }}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-                aria-hidden
-              >
-                {opt.icon}
-              </Text>
+              <Icon
+                name={opt.icon}
+                size={26}
+                color={active ? t.colors.primary : t.colors.textMuted}
+              />
               <Text
                 style={[
                   t.typography.caption,
                   {
-                    color: active ? t.colors.primary : t.colors.text,
+                    color: active ? t.colors.primaryInk : t.colors.text,
                     fontWeight: active ? '700' : '500',
                   },
                 ]}
@@ -96,6 +98,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
+    minHeight: 64,
     borderWidth: 2,
   },
 });

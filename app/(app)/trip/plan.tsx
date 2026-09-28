@@ -35,6 +35,8 @@ import {
   Button,
   EmptyState,
   Heading,
+  Icon,
+  KeyboardAvoid,
   Screen,
   StatusPill,
   TextField,
@@ -281,185 +283,183 @@ export default function PlanMyTrip() {
         </View>
       ) : null}
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { padding: t.spacing.lg, gap: t.spacing.lg },
-          desktopWrap,
-        ]}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* ── Stage 1: prompt form ─────────────────────────────────────────── */}
-        {stage === 'form' ? (
-          <>
-            {/* v2 redesign: premium hero card — elevated surface, sparkle tile,
-                muted overline above the bold display heading. */}
-            <View
-              style={{
-                backgroundColor: t.colors.bgElevated,
-                borderRadius: t.radius.xl,
-                padding: t.spacing.xl,
-                gap: t.spacing.sm,
-                ...t.shadows.md(t.colors.shadowColor),
-              }}
-            >
-              <View style={styles.bannerRow}>
-                <View
-                  style={[styles.sparkleTile, { backgroundColor: t.colors.gradientSubtle }]}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                  aria-hidden
-                >
-                  <Text style={{ fontSize: 26 }}>✨</Text>
+      <KeyboardAvoid>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { padding: t.spacing.lg, gap: t.spacing.lg },
+            desktopWrap,
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── Stage 1: prompt form ─────────────────────────────────────────── */}
+          {stage === 'form' ? (
+            <>
+              {/* v2 redesign: premium hero card — elevated surface, sparkle tile,
+                  muted overline above the bold display heading. */}
+              <View
+                style={{
+                  backgroundColor: t.colors.bgElevated,
+                  borderRadius: t.radius.xl,
+                  padding: t.spacing.xl,
+                  gap: t.spacing.sm,
+                  ...t.shadows.md(t.colors.shadowColor),
+                }}
+              >
+                <View style={styles.bannerRow}>
+                  <View
+                    style={[styles.sparkleTile, { backgroundColor: t.colors.gradientSubtle }]}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                    aria-hidden
+                  >
+                    <Text style={{ fontSize: 26 }}>✨</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
+                      AI trip planner
+                    </Text>
+                    <Heading level={1}>Plan my trip with AI</Heading>
+                  </View>
                 </View>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Text style={[t.typography.overline, { color: t.colors.primary }]}>
-                    AI trip planner
-                  </Text>
-                  <Heading level={1}>Plan my trip with AI</Heading>
-                </View>
-              </View>
-              <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-                Describe the trip you want. AI drafts a day-by-day plan with real places — you
-                review and edit every stop before anything is saved.
-              </Text>
-            </View>
-
-            <Controller
-              control={control}
-              name="destination"
-              render={({ field: { value, onChange, onBlur } }) => (
-                <TextField
-                  label="Destination"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  placeholder="e.g. Lisbon"
-                  maxLength={120}
-                  error={errors.destination?.message ?? null}
-                />
-              )}
-            />
-
-            <Controller
-              control={control}
-              name="days"
-              render={({ field: { value, onChange } }) => (
-                <Stepper
-                  label="How many days?"
-                  value={value}
-                  onChange={onChange}
-                  min={1}
-                  max={14}
-                  formatValue={(v) => `${v} ${v === 1 ? 'day' : 'days'}`}
-                />
-              )}
-            />
-
-            <Controller
-              control={control}
-              name="prompt"
-              render={({ field: { value, onChange, onBlur } }) => (
-                <PromptField
-                  label="Describe your trip"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  placeholder={'"Relaxed pace, great food, one museum max…"'}
-                  maxLength={2000}
-                  hint="Pace, food, must-sees, things to avoid — anything goes."
-                  error={errors.prompt?.message ?? null}
-                />
-              )}
-            />
-
-            <Controller
-              control={control}
-              name="transport_mode"
-              render={({ field: { value, onChange } }) => (
-                <TransportModeRadio value={value} onChange={onChange} />
-              )}
-            />
-
-            {generate.error ? (
-              <AiErrorNotice
-                error={generate.error}
-                dailyLimit={usage?.dailyLimit}
-                onRetry={() => void submit()}
-                retryPending={generate.isPending}
-              />
-            ) : null}
-
-            <View style={{ gap: t.spacing.sm }}>
-              <Button
-                label="✨ Draft my trip"
-                onPress={() => void submit()}
-                loading={generate.isPending}
-              />
-              {generate.isPending ? (
-                <View style={styles.centerRow}>
-                  <StatusPill loading label="Drafting your trip — usually 10–20 seconds" />
-                </View>
-              ) : remainingPlans !== null ? (
-                <Text
-                  style={[t.typography.small, { color: t.colors.textMuted, textAlign: 'center' }]}
-                >
-                  {remainingPlans} of {usage?.dailyLimit} AI plans left today
+                <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+                  Describe the trip you want. AI drafts a day-by-day plan with real places — you
+                  review and edit every stop before anything is saved.
                 </Text>
+              </View>
+
+              <Controller
+                control={control}
+                name="destination"
+                render={({ field: { value, onChange, onBlur } }) => (
+                  <TextField
+                    label="Destination"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    placeholder="e.g. Lisbon"
+                    maxLength={120}
+                    error={errors.destination?.message ?? null}
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="days"
+                render={({ field: { value, onChange } }) => (
+                  <Stepper
+                    label="How many days?"
+                    value={value}
+                    onChange={onChange}
+                    min={1}
+                    max={14}
+                    formatValue={(v) => `${v} ${v === 1 ? 'day' : 'days'}`}
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="prompt"
+                render={({ field: { value, onChange, onBlur } }) => (
+                  <PromptField
+                    label="Describe your trip"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    placeholder={'"Relaxed pace, great food, one museum max…"'}
+                    maxLength={2000}
+                    hint="Pace, food, must-sees, things to avoid — anything goes."
+                    error={errors.prompt?.message ?? null}
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="transport_mode"
+                render={({ field: { value, onChange } }) => (
+                  <TransportModeRadio value={value} onChange={onChange} />
+                )}
+              />
+
+              {generate.error ? (
+                <AiErrorNotice
+                  error={generate.error}
+                  dailyLimit={usage?.dailyLimit}
+                  onRetry={() => void submit()}
+                  retryPending={generate.isPending}
+                />
               ) : null}
-            </View>
-          </>
-        ) : null}
 
-        {/* ── Stage 2: editable draft review ──────────────────────────────── */}
-        {showReview && result ? (
-          <DraftReview
-            key={result.runId}
-            draft={result.draft}
-            status={result.status}
-            defaultTitle={deriveDefaultTitle(getValues('destination'), result.draft.dayCount)}
-            commitError={draftCommit.error}
-            onStartOver={handleStartOver}
-            onCommit={(payload) => void handleCommit(payload)}
-          />
-        ) : null}
+              <View style={{ gap: t.spacing.sm }}>
+                <Button
+                  label="✨ Draft my trip"
+                  onPress={() => void submit()}
+                  loading={generate.isPending}
+                />
+                {generate.isPending ? (
+                  <View style={styles.centerRow}>
+                    <StatusPill loading label="Drafting your trip — usually 10–20 seconds" />
+                  </View>
+                ) : remainingPlans !== null ? (
+                  <Text
+                    style={[t.typography.small, { color: t.colors.textMuted, textAlign: 'center' }]}
+                  >
+                    {remainingPlans} of {usage?.dailyLimit} AI plans left today
+                  </Text>
+                ) : null}
+              </View>
+            </>
+          ) : null}
 
-        {/* ── Stage 3: commit progress / success / discarded ──────────────── */}
-        {stage === 'committing' ? (
-          <CommitProgress
-            phase={draftCommit.phase === 'idle' ? 'creating' : draftCommit.phase}
-            added={draftCommit.added}
-            total={draftCommit.total}
-          />
-        ) : null}
+          {/* ── Stage 2: editable draft review ──────────────────────────────── */}
+          {showReview && result ? (
+            <DraftReview
+              key={result.runId}
+              draft={result.draft}
+              status={result.status}
+              defaultTitle={deriveDefaultTitle(getValues('destination'), result.draft.dayCount)}
+              commitError={draftCommit.error}
+              onStartOver={handleStartOver}
+              onCommit={(payload) => void handleCommit(payload)}
+            />
+          ) : null}
 
-        {stage === 'success' && successInfo ? (
-          <CommitSuccess
-            title={successInfo.title}
-            placesAdded={successInfo.placesAdded}
-            failures={successInfo.failures}
-            autoOpening={successInfo.failures.length === 0 && undoPhase === 'none'}
-            onOpen={handleOpenTrip}
-            onUndo={() => void handleUndo()}
-            undoPending={undoPhase === 'pending'}
-            undoError={undoPhase === 'failed' ? deleteTrip.error : null}
-          />
-        ) : null}
+          {/* ── Stage 3: commit progress / success / discarded ──────────────── */}
+          {stage === 'committing' ? (
+            <CommitProgress
+              phase={draftCommit.phase === 'idle' ? 'creating' : draftCommit.phase}
+              added={draftCommit.added}
+              total={draftCommit.total}
+            />
+          ) : null}
 
-        {stage === 'discarded' ? (
-          <EmptyState
-            icon={
-              <Text style={{ fontSize: 48 }} aria-hidden>
-                🧹
-              </Text>
-            }
-            title="Draft discarded"
-            body="The trip was deleted — nothing is saved. Taking you back to your trips…"
-            ctaLabel="Back to your trips"
-            onPress={() => router.replace('/trips')}
-          />
-        ) : null}
-      </ScrollView>
+          {stage === 'success' && successInfo ? (
+            <CommitSuccess
+              title={successInfo.title}
+              placesAdded={successInfo.placesAdded}
+              failures={successInfo.failures}
+              autoOpening={successInfo.failures.length === 0 && undoPhase === 'none'}
+              onOpen={handleOpenTrip}
+              onUndo={() => void handleUndo()}
+              undoPending={undoPhase === 'pending'}
+              undoError={undoPhase === 'failed' ? deleteTrip.error : null}
+            />
+          ) : null}
+
+          {stage === 'discarded' ? (
+            <EmptyState
+              icon={<Icon name="eraser" size={40} color={t.colors.primary} />}
+              title="Draft discarded"
+              body="The trip was deleted — nothing is saved. Taking you back to your trips…"
+              ctaLabel="Back to your trips"
+              onPress={() => router.replace('/trips')}
+            />
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoid>
     </Screen>
   );
 }

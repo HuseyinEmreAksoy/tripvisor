@@ -22,6 +22,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomSheet } from './BottomSheet';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
+import { Icon } from './Icon';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,7 @@ export function FilterSheet<T extends string = string>({
   const t = useTheme();
 
   const handleSelect = (value: T) => {
+    haptics.select();
     onSelect(value);
     onClose();
   };
@@ -110,21 +113,15 @@ export function FilterSheet<T extends string = string>({
               <Text
                 style={[
                   t.typography.body,
-                  { color: isSelected ? t.colors.primary : t.colors.text, flex: 1 },
+                  { color: isSelected ? t.colors.primaryInk : t.colors.text, flex: 1 },
                 ]}
               >
                 {opt.label}
               </Text>
               {isSelected ? (
-                <Text
-                  style={{ color: t.colors.primary, fontSize: 16, lineHeight: 22 }}
-                  // The checkmark is decorative — the accessibilityState above
-                  // already communicates selection.
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                >
-                  ✓
-                </Text>
+                // Decorative — the accessibilityState above already
+                // communicates selection (Icon without a label is hidden).
+                <Icon name="check" size={18} strokeWidth={2.5} color={t.colors.primaryInk} />
               ) : null}
             </Pressable>
           );

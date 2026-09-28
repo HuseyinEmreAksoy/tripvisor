@@ -18,6 +18,7 @@ import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { MAX_DOCUMENT_BYTES, useUploadTripDocument } from '@/api';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 
 // Kept in lockstep with DocumentUploadButton.tsx (the native base). Redefined
 // rather than imported so this file never references its own module name —
@@ -94,9 +95,12 @@ export function DocumentUploadButton({ tripId }: DocumentUploadButtonProps) {
             </Text>
           </View>
         ) : (
-          <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>
-            ⬆️ Upload document
-          </Text>
+          <View style={[styles.pillContent, { gap: t.spacing.xs }]}>
+            <Icon name="upload" size={16} color={t.colors.textMuted} />
+            <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>
+              Upload document
+            </Text>
+          </View>
         )}
       </Pressable>
       {error ? (
@@ -128,7 +132,7 @@ export function DocumentUploadButton({ tripId }: DocumentUploadButtonProps) {
 const styles = StyleSheet.create({
   wrap: { alignSelf: 'stretch' },
   pill: {
-    minHeight: 36,
+    minHeight: 44,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',

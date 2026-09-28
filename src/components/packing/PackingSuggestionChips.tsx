@@ -41,7 +41,7 @@ export function PackingSuggestionChips({ chips, totalPending, onAddOne, onAddAll
               Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '700' }]}>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '700' }]}>
               Add all {totalPending}
             </Text>
           </Pressable>
@@ -67,7 +67,7 @@ export function PackingSuggestionChips({ chips, totalPending, onAddOne, onAddAll
               Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>+ {s.label}</Text>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk, fontWeight: '600' }]}>+ {s.label}</Text>
           </Pressable>
         ))}
       </View>

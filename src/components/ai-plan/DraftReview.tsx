@@ -18,6 +18,7 @@ import { useTheme } from '@/theme';
 import {
   Button,
   Heading,
+  Icon,
   PoweredByGoogle,
   StatusPill,
   TextField,
@@ -136,7 +137,7 @@ export function DraftReview({
         }}
       >
         <StatusPill tone="info" label="Draft — nothing is saved yet" />
-        <Text style={[t.typography.overline, { color: t.colors.primary }]}>
+        <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
           AI trip planner
         </Text>
         <Heading level={2}>Your draft</Heading>
@@ -292,7 +293,12 @@ export function DraftReview({
             ) : null}
           </>
         ) : null}
-        <Button variant="ghost" label="← Start over" onPress={onStartOver} />
+        <Button
+          variant="ghost"
+          label="Start over"
+          leftIcon={<Icon name="arrow-left" size={18} color={t.colors.primaryInk} />}
+          onPress={onStartOver}
+        />
       </View>
     </View>
   );

@@ -6,6 +6,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { TripAccommodation } from '@/api/types';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import { TodayAction } from './TodayAction';
 import { useTodayCardStyle } from './todayStyles';
 
@@ -27,14 +28,17 @@ export function TonightStayCard({ stays, onNavigateHome, tonight }: TonightStayC
       <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>Tonight's stay</Text>
       {stay ? (
         <>
-          <Text
-            style={[t.typography.subtitle, { color: t.colors.text }]}
-            accessibilityRole="header"
-            aria-level={2}
-            numberOfLines={2}
-          >
-            {`🏨 ${stay.name}${stays.length > 1 ? ` +${stays.length - 1}` : ''}`}
-          </Text>
+          <View style={styles.titleRow}>
+            <Icon name="bed" size={20} color={t.colors.primary} />
+            <Text
+              style={[t.typography.subtitle, styles.title, { color: t.colors.text }]}
+              accessibilityRole="header"
+              aria-level={2}
+              numberOfLines={2}
+            >
+              {`${stay.name}${stays.length > 1 ? ` +${stays.length - 1}` : ''}`}
+            </Text>
+          </View>
           {stay.address ? (
             <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={2}>
               {stay.address}
@@ -77,4 +81,6 @@ function checkoutHint(checkOut: string, tonight: string): string {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  title: { flexShrink: 1 },
 });

@@ -8,6 +8,7 @@
 import { forwardRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from './Icon';
 
 interface TextFieldProps extends Omit<TextInputProps, 'style'> {
   label: string;
@@ -34,7 +35,7 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
         style={[
           t.typography.overline,
           {
-            color: focused ? t.colors.primary : t.colors.textMuted,
+            color: focused ? t.colors.primaryInk : t.colors.textMuted,
             marginBottom: 8,
           },
         ]}
@@ -85,12 +86,15 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
         />
       </View>
       {error ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[t.typography.small, { color: t.colors.danger, marginTop: 6, fontWeight: '500' }]}
-        >
-          ⚠ {error}
-        </Text>
+        <View style={styles.errorRow}>
+          <Icon name="alert-triangle" size={13} color={t.colors.danger} />
+          <Text
+            accessibilityLiveRegion="polite"
+            style={[t.typography.small, styles.errorText, { color: t.colors.danger, fontWeight: '500' }]}
+          >
+            {error}
+          </Text>
+        </View>
       ) : hint ? (
         <Text style={[t.typography.small, { color: t.colors.textMuted, marginTop: 6 }]}>
           {hint}
@@ -102,6 +106,8 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
 
 const styles = StyleSheet.create({
   wrapper: { alignSelf: 'stretch' },
+  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
+  errorText: { flexShrink: 1 },
   inputContainer: {
     overflow: 'hidden',
   },

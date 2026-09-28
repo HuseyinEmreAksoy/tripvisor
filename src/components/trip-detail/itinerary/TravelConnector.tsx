@@ -12,6 +12,7 @@
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/Icon';
 import { formatDurationSeconds } from '@/lib/formatDuration';
 import { openDirections, type DirectionsPoint } from '@/lib/directions';
 import { haptics } from '@/lib/haptics';
@@ -37,6 +38,9 @@ export function TravelConnector({ legAfter, transportMode, from, to }: TravelCon
     const minutes = Math.round(legAfter.duration_seconds / 60);
     return (
       <View style={[styles.row, { gap: t.spacing.xs }]}>
+        {lineNames.length > 0 ? (
+          <Icon name="train-front" size={13} color={t.colors.textMuted} />
+        ) : null}
         <Text
           style={[t.typography.small, { color: t.colors.textMuted }]}
           accessibilityLabel={
@@ -46,7 +50,7 @@ export function TravelConnector({ legAfter, transportMode, from, to }: TravelCon
           }
         >
           {lineNames.length > 0
-            ? `↓ 🚇 ${lineNames.join(' → ')} → ~${durationLabel}`
+            ? `${lineNames.join(' → ')} → ~${durationLabel}`
             : `↓ Travel ~${durationLabel}`}
         </Text>
         {to ? (
@@ -60,7 +64,7 @@ export function TravelConnector({ legAfter, transportMode, from, to }: TravelCon
             // ≥44pt target on a single line of small text.
             hitSlop={{ top: 14, bottom: 14, left: 6, right: 6 }}
           >
-            <Text style={[t.typography.small, { color: t.colors.primary, fontWeight: '600' }]}>
+            <Text style={[t.typography.small, { color: t.colors.primaryInk, fontWeight: '600' }]}>
               {'· Plan transit ↗'}
             </Text>
           </Pressable>

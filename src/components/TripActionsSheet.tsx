@@ -21,6 +21,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomSheet } from './BottomSheet';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
 import type { Trip } from '@/api';
 
 export interface TripActionsSheetProps {
@@ -46,6 +47,9 @@ export function TripActionsSheet({
   const isArchived = trip.archived_at != null;
 
   const handleAction = (handler?: (id: string) => void) => {
+    // Delete gets the warning buzz; the confirm dialog follows.
+    if (handler && handler === onDelete) haptics.warning();
+    else haptics.tap();
     onClose();
     handler?.(trip.id);
   };

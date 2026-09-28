@@ -5,6 +5,7 @@
 import { Platform, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { Icon, type IconName } from '@/components/Icon';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
 import { MIN_TOUCH } from './todayStyles';
 
 export interface TodayActionProps {
@@ -31,7 +32,7 @@ export function TodayAction({
 }: TodayActionProps) {
   const t = useTheme();
   const fg =
-    variant === 'primary' ? t.colors.primaryText : variant === 'ghost' ? t.colors.primary : t.colors.text;
+    variant === 'primary' ? t.colors.primaryText : variant === 'ghost' ? t.colors.primaryInk : t.colors.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -39,7 +40,10 @@ export function TodayAction({
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled }}
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        if (variant === 'primary') haptics.tap();
+        onPress();
+      }}
       hitSlop={4}
       style={({ pressed }) => [
         styles.base,

@@ -212,7 +212,7 @@ function renderSingleInlineNode(
           accessibilityLabel={node.text}
           style={[
             t.typography.body,
-            { color: t.colors.primary, textDecorationLine: 'underline' },
+            { color: t.colors.primaryInk, textDecorationLine: 'underline' },
             style as object,
           ]}
           onPress={() => {

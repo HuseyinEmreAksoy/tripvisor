@@ -30,6 +30,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BottomSheet } from '@/components';
 import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { DateField } from '@/components/DateField';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
@@ -448,11 +449,9 @@ export function AccommodationEditSheet({
                   opacity: pressed ? 0.6 : 1,
                 },
               ]}
-              hitSlop={8}
+              hitSlop={12}
             >
-              <Text style={[t.typography.caption, { color: t.colors.info, fontWeight: '600' }]}>
-                ✕
-              </Text>
+              <Icon name="x" size={16} color={t.colors.info} />
             </Pressable>
           </View>
         )}

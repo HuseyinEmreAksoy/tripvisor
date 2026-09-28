@@ -95,7 +95,7 @@ export function AddPackingItemRow({ onAdd, pending }: AddPackingItemRowProps) {
                 style={[
                   t.typography.small,
                   {
-                    color: selected ? t.colors.primary : t.colors.textMuted,
+                    color: selected ? t.colors.primaryInk : t.colors.textMuted,
                     fontWeight: '600',
                   },
                 ]}

@@ -11,6 +11,8 @@ import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
 import { BottomSheet } from '@/components/BottomSheet';
+import { Icon, type IconName } from '@/components/Icon';
+import { haptics } from '@/lib/haptics';
 
 const IOS_MODAL_HANDOFF_MS = 350;
 
@@ -19,6 +21,8 @@ export interface AssistItem {
   title: string;
   description: string;
   onPress: () => void;
+  /** Leading line icon (X3.1 — replaces the emoji title prefixes). */
+  icon?: IconName;
   /** Disabled items stay visible with their description explaining why. */
   disabled?: boolean;
 }
@@ -37,7 +41,10 @@ export function AssistMenu({ items }: AssistMenuProps) {
         accessibilityRole="button"
         accessibilityLabel="Assist: edit with AI, import places, or fill free time"
         accessibilityState={{ expanded: open }}
-        onPress={() => setOpen(true)}
+        onPress={() => {
+          haptics.tap();
+          setOpen(true);
+        }}
         hitSlop={{ top: 4, bottom: 4 }}
         style={({ pressed }) => [
           styles.trigger,
@@ -52,7 +59,7 @@ export function AssistMenu({ items }: AssistMenuProps) {
           Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
         ]}
       >
-        <Text style={[t.typography.small, { color: t.colors.primary, fontWeight: '700' }]}>
+        <Text style={[t.typography.small, { color: t.colors.primaryInk, fontWeight: '700' }]}>
           ✨ Assist
         </Text>
       </Pressable>
@@ -88,8 +95,15 @@ export function AssistMenu({ items }: AssistMenuProps) {
                 Platform.OS === 'web' && !item.disabled && ({ cursor: 'pointer' } as ViewStyle),
               ]}
             >
-              <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{item.title}</Text>
-              <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{item.description}</Text>
+              {item.icon ? (
+                <View style={[styles.itemIcon, { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.pill }]}>
+                  <Icon name={item.icon} size={18} color={t.colors.primary} />
+                </View>
+              ) : null}
+              <View style={styles.itemText}>
+                <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{item.title}</Text>
+                <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{item.description}</Text>
+              </View>
             </Pressable>
           ))}
         </View>
@@ -100,10 +114,12 @@ export function AssistMenu({ items }: AssistMenuProps) {
 
 const styles = StyleSheet.create({
   trigger: {
-    minHeight: 36,
+    minHeight: 36, // + 4pt hitSlop top/bottom = 44pt target
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  item: { minHeight: 56, justifyContent: 'center', gap: 2 },
+  item: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  itemIcon: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  itemText: { flex: 1, gap: 2 },
 });
