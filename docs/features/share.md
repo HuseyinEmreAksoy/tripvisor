@@ -1,6 +1,6 @@
 # share
 
-**Status**: ✅ Done — shipped Phase 4 (core); Phase 14 added rich unfurl (2026-04-25).
+**Status**: ✅ Done — shipped Phase 4 (core); Phase 14 added rich unfurl (2026-04-25); M4 X3.3 (2026-09-29, `8dd2ae4`) added the native share sheet, https links on native, the mobile-first public page and the OG Pages Function (deploy pending, BUILD-LOG X3.4).
 **Owner agents**: backend-specialist, ui-specialist
 **Depends on**: trip-crud, optimization, map
 
@@ -13,11 +13,14 @@
 As a trip planner, I want to send a read-only link to a friend so they can view my itinerary without needing an account.
 
 ## UI
-- **Settings tab** (`app/(app)/trip/[id]/index.tsx`): "Share" section with "Create share link" button. On success, shows the share URL + "Copy" button + "Revoke" button via `ShareLinkCard.tsx`.
+- **Where** (M4 X2.2/X3.3): the Trip tab hub (`TripHubTab.tsx`, editors only; formerly the Settings tab) mounts `ShareLinkCard.tsx`; the header ⋯ menu also has a Share entry. The card shows "Create share link", then the URL + Share + Copy + Revoke (confirmed).
 - **Copy button**: platform-split — `expo-clipboard` on native, `navigator.clipboard` on web. Both return `Promise<boolean>`.
-- **Fallback URL (native)**: when `EXPO_PUBLIC_APP_URL` is unset, `buildShareUrl()` returns the `tripvisor://share/<token>` deep-link scheme (not a placeholder HTTPS domain) and shows an inline warning so the developer knows to set the env var before an EAS build.
+- **Share URL (native)** *(updated M4 X3.3, 2026-09-29, `8dd2ae4`)*: `buildAppUrl()` in `src/components/share/shareSheet.native.ts` uses `EXPO_PUBLIC_APP_URL` when set, else the live web origin `https://tripvisor.pages.dev` (`DEFAULT_APP_URL` in `shareSheet.types.ts`). It never returns the `tripvisor://` scheme (only works for recipients who have the app) and there is no longer an inline env-var warning. On web the URL is `<page origin>/share/<token>`.
+- **Share button** (M4 X3.3): the native share sheet (RN `Share.share`); on web `navigator.share` with a clipboard fallback. Invite links on `/trip/[id]/collaborators` are shared the same way.
+- *Superseded (pre-M4):* when `EXPO_PUBLIC_APP_URL` was unset, `buildShareUrl()` returned `tripvisor://share/<token>` with an inline developer warning.
 - **Anonymous share route** (`app/share/[token].tsx`): no auth required. Renders the trip header, read-only itinerary list, and `Map` (or `MapUnavailable` fallback when web key is absent). No edit affordances. "Powered by Google" footer when any place data is displayed. "Read-only view" badge with `accessibilityRole="text"` + descriptive `accessibilityLabel`.
-- Platform difference: deep-link `tripvisor://share/<token>` (native) and `https://<domain>/share/<token>` (web) both route to the same `app/share/[token].tsx` via Expo Router universal linking.
+- Platform difference: shared links are always `https://<domain>/share/<token>` and open `app/share/[token].tsx` in a browser. `tripvisor://share/<token>` still routes to the same screen if typed or tapped inside the app, but it is not what users share. Android App Links (opening https links in the installed app) are ⏭ deferred to P4.
+- **Public share page (M4 X3.3)**: mobile-first — day tabs, map, timeline, "Plan your own" CTA. Per-trip OG tags come from the Cloudflare Pages Function `functions/share/[token].ts` (needs Pages env `SUPABASE_URL` / `SUPABASE_ANON_KEY`; not deployed yet — BUILD-LOG X3.4), with static OG tags as the fallback.
 
 ## Data
 - New table: `trip_shares (id uuid pk, trip_id uuid fk trips, token text unique not null, created_at timestamptz, revoked_at timestamptz)` — migration `supabase/migrations/0003_share_links.sql`
@@ -33,13 +36,13 @@ As a trip planner, I want to send a read-only link to a friend so they can view 
 
 ## Edge cases
 - Revoked token: `read` returns HTTP 404. UI shows "Link not found or revoked".
-- `EXPO_PUBLIC_APP_URL` unset on native: falls back to `tripvisor://share/<token>` with an inline developer warning — no silent UX failure.
+- `EXPO_PUBLIC_APP_URL` unset on native: falls back to `https://tripvisor.pages.dev/share/<token>` (M4; previously `tripvisor://` + inline warning). Tested in `src/components/share/__tests__/shareSheet.native.test.ts`.
 - Map unavailable: if `EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY` is empty on web, the share route shows `MapUnavailable` ("Map unavailable — list view below") rather than crashing.
 - Legs older than 30 days: excluded from the share read payload; share view renders place list without travel times.
 - No edit affordances on the share route: verified by component test asserting no "Edit", "Delete", or drag controls are rendered.
 
 ## Test plan
-- Unit: `src/components/__tests__/ShareLinkCard.test.tsx` — 10 cases covering create, copy, revoke, no-URL warning ✅
+- Unit: `src/components/__tests__/ShareLinkCard.test.tsx` — create, share sheet, clipboard fallback, revoke with confirm (M4 rewrite; the no-URL warning case is gone) ✅ · `src/components/share/__tests__/shareSheet.{native,web}.test.ts` ✅
 - Deno integration: `supabase/functions/share-trip/test.ts` — 14 cases: create, read, revoke, read-after-revoke (404), anon bypass attempts ✅
 - RLS: `tests/rls.share.test.ts` — anonymous cannot SELECT `trip_shares` or bypass via a revoked token ✅
 - Component: `app/share/[token].tsx` renders no edit controls; read-only badge present ✅

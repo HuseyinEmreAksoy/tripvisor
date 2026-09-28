@@ -12,7 +12,7 @@
  * never touches `window`:
  *   Web:    <page origin>/share/<token>
  *   Native: EXPO_PUBLIC_APP_URL/share/<token>, else https://tripvisor.pages.dev/share/<token>
- *           (deep link only — a warning is shown so the dev sets the env var).
+ *           (always an https link anyone can open — never the tripvisor:// scheme).
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';

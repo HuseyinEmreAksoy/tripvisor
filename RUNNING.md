@@ -61,9 +61,9 @@ EXPO_PUBLIC_SUPABASE_URL=https://<your-project>.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<your anon key>
 EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY=<referer-restricted browser key>
 EXPO_PUBLIC_SENTRY_DSN=          # optional — when set, unhandled errors stream to Sentry; leave blank to disable
-EXPO_PUBLIC_APP_URL=             # optional on web (defaults to window.location.origin); required on native/EAS builds
-                                 # to produce a public share URL like https://yourdomain.com/share/<token>.
-                                 # If unset on native, share URLs fall back to the tripvisor://share/<token> deep-link scheme.
+EXPO_PUBLIC_APP_URL=             # optional. Web: defaults to window.location.origin.
+                                 # Native: defaults to https://tripvisor.pages.dev; set it only if the web app lives elsewhere.
+                                 # Share links are always https://<origin>/share/<token> (never the tripvisor:// scheme).
 ```
 
 Server-only keys (`GOOGLE_MAPS_SERVER_KEY`, `ALLOWED_ORIGINS`) go into Supabase Edge Function secrets — see 2.4 below. Do **not** put them in `.env`.
