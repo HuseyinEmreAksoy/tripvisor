@@ -2,11 +2,11 @@
  * hydrate.ts — wires the Tier-1 store to Supabase (v2 S2.2 reads; S2.4
  * writes for the trips + trip_places slice).
  *
- * Wave-2 scope: trips + trip_places are READ-WRITE
- * (`actions: ['read','create','update']`); the other six roots stay
- * read-only until a later slice widens them. Nothing in the app writes the
- * store yet — Wave 3 repoints the UI hooks. With the flags.ts switch off
- * (the default) this module does nothing at all.
+ * Scope: trips + trip_places (S2.4) and trip_expenses + trip_packing_items
+ * (M4 X2.5) are READ-WRITE (`actions: ['read','create','update']`); the
+ * other four roots stay read-only until a later slice widens them. The app
+ * writes through src/sync/mutations.ts via the src/api facades. With the
+ * flags.ts switch off this module does nothing at all.
  *
  * ── Write path (S2.4)
  * Local store writes flow: observable change → syncedCrud diff →
@@ -90,7 +90,7 @@
  */
 
 import { syncObservable } from '@legendapp/state/sync';
-import { syncState } from '@legendapp/state';
+import { observable, syncState } from '@legendapp/state';
 import { syncedSupabase } from '@legendapp/state/sync-plugins/supabase';
 import { supabase } from '../api/supabase';
 import {
@@ -108,6 +108,7 @@ import { TABLE_FOR_KEY, TIER1_STORE_KEYS, tier1Store$, type Tier1StoreKey } from
 import {
   markSyncDegraded,
   markSyncEnabled,
+  markSyncRestartRequired,
   markSyncStopped,
   recordDroppedField,
   recordEntityHydrated,
@@ -339,7 +340,12 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
     recordEntityHydrated(table, value ? Object.keys(value).length : 0);
   };
   state$.isLoaded.onChange(({ value }) => {
-    if (value === true) stampHydrated();
+    if (value === true) {
+      stampHydrated();
+      // X2.5: the reactive "first remote load finished" signal the child-
+      // root facades (expenses, packing) gate on — see tier1RootLoaded$.
+      tier1RootLoaded$[key].set(true);
+    }
   });
   state$.isGetting.onChange(({ value }) => {
     if (value === false && state$.isLoaded.peek() === true) stampHydrated();
@@ -359,6 +365,27 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
     else recordEntityRowCount(table, rows);
   });
 }
+
+/**
+ * X2.5 — per-root "the first REMOTE load has completed this session" flags,
+ * as an observable so read facades can track it inside `use$`.
+ *
+ * Why the trips/places facades' "root has rows" gate is not enough for the
+ * child roots: a user with ZERO expenses (or packing items) anywhere never
+ * gets a row into that root, so a rows-only gate would never flip to Tier-1
+ * — and the first expense added OFFLINE mid-trip would take the legacy
+ * network path and fail. `rows > 0 || loaded` flips as soon as the server
+ * has authoritatively said "empty" (the D2 concern — serving an empty store
+ * before hydration — is exactly what the loaded half rules out).
+ *
+ * Known gap (documented): an OFFLINE COLD START with a still-empty root is
+ * neither (no rows on disk, no remote load possible) — the facade serves the
+ * v1 path until the device is back online. Rows persisted from an earlier
+ * session (including unacked offline creates) flip the facade on their own.
+ */
+export const tier1RootLoaded$ = observable<Record<Tier1StoreKey, boolean>>(
+  Object.fromEntries(TIER1_STORE_KEYS.map((k) => [k, false])) as Record<Tier1StoreKey, boolean>,
+);
 
 /** Force an incremental pull on every root (reconnect / foreground). */
 export function resyncTier1(): void {
@@ -449,12 +476,25 @@ function attachReconnectResync(): void {
 }
 
 /**
- * Boot Tier-1 sync for the signed-in user (read-write for the trips +
- * trip_places slice, read-only elsewhere). Idempotent per process; called
- * fire-and-forget from the auth listener (src/api/auth.ts). Resolves after
- * the bounded persistence warm-up (web ≤ ~6 s worst case, typically <1 s;
- * native immediate — S2.8.13/B1); hydration continues in the background.
- * Concurrent same-user calls share one boot (bootInFlight below).
+ * Boot Tier-1 sync for the signed-in user (read-write for the trips,
+ * trip_places, trip_expenses and trip_packing_items slice, read-only
+ * elsewhere). Idempotent per process; called fire-and-forget from the auth
+ * listener (src/api/auth.ts). Resolves after the bounded persistence warm-up
+ * (web ≤ ~6 s worst case, typically <1 s; native immediate — S2.8.13/B1);
+ * hydration continues in the background. Concurrent same-user calls share
+ * one boot (bootInFlight below).
+ *
+ * Account-switch semantics (X2.5 reviewer follow-up):
+ *   - Sign-out DURING the warm-up cancels the boot BEFORE anything attaches
+ *     (the persistence result is cached, so no DB is opened twice). Whoever
+ *     signs in next — the same user or a different one — gets a clean boot.
+ *     This is what used to strand user B without Tier-1 until restart.
+ *   - Once roots ARE attached (fully, or partially by a boot that threw),
+ *     they are bound to that user's persist namespace and session for the
+ *     process lifetime (the beta cannot detach). A different user then gets
+ *     `started: false`, telemetry `restartRequired: true`, and every facade
+ *     stays on the v1 path because the engine is never ACTIVE for them —
+ *     the first user's store is never readable through the gate.
  */
 export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1SyncResult> {
   const enabled = await loadTier1SyncFlag();
@@ -471,57 +511,87 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
       // (X1.3: previously a sign-out → sign-in left the pill hidden).
       const wasActive = initializedForUser !== null;
       initializedForUser = opts.userId;
+      markSyncRestartRequired(false);
       if (!wasActive) markSyncEnabled();
       resyncTier1();
       return { started: true, degraded: lastPersistenceDegraded };
     }
-    // A DIFFERENT user in the same process requires an app restart — the
-    // engine's per-table sync state is bound to the first user's persist
-    // namespace (which already prevents cross-account disk reads).
-    return { started: false, degraded: false };
+    return restartRequired(opts.userId, 'attached');
   }
 
-  // S2.8.13/B1: createSyncPersistence is now ASYNC (web awaits a BOUNDED
-  // OPFS worker warm-up, ≤ ~6 s worst case and typically well under 1 s;
-  // native resolves in one tick). Blocking on it here is fine — the auth
-  // listener (src/api/auth.ts) calls initTier1Sync fire-and-forget, so app
-  // startup is never gated on the warm-up. BUT the await breaks the old
-  // invariant that check→attach was synchronous, so concurrent calls (the
-  // auth listener can fire SIGNED_IN + TOKEN_REFRESHED back-to-back) must
-  // share one boot instead of double-attaching every root.
-  //
-  // Sign-out DURING the await (teardownTier1Sync while bootInFlight) sets
-  // bootCancelled: the boot still attaches (so a later same-user sign-in
-  // takes the cheap resume path and the SQLite DB is never opened twice —
-  // exactly the state a teardown right after boot leaves), but it does NOT
-  // activate the engine. A same-user init arriving mid-boot un-cancels.
+  // S2.8.13/B1: createSyncPersistence is ASYNC (web awaits a BOUNDED OPFS
+  // worker warm-up; native resolves in one tick). The auth listener calls
+  // initTier1Sync fire-and-forget, so app startup is never gated on it — but
+  // the await means concurrent calls (SIGNED_IN + TOKEN_REFRESHED back-to-
+  // back) must share one boot instead of double-attaching every root.
   if (bootInFlight) {
     if (bootInFlightUser !== opts.userId) {
-      return { started: false, degraded: false }; // different user mid-boot: same "restart required" answer as post-attach
+      if (bootCancelled) {
+        // The in-flight boot belongs to a user who already signed out; a
+        // cancelled boot never attaches (see below). Let it settle, then
+        // boot for THIS user — the persistence result is reused.
+        const settling = bootInFlight;
+        try {
+          await settling;
+        } catch {
+          // its failure is its own caller's; we boot fresh below
+        }
+        return initTier1Sync(opts);
+      }
+      return restartRequired(opts.userId, 'boot_in_flight');
     }
-    bootCancelled = false;
+    bootCancelled = false; // a same-user sign-in mid-boot un-cancels
     return bootInFlight;
   }
+
+  // A previous boot that THREW mid-attach left some roots bound to its user.
+  if (attachBindingUser !== null && attachBindingUser !== opts.userId) {
+    return restartRequired(opts.userId, 'partial_attach');
+  }
+
   bootInFlightUser = opts.userId;
   bootCancelled = false;
   bootInFlight = (async (): Promise<InitTier1SyncResult> => {
-    const persistence = await createSyncPersistence();
+    // Cached across boots: a cancelled or failed boot must not open the
+    // SQLite/OPFS database a second time. A REJECTED warm-up is not cached.
+    const pending = (persistencePromise ??= createSyncPersistence());
+    let persistence: SyncPersistenceResult;
+    try {
+      persistence = await pending;
+    } catch (err) {
+      if (persistencePromise === pending) persistencePromise = null;
+      throw err;
+    }
     persistencePlugin = persistence.plugin;
     lastPersistenceDegraded = persistence.degraded;
     if (persistence.degraded) {
       markSyncDegraded(persistence.reason ?? 'unknown');
     }
 
-    for (const key of TIER1_STORE_KEYS) {
-      attachEntity(key, opts.userId);
-    }
-    attachReconnectResync();
-    attachedForUser = opts.userId;
     if (bootCancelled) {
-      // Signed out mid-boot: attached but inactive (see above).
+      // Signed out mid-warm-up: attach NOTHING. Attachments are permanent and
+      // user-bound, so attaching here would lock the next (possibly
+      // different) user out of Tier-1 until restart.
       return { started: false, degraded: persistence.degraded };
     }
+
+    // Everything below is synchronous — no teardown can interleave.
+    // Idempotent per root: a previous boot that threw partway already
+    // attached some roots; re-attaching them would double-subscribe
+    // (duplicate pulls, realtime channels and write queues).
+    attachBindingUser = opts.userId;
+    for (const key of TIER1_STORE_KEYS) {
+      if (attachedRoots.has(key)) continue;
+      attachEntity(key, opts.userId);
+      attachedRoots.add(key);
+    }
+    if (!reconnectListenerAttached) {
+      attachReconnectResync();
+      reconnectListenerAttached = true;
+    }
+    attachedForUser = opts.userId;
     initializedForUser = opts.userId;
+    markSyncRestartRequired(false);
     markSyncEnabled();
     return { started: true, degraded: persistence.degraded };
   })();
@@ -537,11 +607,33 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
   }
 }
 
+/** A different user while the engine is bound to another account: explicit,
+ * telemetered, and inert (the engine never becomes ACTIVE for this user, so
+ * no facade can read the bound user's store). */
+function restartRequired(
+  userId: string,
+  reason: 'attached' | 'boot_in_flight' | 'partial_attach',
+): InitTier1SyncResult {
+  markSyncRestartRequired(true, { reason });
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.warn(
+      `[sync] Tier-1 is bound to another account in this process (${reason}); user ${userId.slice(0, 8)}… runs on the v1 path until the app restarts.`,
+    );
+  }
+  return { started: false, degraded: false };
+}
+
 let attachedForUser: string | null = null;
+/** User the (possibly PARTIAL — a boot that threw mid-loop) attachments are bound to. */
+let attachBindingUser: string | null = null;
+/** Roots that already have a syncObservable attached (never attach twice). */
+const attachedRoots = new Set<Tier1StoreKey>();
+let reconnectListenerAttached = false;
+let persistencePromise: Promise<SyncPersistenceResult> | null = null;
 let lastPersistenceDegraded = false;
 let bootInFlight: Promise<InitTier1SyncResult> | null = null;
 let bootInFlightUser: string | null = null;
-/** teardownTier1Sync ran while bootInFlight — finish attaching, don't activate. */
+/** teardownTier1Sync ran while bootInFlight — the boot must not attach or activate. */
 let bootCancelled = false;
 
 /** Is the engine the ACTIVE write path right now? (mutations.ts gates on this.) */

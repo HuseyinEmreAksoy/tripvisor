@@ -17,6 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { haptics } from '@/lib/haptics';
 import type { DraggableItem, DraggableItineraryProps } from './types';
 
 export function DraggableItinerary({
@@ -32,7 +33,10 @@ export function DraggableItinerary({
 
   const ids = useMemo(() => items.map((i) => i.id), [items]);
 
+  // v2 M4 X2.3: pickup/drop haptics — a no-op on web today (haptics.ts),
+  // kept symmetrical with native so the behavior lives in one place.
   const handleDragEnd = (e: DragEndEvent) => {
+    haptics.select();
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     const from = ids.indexOf(String(active.id));
@@ -43,7 +47,12 @@ export function DraggableItinerary({
 
   return (
     <View accessibilityLabel={groupLabel} style={styles.root}>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={() => haptics.impact()}
+        onDragEnd={handleDragEnd}
+      >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {items.map((item) => (
             <SortableRow key={item.id} item={item} onLongPress={onLongPress} />
@@ -90,7 +99,7 @@ function SortableRow({
         onLongPress={() => onLongPress?.(item.id)}
         delayLongPress={400}
       >
-        {item.render(isDragging)}
+        {item.render(isDragging, { onLongPress: () => onLongPress?.(item.id) })}
       </Pressable>
     </div>
   );

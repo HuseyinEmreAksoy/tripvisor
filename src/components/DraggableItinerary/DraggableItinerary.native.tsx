@@ -4,6 +4,7 @@ import DraggableFlatList, {
   type RenderItemParams,
   ScaleDecorator,
 } from 'react-native-draggable-flatlist';
+import { haptics } from '@/lib/haptics';
 import type { DraggableItem, DraggableItineraryProps } from './types';
 
 export function DraggableItinerary({
@@ -19,23 +20,31 @@ export function DraggableItinerary({
       <DraggableFlatList
         data={items}
         keyExtractor={keyExtractor}
-        onDragEnd={({ data }) => onReorder(data.map((i) => i.id))}
-        renderItem={({ item, drag, isActive }: RenderItemParams<DraggableItem>) => (
-          <ScaleDecorator>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Drag handle. Long-press to open actions.`}
-              onLongPress={() => {
-                drag();
-                onLongPress?.(item.id);
-              }}
-              delayLongPress={180}
-              style={styles.row}
-            >
-              {item.render(isActive)}
-            </Pressable>
-          </ScaleDecorator>
-        )}
+        // v2 M4 X2.3: haptic on pickup and drop (no-op under reduced motion).
+        onDragBegin={() => haptics.impact()}
+        onDragEnd={({ data }) => {
+          haptics.select();
+          onReorder(data.map((i) => i.id));
+        }}
+        renderItem={({ item, drag, isActive }: RenderItemParams<DraggableItem>) => {
+          const startDrag = () => {
+            drag();
+            onLongPress?.(item.id);
+          };
+          return (
+            <ScaleDecorator>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Drag handle. Long-press to open actions.`}
+                onLongPress={startDrag}
+                delayLongPress={180}
+                style={styles.row}
+              >
+                {item.render(isActive, { onLongPress: startDrag })}
+              </Pressable>
+            </ScaleDecorator>
+          );
+        }}
       />
     </View>
   );

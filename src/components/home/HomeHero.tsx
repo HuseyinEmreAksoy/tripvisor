@@ -25,11 +25,17 @@
 import { StyleSheet, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useTheme } from '@/theme';
+import { useRouter, type Href } from 'expo-router';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { activeTripsOn } from '@/lib/tripToday';
 import type { Trip } from '@/api';
 
 // Cobbled old-town evening — distinct from the login/signup heroes.
 // Bundled brand art (generated 2026-09-28) — offline-safe and COEP-safe, unlike a hotlink.
+// The (tabs)/today route is new in M4; the checked-in typed-routes file predates
+// it, so the literal is widened once here (regenerated types accept it as-is).
+const TODAY_HREF = '/today' as Href;
+
 const HERO_SOURCE = require('../../../assets/images/hero-home.jpg');
 
 export interface HomeHeroProps {
@@ -79,6 +85,9 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
   const isDesktop = bp === 'desktop';
   const compact = bp === 'mobile';
   const next = findNextTrip(trips);
+  const router = useRouter();
+  // M4 X2.1: a trip running today gets a shortcut into the Today tab.
+  const live = activeTripsOn(trips)[0];
 
   return (
     <View
@@ -116,6 +125,28 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
       />
 
       <View style={[styles.copy, { padding: isDesktop ? t.spacing.xl : t.spacing.lg, gap: compact ? t.spacing.xs : t.spacing.sm }]}>
+        {live ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${live.title} is live. Open Today.`}
+            onPress={() => router.push(TODAY_HREF)}
+            style={({ pressed }) => [
+              styles.liveBanner,
+              {
+                backgroundColor: t.colors.heroChipBg,
+                borderRadius: t.radius.pill,
+                paddingHorizontal: t.spacing.md,
+                gap: t.spacing.sm,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+          >
+            <View style={[styles.liveDot, { backgroundColor: t.colors.success }]} />
+            <Text style={[t.typography.bodyStrong, { color: '#FFFFFF', fontSize: 14 }]} numberOfLines={1}>
+              Your trip is live → Today
+            </Text>
+          </Pressable>
+        ) : null}
         <Text style={[t.typography.overline, { color: 'rgba(255,255,255,0.85)' }]}>
           Tripvisor
         </Text>
@@ -219,6 +250,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignSelf: 'flex-start',
   },
+  liveBanner: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    maxWidth: 360,
+  },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
   countdownChip: {
     minHeight: 40,
     borderWidth: 1,

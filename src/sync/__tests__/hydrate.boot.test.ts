@@ -19,6 +19,9 @@ import type { Observable } from '@legendapp/state';
 type SyncStateMock = Observable<{ isLoaded: boolean; isGetting: boolean }>;
 
 const mockSyncStates: SyncStateMock[] = [];
+/** syncObservable call index that throws once (simulates attachEntity failing partway). */
+let mockThrowAtCall: number | null = null;
+let mockSyncObservableCalls = 0;
 let mockResolvePersistence: ((v: unknown) => void) | null = null;
 const mockCreateSyncPersistence = jest.fn(
   () =>
@@ -29,6 +32,11 @@ const mockCreateSyncPersistence = jest.fn(
 
 jest.mock('@legendapp/state/sync', () => ({
   syncObservable: jest.fn(() => {
+    const call = mockSyncObservableCalls++;
+    if (mockThrowAtCall === call) {
+      mockThrowAtCall = null;
+      throw new Error('attach failed (test)');
+    }
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { observable: obs } = require('@legendapp/state');
     const s = obs({ isLoaded: false, isGetting: true });
@@ -43,7 +51,10 @@ jest.mock('../../api/supabase', () => ({ supabase: {} }));
 // @sentry/react-native starts a module-level interval; re-required per
 // isolateModules it would keep jest alive.
 jest.mock('../../lib/sentry', () => ({ Sentry: { addBreadcrumb: jest.fn() } }));
-jest.mock('../flags', () => ({ loadTier1SyncFlag: jest.fn(async () => true) }));
+jest.mock('../flags', () => ({
+  loadTier1SyncFlag: jest.fn(async () => true),
+  isTier1SyncEnabled: () => true,
+}));
 jest.mock('../persistence', () => ({
   createSyncPersistence: () => mockCreateSyncPersistence(),
 }));
@@ -55,17 +66,25 @@ jest.mock('@react-native-community/netinfo', () => ({
 type HydrateModule = typeof import('../hydrate');
 type TelemetryModule = typeof import('../telemetry');
 type StoreModule = typeof import('../store');
+type MutationsModule = typeof import('../mutations');
 
-function load(): { hydrate: HydrateModule; telemetry: TelemetryModule; store: StoreModule } {
+function load(): {
+  hydrate: HydrateModule;
+  telemetry: TelemetryModule;
+  store: StoreModule;
+  mutations: MutationsModule;
+} {
   let hydrate!: HydrateModule;
   let telemetry!: TelemetryModule;
   let store!: StoreModule;
+  let mutations!: MutationsModule;
   jest.isolateModules(() => {
     hydrate = require('../hydrate');
     telemetry = require('../telemetry');
     store = require('../store');
+    mutations = require('../mutations');
   });
-  return { hydrate, telemetry, store };
+  return { hydrate, telemetry, store, mutations };
 }
 
 const OK_PERSISTENCE = { plugin: undefined, degraded: true, reason: 'test: in-memory' };
@@ -76,6 +95,8 @@ async function flush(): Promise<void> {
 
 beforeEach(() => {
   mockSyncStates.length = 0;
+  mockThrowAtCall = null;
+  mockSyncObservableCalls = 0;
   mockResolvePersistence = null;
   mockCreateSyncPersistence.mockClear();
   jest.spyOn(console, 'info').mockImplementation(() => {});
@@ -206,5 +227,113 @@ describe('lastSyncAt stamping (B2)', () => {
     days.isGetting.set(false);
     expect(telemetry.getSyncTelemetry().entities.trip_days.lastSyncAt).toBe(first + 60_000);
     now.mockRestore();
+  });
+});
+
+describe('initTier1Sync: partial-attach idempotency (X2.5 reviewer follow-up a)', () => {
+  it('a boot that throws mid-attach is retried without re-attaching the roots it already bound', async () => {
+    const { hydrate, store } = load();
+    mockThrowAtCall = 3; // roots 0..2 attach, root 3 throws
+    const first = hydrate.initTier1Sync({ userId: 'u1' });
+    await flush();
+    mockResolvePersistence!(OK_PERSISTENCE);
+    await expect(first).rejects.toThrow('attach failed (test)');
+    expect(mockSyncStates).toHaveLength(3);
+    expect(hydrate.isTier1SyncInitialized()).toBe(false);
+
+    // Retry: the warm-up is cached (no second DB open), roots 0..2 are skipped.
+    await expect(hydrate.initTier1Sync({ userId: 'u1' })).resolves.toEqual({
+      started: true,
+      degraded: true,
+    });
+    expect(mockCreateSyncPersistence).toHaveBeenCalledTimes(1);
+    expect(mockSyncStates).toHaveLength(store.TIER1_STORE_KEYS.length); // each root exactly once
+    expect(mockSyncObservableCalls).toBe(store.TIER1_STORE_KEYS.length + 1); // + the one that threw
+  });
+
+  it('a partial attach stays bound to its user: a different user is told to restart', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { hydrate, telemetry } = load();
+    mockThrowAtCall = 2;
+    const first = hydrate.initTier1Sync({ userId: 'u1' });
+    await flush();
+    mockResolvePersistence!(OK_PERSISTENCE);
+    await expect(first).rejects.toThrow();
+    await expect(hydrate.initTier1Sync({ userId: 'u2' })).resolves.toEqual({
+      started: false,
+      degraded: false,
+    });
+    expect(telemetry.getSyncTelemetry().restartRequired).toBe(true);
+    expect(mockSyncStates).toHaveLength(2); // nothing new attached for u2
+  });
+});
+
+describe('initTier1Sync: account switch (X2.5 reviewer follow-up b)', () => {
+  it('A signs out mid-boot, B signs in mid-boot → B gets a clean Tier-1 boot (nothing bound to A)', async () => {
+    const { hydrate, store, telemetry } = load();
+    const a = hydrate.initTier1Sync({ userId: 'userA' });
+    await flush();
+    hydrate.teardownTier1Sync(); // A signs out during the warm-up
+    const b = hydrate.initTier1Sync({ userId: 'userB' });
+    await flush();
+    mockResolvePersistence!(OK_PERSISTENCE);
+    await expect(a).resolves.toEqual({ started: false, degraded: true });
+    await expect(b).resolves.toEqual({ started: true, degraded: true });
+
+    expect(hydrate.getTier1SyncUserId()).toBe('userB');
+    expect(mockCreateSyncPersistence).toHaveBeenCalledTimes(1); // warm-up reused
+    expect(mockSyncStates).toHaveLength(store.TIER1_STORE_KEYS.length); // ONE attach set (B's)
+    expect(telemetry.getSyncTelemetry().restartRequired).toBe(false);
+  });
+
+  it('A fully booted, signs out, B signs in → restart required, telemetered, and A\'s store is never served', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { hydrate, store, telemetry, mutations } = load();
+    const a = hydrate.initTier1Sync({ userId: 'userA' });
+    await flush();
+    mockResolvePersistence!(OK_PERSISTENCE);
+    await a;
+    // A's hydrated data sits in the (undetachable) store.
+    store.tier1Store$.trips.set({ tA: { id: 'tA', title: 'A private trip' } } as never);
+    store.tier1Store$.tripExpenses.set({ eA: { id: 'eA', trip_id: 'tA', amount: 1 } } as never);
+    for (const s of mockSyncStates) s.assign({ isLoaded: true, isGetting: false });
+    expect(mutations.isTier1SyncActive()).toBe(true);
+
+    hydrate.teardownTier1Sync();
+    await expect(hydrate.initTier1Sync({ userId: 'userB' })).resolves.toEqual({
+      started: false,
+      degraded: false,
+    });
+
+    // Explicit state…
+    expect(telemetry.getSyncTelemetry().restartRequired).toBe(true);
+    expect(telemetry.getSyncTelemetry().enabled).toBe(false);
+    // …and every read/write facade gate stays closed for B, so A's rows —
+    // though still in memory — can never be served or written through.
+    expect(hydrate.isTier1SyncInitialized()).toBe(false);
+    expect(hydrate.getTier1SyncUserId()).toBeNull();
+    expect(mutations.isTier1SyncActive()).toBe(false);
+    expect(() => mutations.updateExpense('eA', { amount: 2 })).toThrow(/not active/);
+    expect(() => mutations.createPackingItems('tA', [{ label: 'x' }])).toThrow(/not active/);
+
+    // A signing back in clears the flag and resumes.
+    await hydrate.initTier1Sync({ userId: 'userA' });
+    expect(telemetry.getSyncTelemetry().restartRequired).toBe(false);
+    expect(mutations.isTier1SyncActive()).toBe(true);
+  });
+});
+
+describe('tier1RootLoaded$ (X2.5 child-root serving signal)', () => {
+  it('flips per root when that root\'s first remote load completes, even with zero rows', async () => {
+    const { hydrate, store } = load();
+    const p = hydrate.initTier1Sync({ userId: 'u1' });
+    await flush();
+    mockResolvePersistence!(OK_PERSISTENCE);
+    await p;
+    const idx = store.TIER1_STORE_KEYS.indexOf('tripExpenses');
+    expect(hydrate.tier1RootLoaded$.tripExpenses.peek()).toBe(false);
+    mockSyncStates[idx]!.assign({ isLoaded: true, isGetting: false });
+    expect(hydrate.tier1RootLoaded$.tripExpenses.peek()).toBe(true);
+    expect(hydrate.tier1RootLoaded$.tripPackingItems.peek()).toBe(false);
   });
 });

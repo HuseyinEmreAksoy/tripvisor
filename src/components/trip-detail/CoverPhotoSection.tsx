@@ -3,7 +3,7 @@
  * app/(app)/trip/[id]/index.tsx in v2 Phase N1 step 1.1 (pure refactor).
  *
  * Shows current cover preview + Set/Change/Remove buttons.
- * Rendered inside the SettingsTab ScrollView.
+ * Rendered inside TripSettingsSheet (v2 M4 X2.2; formerly the SettingsTab ScrollView).
  *
  * Keeps its own Tier-2 hooks (usePlaceDetails / usePlacePhotoUrl) — v1
  * already fetched the preview photo here; photo URLs are memory-only

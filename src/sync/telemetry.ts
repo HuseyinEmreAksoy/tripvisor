@@ -64,6 +64,14 @@ export interface SyncTelemetrySnapshot {
    */
   strippedServerOnlyWriteFields: number;
   entities: Record<Tier1Table, SyncEntityTelemetry>;
+  /**
+   * A DIFFERENT user signed in while the engine was already attached to
+   * another account (the beta plugin cannot detach). Tier-1 stays OFF for
+   * this session — every read/write facade serves the v1 TanStack path —
+   * until the app restarts. Explicit so the status surface can say so
+   * instead of silently looking "not synced".
+   */
+  restartRequired: boolean;
   /** Age of the OLDEST per-entity lastSyncAt (ms), or null if any entity has
    * never synced — the honest "how stale could the store be" number. */
   lastSyncAgeMs: number | null;
@@ -83,6 +91,7 @@ const state = {
   tosViolations: 0,
   strippedServerOnlyWriteFields: 0,
   entities: emptyEntities(),
+  restartRequired: false,
 };
 
 /** Dev-warn dedupe for routine server-only write strips — `table:field`.
@@ -146,6 +155,18 @@ export function markSyncEnabled(): void {
 export function markSyncStopped(): void {
   state.enabled = false;
   breadcrumb('tier-1 sync stopped (teardown)');
+  refreshSyncStatus();
+}
+
+/**
+ * A different user signed in while the engine is bound to another account
+ * (hydrate.ts initTier1Sync) — Tier-1 is off until restart. `false` clears it
+ * (the bound user signed back in).
+ */
+export function markSyncRestartRequired(required: boolean, data?: Record<string, unknown>): void {
+  if (state.restartRequired === required) return;
+  state.restartRequired = required;
+  if (required) breadcrumb('tier-1 sync needs an app restart (account switch in-process)', data);
   refreshSyncStatus();
 }
 
@@ -265,6 +286,7 @@ export function getSyncTelemetry(): SyncTelemetrySnapshot {
     entities: Object.fromEntries(
       TIER1_TABLES.map((t) => [t, { ...state.entities[t] }]),
     ) as Record<Tier1Table, SyncEntityTelemetry>,
+    restartRequired: state.restartRequired,
     lastSyncAgeMs,
   };
 }
@@ -278,5 +300,6 @@ export function _resetSyncTelemetryForTests(): void {
   state.tosViolations = 0;
   state.strippedServerOnlyWriteFields = 0;
   state.entities = emptyEntities();
+  state.restartRequired = false;
   warnedWriteStrips.clear();
 }

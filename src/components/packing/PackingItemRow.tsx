@@ -9,10 +9,14 @@
  *
  * Viewers (canEdit=false) see the row read-only: the checkbox reports
  * `disabled` to assistive tech and the ✕ is not rendered at all.
+ *
+ * v2 M4 X2.4: a haptic tick on toggle (success when packing, light tap when
+ * un-packing); no-op on web / under reduced motion (src/lib/haptics).
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import type { TripPackingItem } from '@/api';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
 
 export interface PackingItemRowProps {
   item: TripPackingItem;
@@ -44,7 +48,11 @@ export function PackingItemRow({ item, canEdit, onToggle, onDelete }: PackingIte
         accessibilityLabel={`${item.label}${item.auto ? ', suggested item' : ''}`}
         accessibilityState={{ checked: item.checked, disabled: !canEdit }}
         disabled={!canEdit}
-        onPress={() => onToggle(!item.checked)}
+        onPress={() => {
+          if (item.checked) haptics.tap();
+          else haptics.success();
+          onToggle(!item.checked);
+        }}
         hitSlop={4}
         style={({ pressed }) => [
           styles.toggleArea,
@@ -134,8 +142,8 @@ const styles = StyleSheet.create({
   },
   tick: { fontSize: 14, fontWeight: '700', lineHeight: 18 },
   deleteBtn: {
-    minWidth: 32,
-    minHeight: 32,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

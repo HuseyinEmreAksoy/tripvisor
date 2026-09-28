@@ -1,144 +1,128 @@
 /**
- * Today tab — STUB (v2 M4 X1.1). X2.1 replaces this with the live trip
- * companion (next stop, navigate, check-off, tonight's stay, weather).
+ * Today tab — live trip companion (v2 M4 X2.1).
  *
- * For now it answers one question from the Tier-1-backed trips list:
- *   - a trip is running today → "Day N of M" card + open trip
- *   - otherwise → "No trip today" + countdown to the next trip
- *   - no trips at all → the trips empty state
- * "Today" is the device's local calendar day (src/lib/tripToday.ts).
+ * Picks the trip(s) running on the device's local calendar day from the
+ * owned + shared trips list (src/lib/tripToday.ts):
+ *   - one or more trips running → LiveTripView (next stop, navigate,
+ *     check-offs, tonight's stay, weather, add expense); a chip switcher
+ *     appears when several overlap,
+ *   - none running → countdown to the next trip + a prep card,
+ *   - no upcoming trips → a nudge to plan one; no trips at all → the empty
+ *     illustration + "Plan with AI".
+ *
+ * Offline: every read comes from Tier-1-backed / cached hooks; nothing on
+ * this screen calls Google or a routing API.
  */
-import type { ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useTrips } from '@/api';
-import {
-  Button,
-  EmptyState,
-  Heading,
-  Screen,
-  Skeleton,
-  SkeletonGroup,
-  TAB_SCREEN_EDGES,
-} from '@/components';
+import { useQueryClient } from '@tanstack/react-query';
+import { useIsOnline, useTrips } from '@/api';
+import { EmptyState, Heading, Screen, Skeleton, SkeletonGroup, TAB_SCREEN_EDGES } from '@/components';
 import { noTrips } from '@/components/emptyStates';
+import { LiveTripView } from '@/components/today/LiveTripView';
+import { TripSwitcher } from '@/components/today/TripSwitcher';
+import { UpcomingTripCard } from '@/components/today/UpcomingTripCard';
+import { useNow } from '@/components/today/useNow';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { activeTripsOn, dayIndexFor, nextUpcomingTrip } from '@/lib/tripToday';
+import { activeTripsOn, nextUpcomingTrip } from '@/lib/tripToday';
 import { useTheme } from '@/theme';
 
-function tripLength(start: string | null, end: string | null): number | null {
-  if (!start) return null;
-  const [sy, sm, sd] = start.split('-').map(Number);
-  const [ey, em, ed] = (end ?? start).split('-').map(Number);
-  if (!sy || !sm || !sd || !ey || !em || !ed) return null;
-  return Math.round((Date.UTC(ey, em - 1, ed) - Date.UTC(sy, sm - 1, sd)) / 86_400_000) + 1;
+function todayLabel(now: Date): string {
+  try {
+    return now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  } catch {
+    return '';
+  }
 }
 
 export default function TodayScreen() {
   const t = useTheme();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const isDesktop = useBreakpoint() === 'desktop';
-  const { data: trips, isLoading, error, refetch, isRefetching } = useTrips({ archived: false });
+  const online = useIsOnline();
+  const now = useNow();
+  const { data: trips, isLoading, error, refetch } = useTrips({ archived: false });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const now = new Date();
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([refetch(), queryClient.refetchQueries({ type: 'active' })]);
+    } catch {
+      // Individual cards surface their own errors.
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch, queryClient]);
+
   const active = activeTripsOn(trips ?? [], now);
+  const selected = active.find((trip) => trip.id === selectedId) ?? active[0] ?? null;
   const upcoming = active.length === 0 ? nextUpcomingTrip(trips ?? [], now) : null;
-
-  const card = [
-    styles.card,
-    {
-      backgroundColor: t.colors.cardBgSolid,
-      borderColor: t.colors.border,
-      borderRadius: t.radius.xl,
-      padding: t.spacing.xl,
-      gap: t.spacing.md,
-      ...t.shadows.md(t.colors.shadowColor),
-    },
-  ];
 
   let body: ReactNode;
   if (isLoading) {
     body = (
       <SkeletonGroup label="Loading today" style={{ gap: t.spacing.md }}>
         <Skeleton width="40%" height={14} />
+        <Skeleton height={220} radius="xl" />
         <Skeleton height={140} radius="xl" />
       </SkeletonGroup>
     );
-  } else if (error) {
+  } else if (error && !trips) {
     body = (
       <EmptyState
         title="Couldn't load your trips"
-        body={(error as Error).message}
-        action={<Button label="Retry" fullWidth={false} onPress={() => refetch()} />}
+        body={error.message}
+        ctaLabel="Retry"
+        onPress={() => void refetch()}
       />
     );
-  } else if (active.length > 0) {
-    body = active.map((trip) => {
-      const day = dayIndexFor(trip, now);
-      const total = tripLength(trip.start_date, trip.end_date);
-      return (
-        <View key={trip.id} style={card}>
-          <Text style={[t.typography.overline, { color: t.colors.primary }]}>
-            {day !== null && total ? `Day ${day + 1} of ${total}` : 'Happening now'}
-          </Text>
-          <Text style={[t.typography.title, { color: t.colors.text }]} accessibilityRole="header" aria-level={2}>
-            {trip.title}
-          </Text>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            {"Your live day plan — next stop, directions and check-offs — is coming here soon."}
-          </Text>
-          <Button
-            label="Open today's plan"
-            fullWidth={false}
-            onPress={() => router.push(`/trip/${trip.id}`)}
-            accessibilityLabel={`Open ${trip.title}`}
-          />
-        </View>
-      );
-    });
-  } else if (upcoming) {
-    const { trip, daysUntil } = upcoming;
+  } else if (selected) {
     body = (
-      <View style={card}>
-        <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>No trip today</Text>
-        <Text style={[t.typography.title, { color: t.colors.text }]} accessibilityRole="header" aria-level={2}>
-          {daysUntil === 1 ? `1 day to ${trip.title}` : `${daysUntil} days to ${trip.title}`}
+      <>
+        <TripSwitcher trips={active} selectedId={selected.id} onSelect={setSelectedId} />
+        <Text style={[t.typography.subtitle, { color: t.colors.text }]} numberOfLines={1}>
+          {selected.title}
         </Text>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          {'When your trip starts, this tab becomes your day-by-day companion.'}
-        </Text>
-        <Button
-          label="Open trip"
-          variant="secondary"
-          fullWidth={false}
-          onPress={() => router.push(`/trip/${trip.id}`)}
-          accessibilityLabel={`Open ${trip.title}`}
-        />
-      </View>
+        <LiveTripView key={selected.id} trip={selected} now={now} isDesktop={isDesktop} />
+      </>
     );
+  } else if (upcoming) {
+    body = <UpcomingTripCard trip={upcoming.trip} daysUntil={upcoming.daysUntil} />;
   } else if ((trips ?? []).length > 0) {
     body = (
       <EmptyState
         title="No trip today"
         body="None of your trips are dated today or later. Plan the next one?"
-        ctaLabel="Plan a trip"
-        onPress={() => router.push('/trip/new')}
+        ctaLabel="Plan with AI"
+        onPress={() => router.push('/trip/plan')}
       />
     );
   } else {
-    body = <EmptyState {...noTrips} onPress={() => router.push('/trip/new')} />;
+    body = <EmptyState {...noTrips} ctaLabel="Plan with AI" onPress={() => router.push('/trip/plan')} />;
   }
 
   return (
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={[
           { padding: t.spacing.lg, gap: t.spacing.lg },
-          isDesktop && styles.desktop,
+          isDesktop ? styles.desktop : styles.narrow,
         ]}
       >
-        <Heading level={1}>Today</Heading>
+        <View style={{ gap: t.spacing.xs }}>
+          <Heading level={1}>Today</Heading>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{todayLabel(now)}</Text>
+          {!online ? (
+            <Text style={[t.typography.caption, { color: t.colors.warningText }]} accessibilityLiveRegion="polite">
+              Offline — showing your saved plan.
+            </Text>
+          ) : null}
+        </View>
         {body}
       </ScrollView>
     </Screen>
@@ -146,11 +130,13 @@ export default function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderWidth: 1,
+  narrow: {
+    maxWidth: 760,
+    width: '100%',
+    alignSelf: 'center',
   },
   desktop: {
-    maxWidth: 760,
+    maxWidth: 1120,
     width: '100%',
     alignSelf: 'center',
     paddingTop: 48,

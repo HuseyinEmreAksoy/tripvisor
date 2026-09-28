@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { RefetchOptions, UseQueryResult } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { TIER1_MUTATION_NETWORK_MODE, tier1SuccessResult } from './_tier1Facade';
 import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
@@ -168,37 +169,7 @@ export function selectTier1TripPlaces(
   return out.sort(compareTier1TripPlaces);
 }
 
-/**
- * Dress Tier-1-served data in the `UseQueryResult` shape consumers already
- * destructure. Duplicated from ./trips.ts (B1) deliberately: it is file-
- * local there and trips.ts is frozen in this step; each facade owns its
- * result-dressing. KEEP IN LOCKSTEP — if a third facade appears, hoist to a
- * shared module. Semantics are identical: the paused legacy query is spread
- * first so fetch-state fields stay live; success-state fields are overridden
- * because the store IS the data; `refetch` forces an incremental Tier-1 pull
- * AND delegates to the legacy refetch (which fetches even while disabled —
- * TanStack contract), keeping the D2 fallback cache warm and the caller's
- * `isRefetching` spinner honest.
- */
-function tier1SuccessResult<T>(paused: UseQueryResult<T, Error>, data: T): UseQueryResult<T, Error> {
-  return {
-    ...paused,
-    data,
-    error: null,
-    status: 'success',
-    isPending: false,
-    isLoading: false,
-    isLoadingError: false,
-    isRefetchError: false,
-    isError: false,
-    isSuccess: true,
-    isPlaceholderData: false,
-    refetch: async (options?: RefetchOptions) => {
-      resyncTier1();
-      return paused.refetch(options);
-    },
-  } as UseQueryResult<T, Error>;
-}
+// tier1SuccessResult: hoisted to ./_tier1Facade (M4 X2.5) — shared by all four facades.
 
 export function useTripPlaces(tripId: Uuid | undefined): UseQueryResult<TripPlace[], Error> {
   // [Hook 1/2] Tier-1 selector. The places root is read FIRST so it is
@@ -251,6 +222,8 @@ export function useTripPlaces(tripId: Uuid | undefined): UseQueryResult<TripPlac
 export function useCreateTripPlace() {
   const qc = useQueryClient();
   return useMutation<TripPlace, Error, CreateTripPlaceInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const parsed = createTripPlaceSchema.parse(input);
       // S2.8.6: sync-create only when the places root is already serving
@@ -305,6 +278,8 @@ export function useCreateTripPlace() {
 export function useDeleteTripPlace() {
   const qc = useQueryClient();
   return useMutation<TripPlace, Error, { id: Uuid; trip_id: Uuid }>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async ({ id }) => {
       // S2.8.6 (binding): flag-on + row hydrated, delete becomes a TOMBSTONE
       // through the sync layer (offline-safe; the engine emits
@@ -384,6 +359,8 @@ type UpdateTripPlaceInput = z.infer<typeof updateTripPlaceSchema>;
 export function useUpdateTripPlace() {
   const qc = useQueryClient();
   return useMutation<TripPlace, Error, UpdateTripPlaceInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const parsed = updateTripPlaceSchema.parse(input);
       const { id, trip_id: _tripId, ...patch } = parsed;

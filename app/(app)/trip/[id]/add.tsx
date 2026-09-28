@@ -32,6 +32,8 @@ import {
   useTrip,
   useTripPlaces,
 } from '@/api';
+import { useIsOnline } from '@/api/offline';
+import { isTier1SyncActive } from '@/sync/mutations';
 import { inferCategoryDefault } from '@/lib/categoryDurations';
 import {
   addRecentPlace,
@@ -130,8 +132,16 @@ export default function AddPlace() {
   });
   // If the trip loads with fewer days than the seeded selection, clamp at
   // render time (no state→effect→state cycle).
-  const effectiveDayIndex =
+  const clampedDayIndex =
     selectedDayIndex !== null && selectedDayIndex >= dayCount ? dayCount - 1 : selectedDayIndex;
+
+  // v2 M4 X2.2 (review leftover): flag-on, create is an offline-safe local
+  // insert but move-to-day is a server RPC (day_index is server-domain, C1),
+  // so offline it can only fail. Say so up front instead of after the save:
+  // the day chips are replaced by a hint and the place lands in Ideas.
+  const isOnline = useIsOnline();
+  const schedulingOffline = isTier1SyncActive() && !isOnline;
+  const effectiveDayIndex = schedulingOffline ? null : clampedDayIndex;
 
   // ── Toast state ───────────────────────────────────────────────────────────
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -246,11 +256,30 @@ export default function AddPlace() {
           </Text>
         </View>
 
-        <DayPicker
-          dayCount={dayCount}
-          selected={effectiveDayIndex}
-          onSelect={setSelectedDayIndex}
-        />
+        {schedulingOffline ? (
+          <View
+            style={[
+              addStyles.setupBanner,
+              {
+                backgroundColor: t.colors.bgElevated,
+                borderLeftColor: t.colors.warning,
+                borderRadius: t.radius.md,
+                padding: t.spacing.md,
+              },
+            ]}
+            accessibilityLiveRegion="polite"
+          >
+            <Text style={[t.typography.caption, { color: t.colors.text }]}>
+              {"You're offline. Scheduling needs a connection — it'll go to Ideas, and you can move it to a day later."}
+            </Text>
+          </View>
+        ) : (
+          <DayPicker
+            dayCount={dayCount}
+            selected={effectiveDayIndex}
+            onSelect={setSelectedDayIndex}
+          />
+        )}
 
         <TextField
           label="Search places"

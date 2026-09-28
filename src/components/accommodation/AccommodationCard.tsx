@@ -1,17 +1,34 @@
 /**
  * AccommodationCard — single accommodation row in the list.
  *
- * Shows: name, date range, day-bridge indicator, address / place chip, optional notes.
- * Edit + delete affordances, gated by canEdit.
+ * v2 M4 X2.4 layout (usable in 1–2 taps mid-trip):
+ *   - Name + "N nights" pill (+ "Day X → Day Y" bridge when the trip has dates)
+ *   - Check-in / Check-out columns ("Sun 10 May")
+ *   - Address (or "Google Place" chip) with a Navigate button that opens the
+ *     device maps app via `buildDirectionsUrl` (coords) or the address query
+ *   - Copyable confirmation code (parsed from notes — see stayUtils)
+ *   - Inline notes editor (Phase 25 Step 25.10), minus the confirmation line
+ *   - Edit + delete, gated by canEdit; delete confirm via `confirmDestructive`
  *
- * Phase 25 Step 25.10: inline notes editor — editors/owners can add/edit/delete
- * notes; viewers see existing notes read-only, nothing if no notes.
+ * The container is NOT `accessible` (that would swallow the buttons for
+ * VoiceOver); the header block carries the summary label instead.
+ * Props are unchanged from v1 — X2.1/X2.2 mount this card as-is.
  */
-import { useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Linking, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
-import { useUpdateTripAccommodation } from '@/api/trip-accommodations';
+import { haptics } from '@/lib/haptics';
+import { copyToClipboard } from '@/lib/clipboard';
+import { confirmDestructive } from '@/lib/confirm';
 import type { TripAccommodation } from '@/api/types';
+import { AccommodationNotesEditor } from './AccommodationNotesEditor';
+import {
+  extractConfirmationCode,
+  formatStayDate,
+  nightsBetween,
+  nightsLabel,
+  stayDirectionsUrl,
+} from './stayUtils';
 
 export interface AccommodationCardProps {
   accommodation: TripAccommodation;
@@ -31,6 +48,11 @@ export function AccommodationCard({
   const t = useTheme();
 
   const dayBridge = computeDayBridge(accommodation, tripStartDate);
+  const nights = nightsBetween(accommodation.check_in_date, accommodation.check_out_date);
+  const checkIn = formatStayDate(accommodation.check_in_date);
+  const checkOut = formatStayDate(accommodation.check_out_date);
+  const directionsUrl = stayDirectionsUrl(accommodation);
+  const code = extractConfirmationCode(accommodation.notes);
 
   return (
     <View
@@ -45,65 +67,83 @@ export function AccommodationCard({
           ...t.shadows.sm(t.colors.shadowColor),
         },
       ]}
-      accessible
-      accessibilityLabel={`${accommodation.name}, ${formatDateRange(accommodation.check_in_date, accommodation.check_out_date)}`}
     >
-      {/* Name row */}
-      <View style={[styles.row, { justifyContent: 'space-between', gap: t.spacing.sm }]}>
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} numberOfLines={1}>
+      {/* Header: name + nights / day bridge + check-in/out */}
+      <View
+        accessible
+        accessibilityLabel={`${accommodation.name}, check-in ${checkIn}, check-out ${checkOut}${nights > 0 ? `, ${nightsLabel(nights)}` : ''}`}
+        style={{ gap: t.spacing.sm }}
+      >
+        <View style={[styles.row, { justifyContent: 'space-between', gap: t.spacing.sm }]}>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text, flex: 1 }]} numberOfLines={1}>
             {accommodation.name}
           </Text>
-          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-            {formatDateRange(accommodation.check_in_date, accommodation.check_out_date)}
-          </Text>
+          <View style={[styles.row, { gap: t.spacing.xs }]}>
+            {nights > 0 ? <Pill text={nightsLabel(nights)} /> : null}
+            {dayBridge ? <Pill text={dayBridge} subtle /> : null}
+          </View>
         </View>
 
-        {/* Day bridge pill */}
-        {dayBridge ? (
-          <View
-            style={[
-              styles.pill,
-              {
-                backgroundColor: t.colors.gradientSubtle,
-                borderRadius: t.radius.pill,
-                paddingHorizontal: t.spacing.sm,
-                paddingVertical: 2,
-              },
-            ]}
-          >
-            <Text style={[t.typography.small, { color: t.colors.primary }]}>
-              {dayBridge}
-            </Text>
-          </View>
-        ) : null}
+        <View style={[styles.row, { gap: t.spacing.lg }]}>
+          <DateColumn label="Check-in" value={checkIn} />
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>→</Text>
+          <DateColumn label="Check-out" value={checkOut} />
+        </View>
       </View>
 
-      {/* Address / place */}
-      {accommodation.address ? (
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={2}>
-          {accommodation.address}
-        </Text>
-      ) : accommodation.google_place_id ? (
-        <View
-          style={[
-            styles.placePill,
-            {
-              backgroundColor: t.colors.infoLight,
-              borderRadius: t.radius.pill,
-              paddingHorizontal: t.spacing.sm,
-              paddingVertical: 2,
-              alignSelf: 'flex-start',
-            },
-          ]}
-        >
-          <Text style={[t.typography.small, { color: t.colors.info }]}>
-            Google Place
-          </Text>
+      {/* Address / place + Navigate */}
+      {accommodation.address || accommodation.google_place_id || directionsUrl ? (
+        <View style={[styles.row, { gap: t.spacing.sm }]}>
+          <View style={{ flex: 1 }}>
+            {accommodation.address ? (
+              <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={2}>
+                {accommodation.address}
+              </Text>
+            ) : accommodation.google_place_id ? (
+              <View
+                style={[
+                  styles.pill,
+                  {
+                    backgroundColor: t.colors.infoLight,
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.sm,
+                    alignSelf: 'flex-start',
+                  },
+                ]}
+              >
+                <Text style={[t.typography.small, { color: t.colors.info }]}>Google Place</Text>
+              </View>
+            ) : null}
+          </View>
+          {directionsUrl ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Navigate to ${accommodation.name}`}
+              accessibilityHint="Opens directions in your maps app"
+              onPress={() => {
+                haptics.tap();
+                void Linking.openURL(directionsUrl).catch(() => undefined);
+              }}
+              style={({ pressed }) => [
+                styles.navBtn,
+                {
+                  backgroundColor: pressed ? t.colors.primaryDark : t.colors.primary,
+                  borderRadius: t.radius.pill,
+                  paddingHorizontal: t.spacing.md,
+                },
+                Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+              ]}
+            >
+              <Text style={[t.typography.caption, { color: t.colors.primaryText, fontWeight: '700' }]}>
+                Navigate
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
-      {/* Phase 25 Step 25.10: Inline notes editor (editors/owners) or read-only (viewers) */}
+      {code ? <ConfirmationCode code={code} /> : null}
+
       <AccommodationNotesEditor accommodation={accommodation} canEdit={canEdit} />
 
       {/* Actions */}
@@ -119,7 +159,6 @@ export function AccommodationCard({
                 backgroundColor: pressed ? t.colors.gradientSubtle : 'transparent',
                 borderRadius: t.radius.sm,
                 paddingHorizontal: t.spacing.sm,
-                paddingVertical: t.spacing.xs,
               },
             ]}
           >
@@ -128,14 +167,13 @@ export function AccommodationCard({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Delete accommodation: ${accommodation.name}`}
-            onPress={() => confirmDelete(accommodation, onDelete)}
+            onPress={() => void confirmDelete(accommodation, onDelete)}
             style={({ pressed }) => [
               styles.actionBtn,
               {
                 backgroundColor: pressed ? t.colors.dangerLight : 'transparent',
                 borderRadius: t.radius.sm,
                 paddingHorizontal: t.spacing.sm,
-                paddingVertical: t.spacing.xs,
               },
             ]}
           >
@@ -147,149 +185,120 @@ export function AccommodationCard({
   );
 }
 
-// ── AccommodationNotesEditor ─────────────────────────────────────────────────
-// Inline note editor matching the PlaceNotesEditor pattern. Viewers see
-// existing notes read-only; editors/owners can tap to edit.
-function AccommodationNotesEditor({
-  accommodation,
-  canEdit,
-}: {
-  accommodation: TripAccommodation;
-  canEdit: boolean;
-}) {
+function Pill({ text, subtle }: { text: string; subtle?: boolean }) {
   const t = useTheme();
-  const updateAcc = useUpdateTripAccommodation();
-  const [focused, setFocused] = useState(false);
-  const [localText, setLocalText] = useState(accommodation.notes ?? '');
-
-  useEffect(() => {
-    setLocalText(accommodation.notes ?? '');
-  }, [accommodation.notes]);
-
-  function handleBlur() {
-    setFocused(false);
-    const trimmed = localText.trim();
-    const next = trimmed.length > 0 ? trimmed : null;
-    if (next !== accommodation.notes) {
-      updateAcc.mutate({ id: accommodation.id, notes: next });
-    }
-  }
-
-  // Viewer with no notes — render nothing.
-  if (!canEdit && !localText) return null;
-
-  if (!canEdit) {
-    return (
-      <Text style={[t.typography.caption, { color: t.colors.textMuted }]} numberOfLines={3}>
-        {localText}
-      </Text>
-    );
-  }
-
-  if (focused) {
-    return (
-      <TextInput
-        multiline
-        numberOfLines={3}
-        maxLength={2000}
-        value={localText}
-        onChangeText={setLocalText}
-        onBlur={handleBlur}
-        placeholder="Add notes…"
-        placeholderTextColor={t.colors.textMuted}
-        accessibilityLabel={`Notes for accommodation: ${accommodation.name}`}
-        style={[
-          accNotesStyles.input,
-          {
-            borderColor: t.colors.border,
-            borderRadius: t.radius.sm,
-            backgroundColor: t.colors.bg,
-            color: t.colors.text,
-            ...t.typography.caption,
-          },
-        ]}
-        autoFocus
-      />
-    );
-  }
-
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        localText
-          ? `Notes: ${localText.slice(0, 60)}. Tap to edit.`
-          : `Add note for ${accommodation.name}`
-      }
-      onPress={() => setFocused(true)}
+    <View
+      style={[
+        styles.pill,
+        {
+          backgroundColor: subtle ? t.colors.bgMuted : t.colors.gradientSubtle,
+          borderRadius: t.radius.pill,
+          paddingHorizontal: t.spacing.sm,
+        },
+      ]}
     >
-      <Text
-        style={[
-          t.typography.caption,
-          { color: localText ? t.colors.textMuted : t.colors.primary },
-        ]}
-        numberOfLines={localText ? 2 : undefined}
-      >
-        {localText || 'Add note…'}
+      <Text style={[t.typography.small, { color: subtle ? t.colors.textMuted : t.colors.primary, fontWeight: '600' }]}>
+        {text}
       </Text>
-    </Pressable>
+    </View>
   );
 }
 
-const accNotesStyles = StyleSheet.create({
-  input: {
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    minHeight: 60,
-    textAlignVertical: 'top',
-  },
-});
+function DateColumn({ label, value }: { label: string; value: string }) {
+  const t = useTheme();
+  return (
+    <View style={{ gap: 2 }}>
+      <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>{label}</Text>
+      <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{value}</Text>
+    </View>
+  );
+}
+
+function ConfirmationCode({ code }: { code: string }) {
+  const t = useTheme();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  async function handleCopy() {
+    const ok = await copyToClipboard(code);
+    if (!ok) return;
+    haptics.success();
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <View
+      style={[
+        styles.row,
+        styles.codeRow,
+        { borderColor: t.colors.border, borderRadius: t.radius.md, paddingLeft: t.spacing.md, gap: t.spacing.sm },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>Confirmation</Text>
+        <Text selectable style={[t.typography.bodyStrong, styles.mono, { color: t.colors.text }]}>
+          {code}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={copied ? 'Confirmation code copied' : `Copy confirmation code ${code}`}
+        onPress={() => void handleCopy()}
+        style={({ pressed }) => [
+          styles.actionBtn,
+          { backgroundColor: pressed ? t.colors.gradientSubtle : 'transparent', paddingHorizontal: t.spacing.md },
+          Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+        ]}
+      >
+        <Text style={[t.typography.caption, { color: copied ? t.colors.success : t.colors.primary, fontWeight: '700' }]}>
+          {copied ? 'Copied ✓' : 'Copy'}
+        </Text>
+      </Pressable>
+      {copied ? (
+        <Text style={styles.srOnly} accessibilityLiveRegion="polite">
+          Copied to clipboard
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 /**
- * Computes "Day X → Day Y" string for an accommodation, based on the trip
- * start date. Returns null if the trip has no start date.
+ * "Day X → Day Y" relative to the trip start date (local calendar math).
+ * Returns null if the trip has no start date or the stay is entirely before it.
  */
-function computeDayBridge(
-  acc: TripAccommodation,
-  tripStartDate: string | null,
-): string | null {
+function computeDayBridge(acc: TripAccommodation, tripStartDate: string | null): string | null {
   if (!tripStartDate) return null;
-  try {
-    const start = new Date(tripStartDate);
-    const checkIn = new Date(acc.check_in_date);
-    const checkOut = new Date(acc.check_out_date);
-    const inDay = Math.round((checkIn.getTime() - start.getTime()) / 86400000) + 1;
-    const outDay = Math.round((checkOut.getTime() - start.getTime()) / 86400000) + 1;
-    if (inDay < 1 && outDay < 1) return null;
-    if (inDay === outDay) return `Day ${inDay}`;
-    return `Day ${inDay} → Day ${outDay}`;
-  } catch {
-    return null;
-  }
+  const inDay = nightsBetween(tripStartDate, acc.check_in_date) + 1;
+  const outDay = nightsBetween(tripStartDate, acc.check_out_date) + 1;
+  // nightsBetween clamps negatives to 0 → a stay before the trip yields 1/1.
+  if (acc.check_out_date < tripStartDate) return null;
+  if (inDay === outDay) return `Day ${inDay}`;
+  return `Day ${inDay} → Day ${outDay}`;
 }
 
-function formatDateRange(checkIn: string, checkOut: string): string {
-  return `${checkIn} → ${checkOut}`;
-}
-
-function confirmDelete(acc: TripAccommodation, onDelete: () => void) {
-  if (Platform.OS === 'web') {
-    if (typeof window !== 'undefined' && window.confirm(`Delete "${acc.name}"?`)) {
-      onDelete();
-    }
-    return;
-  }
-  Alert.alert('Delete accommodation?', `Remove "${acc.name}"? This cannot be undone.`, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Delete', style: 'destructive', onPress: onDelete },
-  ]);
+async function confirmDelete(acc: TripAccommodation, onDelete: () => void) {
+  const confirmed = await confirmDestructive({
+    title: 'Delete accommodation?',
+    message: `Remove "${acc.name}"? This cannot be undone.`,
+    confirmLabel: 'Delete',
+  });
+  if (confirmed) onDelete();
 }
 
 const styles = StyleSheet.create({
   card: { borderWidth: 1 },
   row: { flexDirection: 'row', alignItems: 'center' },
-  pill: {},
-  placePill: {},
-  actionBtn: {},
+  pill: { paddingVertical: 2 },
+  navBtn: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  actionBtn: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  codeRow: { borderWidth: 1, borderStyle: 'dashed' },
+  mono: { fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), letterSpacing: 1 },
+  srOnly: { position: 'absolute', width: 1, height: 1, opacity: 0 },
 });

@@ -22,12 +22,19 @@
  * undefined and the seed simply skips rain gear.
  *
  * Desktop: content max-width 720, centered (collaborators pattern).
+ *
+ * v2 M4 X2.4 usability pass: accessible progress bar (+ "all packed" state),
+ * a "Hide packed" switch, collapsible categories with per-category progress
+ * (PackingCategorySection), one-tap suggestion chips (PackingSuggestionChips;
+ * "Add all" keeps the bulk seed), haptic tick on toggle (PackingItemRow),
+ * and skeleton loading. Hide/collapse state is per-visit (no storage).
  */
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
 import { BackButton, Button, Screen } from '@/components';
+import { Skeleton, SkeletonGroup } from '@/components/Skeleton';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTripRole } from '@/hooks/useTripRole';
@@ -42,17 +49,21 @@ import {
   useUpdateTripPackingItem,
   type TripPackingItem,
 } from '@/api';
-import { seedPackingList } from '@/lib/packingSeed';
+import { seedPackingList, type PackingSeedItem } from '@/lib/packingSeed';
+import { haptics } from '@/lib/haptics';
 import { confirmDestructive } from '@/lib/confirm';
 import {
   buildTripWeatherParams,
   monthOfDateString,
 } from '@/components/trip-detail/tripWeather';
 import { groupPackingItems } from '@/components/packing/groupPackingItems';
-import { PackingItemRow } from '@/components/packing/PackingItemRow';
+import { PackingCategorySection } from '@/components/packing/PackingCategorySection';
+import { PackingSuggestionChips } from '@/components/packing/PackingSuggestionChips';
+import { pendingSuggestions, viewPackingGroups } from '@/components/packing/packingView';
 import { AddPackingItemRow } from '@/components/packing/AddPackingItemRow';
 
 const PACKING_MAX_WIDTH = 720;
+const MAX_SUGGESTION_CHIPS = 8;
 
 export default function PackingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -75,6 +86,8 @@ export default function PackingScreen() {
 
   // Transient feedback for the suggest action (success / nothing-new / error).
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  const [hidePacked, setHidePacked] = useState(false);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   // ── Trip shape inputs for the seed ────────────────────────────────────────
   const maxDayIndex = useMemo(
@@ -115,18 +128,30 @@ export default function PackingScreen() {
 
   // ── Derived list state ────────────────────────────────────────────────────
   const groups = useMemo(() => groupPackingItems(items), [items]);
+  const groupViews = useMemo(() => viewPackingGroups(groups, hidePacked), [groups, hidePacked]);
   const checkedCount = useMemo(() => items.filter((i) => i.checked).length, [items]);
+
+  // Template suggestions not yet on the list (pure, offline).
+  const pending = useMemo(() => {
+    const startMonth =
+      (trip?.start_date ? monthOfDateString(trip.start_date) : null) ?? new Date().getMonth() + 1;
+    return pendingSuggestions(seedPackingList({ startMonth, days: tripDayCount, hasRainyDay }), items);
+  }, [trip?.start_date, tripDayCount, hasRainyDay, items]);
+
+  function toggleCollapsed(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleSuggest() {
     if (!id) return;
     setSuggestNote(null);
-    const startMonth =
-      (trip?.start_date ? monthOfDateString(trip.start_date) : null) ??
-      new Date().getMonth() + 1;
-    const seeded = seedPackingList({ startMonth, days: tripDayCount, hasRainyDay });
-    const existing = new Set(items.map((i) => i.label.trim().toLowerCase()));
-    const fresh = seeded.filter((s) => !existing.has(s.label.trim().toLowerCase()));
+    const fresh = pending;
     if (fresh.length === 0) {
       setSuggestNote('Your list already covers everything we would suggest.');
       return;
@@ -136,9 +161,21 @@ export default function PackingScreen() {
         tripId: id,
         items: fresh.map((s) => ({ label: s.label, category: s.category, auto: true })),
       });
+      haptics.success();
       setSuggestNote(`Added ${fresh.length} suggested item${fresh.length === 1 ? '' : 's'}.`);
     } catch {
       setSuggestNote("Couldn't add suggestions — try again.");
+    }
+  }
+
+  async function handleAddSuggestion(s: PackingSeedItem) {
+    if (!id) return;
+    setSuggestNote(null);
+    try {
+      await createItems.mutateAsync({ tripId: id, items: [{ label: s.label, category: s.category, auto: true }] });
+      haptics.tap();
+    } catch {
+      setSuggestNote(`Couldn't add ${s.label} — try again.`);
     }
   }
 
@@ -161,7 +198,13 @@ export default function PackingScreen() {
   if (tripLoading || itemsLoading) {
     return (
       <Screen>
-        <ActivityIndicator size="large" color={t.colors.primary} />
+        <SkeletonGroup label="Loading packing list" style={{ gap: t.spacing.md }}>
+          <Skeleton width="50%" height={28} />
+          <Skeleton height={8} radius="pill" />
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} height={48} />
+          ))}
+        </SkeletonGroup>
       </Screen>
     );
   }
@@ -176,6 +219,7 @@ export default function PackingScreen() {
   }
 
   const progressPct = items.length > 0 ? Math.round((checkedCount / items.length) * 100) : 0;
+  const allPacked = items.length > 0 && checkedCount === items.length;
 
   return (
     <Screen padded={false}>
@@ -200,23 +244,49 @@ export default function PackingScreen() {
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{trip.title}</Text>
           {items.length > 0 ? (
             <View style={{ gap: t.spacing.xs, paddingTop: t.spacing.xs }}>
-              <Text
-                style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}
-                accessibilityLiveRegion="polite"
-              >
-                {checkedCount} of {items.length} packed
-              </Text>
-              {/* Decorative progress bar — the live text above carries the value. */}
+              <View style={styles.progressHead}>
+                <Text
+                  style={[t.typography.caption, { color: allPacked ? t.colors.success : t.colors.text, fontWeight: '600', flexShrink: 1 }]}
+                  accessibilityLiveRegion="polite"
+                >
+                  {allPacked ? `All ${items.length} packed — you're ready! 🎉` : `${checkedCount} of ${items.length} packed`}
+                </Text>
+                <Pressable
+                  accessibilityRole="switch"
+                  accessibilityLabel="Hide packed items"
+                  accessibilityState={{ checked: hidePacked }}
+                  onPress={() => {
+                    haptics.select();
+                    setHidePacked((v) => !v);
+                  }}
+                  hitSlop={6}
+                  style={({ pressed }) => [
+                    styles.toggle,
+                    {
+                      borderColor: hidePacked ? t.colors.primary : t.colors.border,
+                      backgroundColor: hidePacked ? t.colors.gradientSubtle : 'transparent',
+                      borderRadius: t.radius.pill,
+                      opacity: pressed ? 0.7 : 1,
+                    },
+                    Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+                  ]}
+                >
+                  <Text style={[t.typography.small, { color: hidePacked ? t.colors.primary : t.colors.textMuted, fontWeight: '600' }]}>
+                    {hidePacked ? '✓ Hiding packed' : 'Hide packed'}
+                  </Text>
+                </Pressable>
+              </View>
               <View
                 style={[styles.progressTrack, { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill }]}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
+                accessibilityRole="progressbar"
+                accessibilityLabel="Packing progress"
+                accessibilityValue={{ min: 0, max: 100, now: progressPct }}
               >
                 <View
                   style={[
                     styles.progressFill,
                     {
-                      backgroundColor: t.colors.primary,
+                      backgroundColor: allPacked ? t.colors.success : t.colors.primary,
                       borderRadius: t.radius.pill,
                       width: `${progressPct}%`,
                     },
@@ -236,14 +306,24 @@ export default function PackingScreen() {
         {/* ── Suggest (editors only) ───────────────────────────────────── */}
         {canEditTrip ? (
           <View style={{ gap: t.spacing.xs }}>
-            <Button
-              label="✨ Suggest items"
-              variant="secondary"
-              onPress={() => void handleSuggest()}
-              loading={createItems.isPending}
-              disabled={createItems.isPending}
-              accessibilityLabel="Suggest packing items based on your trip dates and the weather"
-            />
+            {items.length === 0 ? (
+              <Button
+                label="✨ Suggest items"
+                variant="secondary"
+                onPress={() => void handleSuggest()}
+                loading={createItems.isPending}
+                disabled={createItems.isPending}
+                accessibilityLabel="Suggest packing items based on your trip dates and the weather"
+              />
+            ) : (
+              <PackingSuggestionChips
+                chips={pending.slice(0, MAX_SUGGESTION_CHIPS)}
+                totalPending={pending.length}
+                onAddOne={(s) => void handleAddSuggestion(s)}
+                onAddAll={() => void handleSuggest()}
+                disabled={createItems.isPending}
+              />
+            )}
             {suggestNote ? (
               <Text
                 style={[t.typography.caption, { color: t.colors.textMuted }]}
@@ -284,28 +364,26 @@ export default function PackingScreen() {
             </Text>
           </View>
         ) : (
-          groups.map((group) => (
-            <View key={group.key} style={{ gap: t.spacing.sm }}>
-              <Text
-                style={[t.typography.subtitle, { color: t.colors.text }]}
-                accessibilityRole="header"
-                aria-level={3}
-              >
-                {group.title}
+          <>
+            {groupViews.length === 0 ? (
+              <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
+                Everything is packed. Turn off “Hide packed” to see the full list.
               </Text>
-              {group.items.map((item) => (
-                <PackingItemRow
-                  key={item.id}
-                  item={item}
-                  canEdit={canEditTrip}
-                  onToggle={(checked) => {
-                    if (id) updateItem.mutate({ itemId: item.id, tripId: id, patch: { checked } });
-                  }}
-                  onDelete={() => void handleDelete(item)}
-                />
-              ))}
-            </View>
-          ))
+            ) : null}
+            {groupViews.map((group) => (
+              <PackingCategorySection
+                key={group.key}
+                group={group}
+                collapsed={collapsed.has(group.key)}
+                onToggleCollapsed={() => toggleCollapsed(group.key)}
+                canEdit={canEditTrip}
+                onToggleItem={(item, checked) => {
+                  if (id) updateItem.mutate({ itemId: item.id, tripId: id, patch: { checked } });
+                }}
+                onDeleteItem={(item) => void handleDelete(item)}
+              />
+            ))}
+          </>
         )}
 
         {/* ── Manual add (editors only) ────────────────────────────────── */}
@@ -318,8 +396,10 @@ export default function PackingScreen() {
 }
 
 const styles = StyleSheet.create({
-  progressTrack: { height: 6, overflow: 'hidden' },
-  progressFill: { height: 6 },
+  progressTrack: { height: 8, overflow: 'hidden' },
+  progressFill: { height: 8 },
+  progressHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  toggle: { borderWidth: 1.5, paddingHorizontal: 12, minHeight: 32, justifyContent: 'center' },
   emptyCard: { borderWidth: 1, alignItems: 'center' },
   emptyEmoji: { fontSize: 40, lineHeight: 48 },
 });

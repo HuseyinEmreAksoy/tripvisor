@@ -16,21 +16,21 @@
  *   onAdd      — opens ExpenseEditSheet in "add" mode
  *   onEdit     — opens ExpenseEditSheet in "edit" mode with the selected row
  *   onDelete   — calls useDeleteTripExpense
+ *
+ * v2 M4 X2.4: newest first; a per-day spend strip (DailySpendStrip) sits on
+ * top whenever there is actual spend, and tapping a day filters the list.
+ * `tripDayCount` / `tripStartDate` are optional — without them the strip
+ * spans the pinned days and labels them "D1…". Delete confirm goes through
+ * the platform-split `confirmDestructive` (no `window` in shared code).
  */
-import { useMemo } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { formatCurrency } from '@/lib/formatCurrency';
-import type { TripExpense, TripExpenseCategory } from '@/api/types';
-
-const CATEGORY_META: Record<TripExpenseCategory, { label: string; icon: string }> = {
-  accommodation: { label: 'Accommodation', icon: '🏨' },
-  food: { label: 'Food & Drink', icon: '🍽️' },
-  transport: { label: 'Transport', icon: '🚆' },
-  shopping: { label: 'Shopping', icon: '🛍️' },
-  activities: { label: 'Activities', icon: '🎭' },
-  other: { label: 'Other', icon: '📦' },
-};
+import { confirmDestructive } from '@/lib/confirm';
+import type { TripExpense } from '@/api/types';
+import { categoryMeta, dailySpend, shortDayLabel, todayDayIndex } from './expenseMath';
+import { DailySpendStrip, type SpendFilter } from './DailySpendStrip';
 
 export interface ExpenseListProps {
   expenses: TripExpense[];
@@ -41,6 +41,10 @@ export interface ExpenseListProps {
   onAdd: () => void;
   onEdit: (expense: TripExpense) => void;
   onDelete: (expense: TripExpense) => void;
+  /** X2.4: trip length in days — the spend strip shows every day, not just pinned ones. */
+  tripDayCount?: number;
+  /** X2.4: trip start ('YYYY-MM-DD') — dated strip labels + today highlight. */
+  tripStartDate?: string | null;
 }
 
 export function ExpenseList({
@@ -50,13 +54,22 @@ export function ExpenseList({
   onAdd,
   onEdit,
   onDelete,
+  tripDayCount,
+  tripStartDate,
 }: ExpenseListProps) {
   const t = useTheme();
+  const [filter, setFilter] = useState<SpendFilter>(null);
 
-  const sorted = useMemo(
-    () => [...expenses].sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    [expenses],
-  );
+  const spend = useMemo(() => dailySpend(expenses, tripDayCount ?? 0), [expenses, tripDayCount]);
+  const hasActual = spend.max > 0 || spend.unassigned > 0;
+  const todayIndex = todayDayIndex(tripStartDate, spend.days.length, new Date());
+
+  const sorted = useMemo(() => {
+    const visible = expenses.filter((e) =>
+      filter === null ? true : filter === 'trip' ? e.day_index === null : e.day_index === filter,
+    );
+    return visible.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }, [expenses, filter]);
 
   return (
     <View
@@ -103,9 +116,22 @@ export function ExpenseList({
         ) : null}
       </View>
 
+      {hasActual ? (
+        <DailySpendStrip
+          spend={spend}
+          currency={currency}
+          tripStartDate={tripStartDate}
+          todayIndex={todayIndex}
+          selected={filter}
+          onSelect={setFilter}
+        />
+      ) : null}
+
       {sorted.length === 0 ? (
         <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          No expenses recorded yet.
+          {filter === null
+            ? 'No expenses recorded yet.'
+            : `Nothing recorded for ${filter === 'trip' ? 'the whole trip' : shortDayLabel(tripStartDate, filter)}.`}
         </Text>
       ) : (
         <ScrollView
@@ -121,7 +147,7 @@ export function ExpenseList({
               currency={currency}
               canEdit={canEdit}
               onEdit={() => onEdit(expense)}
-              onDelete={() => confirmDelete(expense, currency, onDelete)}
+              onDelete={() => void confirmDelete(expense, currency, onDelete)}
             />
           ))}
         </ScrollView>
@@ -144,7 +170,7 @@ function ExpenseRow({
   onDelete: () => void;
 }) {
   const t = useTheme();
-  const meta = CATEGORY_META[expense.category] ?? { label: expense.category, icon: '📦' };
+  const meta = categoryMeta(expense.category);
   const isActual = expense.kind === 'actual';
   const fmt = (n: number) => formatCurrency(n, currency);
 
@@ -286,27 +312,18 @@ function ExpenseRow({
   );
 }
 
-function confirmDelete(
+async function confirmDelete(
   expense: TripExpense,
   currency: string | null | undefined,
   onDelete: (e: TripExpense) => void,
 ) {
-  const meta = CATEGORY_META[expense.category] ?? { label: expense.category };
-  const amtStr = formatCurrency(expense.amount, currency);
-  if (Platform.OS === 'web') {
-    if (typeof window !== 'undefined' && window.confirm(`Delete this ${meta.label} expense?`)) {
-      onDelete(expense);
-    }
-    return;
-  }
-  Alert.alert(
-    'Delete expense?',
-    `Remove this ${meta.label} expense of ${amtStr}?`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => onDelete(expense) },
-    ],
-  );
+  const meta = categoryMeta(expense.category);
+  const confirmed = await confirmDestructive({
+    title: 'Delete expense?',
+    message: `Remove this ${meta.label} expense of ${formatCurrency(expense.amount, currency)}?`,
+    confirmLabel: 'Delete',
+  });
+  if (confirmed) onDelete(expense);
 }
 
 const styles = StyleSheet.create({

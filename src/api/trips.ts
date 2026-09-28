@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { RefetchOptions, UseQueryResult } from '@tanstack/react-query';
+import { keepPreviousData, onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { TIER1_MUTATION_NETWORK_MODE, tier1SuccessResult } from './_tier1Facade';
 import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
@@ -178,37 +179,7 @@ export function selectTier1Trips(
   return out.sort(compareTier1Trips);
 }
 
-/**
- * Dress Tier-1-served data in the `UseQueryResult` shape consumers already
- * destructure (`data`, `isLoading`, `error`, `refetch`, `isRefetching`, …).
- * The paused legacy query is spread first so fetch-state fields stay live;
- * the success-state fields are overridden because the store IS the data.
- *
- * `refetch` (pull-to-refresh) does both: forces an incremental Tier-1 pull
- * AND delegates to the legacy refetch — the latter still fetches even while
- * `enabled: false` (TanStack contract), which keeps the D2 fallback cache
- * warm and drives the caller's `isRefetching` spinner. One extra request on
- * an explicit user gesture is an acceptable cost for that coherence.
- */
-function tier1SuccessResult<T>(paused: UseQueryResult<T, Error>, data: T): UseQueryResult<T, Error> {
-  return {
-    ...paused,
-    data,
-    error: null,
-    status: 'success',
-    isPending: false,
-    isLoading: false,
-    isLoadingError: false,
-    isRefetchError: false,
-    isError: false,
-    isSuccess: true,
-    isPlaceholderData: false,
-    refetch: async (options?: RefetchOptions) => {
-      resyncTier1();
-      return paused.refetch(options);
-    },
-  } as UseQueryResult<T, Error>;
-}
+// tier1SuccessResult: hoisted to ./_tier1Facade (M4 X2.5) — shared by all four facades.
 
 export type UseTripsOptions = { archived?: boolean };
 
@@ -300,6 +271,12 @@ export function useTrips(opts: UseTripsOptions = {}): UseQueryResult<Trip[], Err
   const query = useQuery<Trip[]>({
     queryKey: tripsKeys.list({ archived }),
     enabled: !tier1Serves,
+    // M4 X2.5 follow-up: flipping Active ⇄ Archived changes the key; without
+    // this the list flashes a loading state on the first visit to the other
+    // tab. The previous tab's rows stay on screen (`isPlaceholderData: true`
+    // while they do) until the new list lands. Tier-1-served lists never hit
+    // this — the store selector re-partitions synchronously.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       // 1. Fetch the UNION via RLS. NOTE: no .eq('user_id', ...) filter —
       //    the trips_collab_select policy already gates this to
@@ -413,6 +390,8 @@ export function useTrip(id: Uuid | undefined): UseQueryResult<Trip | null, Error
 export function useCreateTrip() {
   const qc = useQueryClient();
   return useMutation<Trip, Error, CreateTripInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const parsed = createTripSchema.parse(input);
       // S2.8.4: sync-create only when the store is already serving reads
@@ -527,6 +506,8 @@ async function getCallerId(): Promise<Uuid> {
 export function useArchiveTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid, ArchiveContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (tripId) => {
       // S2.8.4: flag-on (row hydrated) the archive is a sync write —
       // offline-safe, instant in the Tier-1 list, and UNDOABLE: the
@@ -571,6 +552,8 @@ export function useArchiveTrip() {
 export function useUnarchiveTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid, ArchiveContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (tripId) => {
       // S2.8.4: sync write when the row is hydrated. The returned UndoEntry
       // is deliberately DISCARDED — unarchive IS the inverse affordance (and
@@ -681,6 +664,8 @@ export type UpdateTripPatch = Partial<
 export function useUpdateTrip(tripId: Uuid) {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, UpdateTripPatch>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (patch) => {
       // Empty patch is a no-op; avoid issuing a pointless UPDATE that would
       // still bump updated_at via the trigger.
@@ -786,6 +771,8 @@ export function useUpdateTripBudget(tripId: Uuid) {
   const qc = useQueryClient();
   const detailKey = tripsKeys.detail(tripId);
   return useMutation<Uuid, Error, number | null, UpdateTripBudgetContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (total_budget) => {
       // `null` is a meaningful value (clear the ceiling); we deliberately
       // do NOT short-circuit on `null` like we would on `undefined`.
@@ -895,6 +882,8 @@ export function useUpdateRouteRenderMode(tripId: Uuid) {
   const detailKey = tripsKeys.detail(tripId);
 
   return useMutation<RouteRenderMode, Error, RouteRenderMode, UpdateRouteRenderModeContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (mode) => {
       // S2.8.4: sync write when the row is hydrated — offline-safe, so a
       // flag-on offline toggle persists locally and queues; the optimize
@@ -921,6 +910,14 @@ export function useUpdateRouteRenderMode(tripId: Uuid) {
       // can hit "Re-optimize" manually). We swallow the optimize error
       // for the mutation's success path so the toggle UX feels snappy
       // — but log it so observability + Sentry still see it.
+      //
+      // Offline (only reachable via the Tier-1 branch — the legacy UPDATE
+      // above throws first): skip the optimize call. useOptimizeTrip keeps
+      // TanStack's default networkMode 'online', so offline its mutateAsync
+      // would PAUSE until reconnect and leave this (networkMode 'always')
+      // mutation stuck pending. The persisted mode syncs on reconnect and
+      // the S2.8.7 pendingRecompute pill covers the stale polyline.
+      if (!onlineManager.isOnline()) return mode;
       try {
         await optimize.mutateAsync({ tripId, mode });
       } catch (err) {

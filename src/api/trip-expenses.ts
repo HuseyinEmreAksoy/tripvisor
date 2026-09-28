@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import { useTrip } from './trips';
@@ -10,6 +12,22 @@ import type {
   Uuid,
 } from './types';
 import { tripsKeys, tripExpensesKeys } from './_keys';
+import {
+  TIER1_MUTATION_NETWORK_MODE,
+  compareCreatedAtAscLocalLast,
+  dressTier1Return,
+  tier1SuccessResult,
+} from './_tier1Facade';
+import {
+  createExpense as syncCreateExpense,
+  isTier1SyncActive,
+  tombstoneExpense as syncTombstoneExpense,
+  updateExpense as syncUpdateExpense,
+  type ExpenseWritePatch,
+} from '@/sync/mutations';
+import { tier1RootLoaded$ } from '@/sync/hydrate';
+import { tier1Store$ } from '@/sync/store';
+import { getSessionUndoStack } from '@/sync/undo';
 
 // ----- Query keys (re-exported from ./_keys; see comment in trip-days.ts) ---
 export { tripExpensesKeys };
@@ -83,40 +101,128 @@ const updateTripExpenseSchema = z.object({
 export type UpdateTripExpenseInput = z.infer<typeof updateTripExpenseSchema>;
 
 // ===========================================================================
+// M4 X2.5 — Tier-1 sync facade (reads + write repoint)
+// ===========================================================================
+//
+// Same always-call facade as ./trips.ts (S2.8.3/4) and ./trip-places.ts
+// (S2.8.5/6) — read those headers for the full rationale. Deltas:
+//
+//   - SERVING GATE = engine active AND (expenses root has rows OR its first
+//     remote load has completed this session — `tier1RootLoaded$`). The
+//     loaded half matters here: plenty of users have zero expenses, and a
+//     rows-only gate would never flip, so the first expense added OFFLINE
+//     mid-trip would take the network path and fail. Before hydration the
+//     v1 query serves (D2).
+//   - Writes follow the SAME gate as reads (exactly one source renders and
+//     exactly that source is written): create when the root is serving,
+//     update/delete when the ROW is in the store.
+//   - Delete is a TOMBSTONE through the sync layer (`deleted: true`,
+//     replicates via incremental pulls) and its UndoEntry goes on the
+//     session undo stack. Flag-off / not-yet-hydrated deletes stay v1 hard
+//     deletes; every direct read filters `deleted = false` so tombstones
+//     never resurface on the legacy path.
+//   - Hook signatures are UNCHANGED (X2.4 / X2.1 / X2.2 consume them).
+//   - TanStack invalidations keep firing in both branches (B1's decision):
+//     flag-on they only mark the paused query stale.
+
+/** The expense row in the Tier-1 store, IF the engine is active. */
+function tier1ExpenseRow(id: Uuid): TripExpense | undefined {
+  if (!isTier1SyncActive()) return undefined;
+  return tier1Store$.tripExpenses[id]?.peek();
+}
+
+/** Non-reactive twin of the read gate (for mutationFns). */
+function tier1ExpensesServing(): boolean {
+  if (!isTier1SyncActive()) return false;
+  const record = tier1Store$.tripExpenses.peek();
+  const hasRows = record != null && Object.keys(record).length > 0;
+  return hasRows || tier1RootLoaded$.tripExpenses.peek() === true;
+}
+
+/** created_at asc (the v1 ORDER BY); unacked local creates last, then id. */
+function compareTier1Expenses(a: TripExpense, b: TripExpense): number {
+  const cmp = compareCreatedAtAscLocalLast(a, b);
+  if (cmp !== null && cmp !== 0) return cmp;
+  return a.id.localeCompare(b.id);
+}
+
+/**
+ * Pure Tier-1 selector — the v1 `useTripExpenses` queryFn contract (per-trip,
+ * live rows only, created_at asc) over the store record. `tripId === null`
+ * selects across ALL trips (the `useAllUserExpenses` contract). Rows are
+ * shallow-copied so a consumer can never mutate the sync-attached store.
+ */
+export function selectTier1TripExpenses(
+  record: Record<string, TripExpense>,
+  tripId: Uuid | null,
+): TripExpense[] {
+  const out: TripExpense[] = [];
+  for (const row of Object.values(record)) {
+    if (!row) continue;
+    if (tripId !== null && row.trip_id !== tripId) continue;
+    // The engine pulls tombstones on purpose (remote-delete replication).
+    if (row.deleted === true) continue;
+    out.push({ ...row });
+  }
+  return out.sort(compareTier1Expenses);
+}
+
+/** Reactive selector shared by both read hooks: null → v1 branch serves. */
+function useTier1Expenses(enabled: boolean, tripId: Uuid | null): TripExpense[] | null {
+  return use$((): TripExpense[] | null => {
+    // Both tracked from the first render — the first hydration write (or the
+    // first empty pull completing) is what flips the facade.
+    const record = tier1Store$.tripExpenses.get();
+    const loaded = tier1RootLoaded$.tripExpenses.get();
+    if (!enabled) return null;
+    const hasRows = record != null && Object.keys(record).length > 0;
+    if ((!hasRows && !loaded) || !isTier1SyncActive()) return null;
+    return selectTier1TripExpenses(record ?? {}, tripId);
+  });
+}
+
+// ===========================================================================
 // Hooks
 // ===========================================================================
 
 /**
  * List `trip_expenses` for a trip, sorted by `created_at` ascending so the
  * UI shows entries in the order the user added them. Returns an empty
- * array when the trip has no expenses recorded.
+ * array when the trip has no expenses recorded. Tombstoned rows are never
+ * returned (both branches).
  *
  * RLS gates this read by the parent trip's `user_id`; an unauthorized
- * caller will receive an empty result rather than a 403, which is fine
- * for the trip-detail surface (the trip itself wouldn't have loaded
- * either).
+ * caller will receive an empty result rather than a 403.
  */
-export function useTripExpenses(tripId: Uuid | undefined) {
-  return useQuery<TripExpense[]>({
+export function useTripExpenses(tripId: Uuid | undefined): UseQueryResult<TripExpense[], Error> {
+  // [Hook 1/2] Tier-1 selector.
+  const tier1Expenses = useTier1Expenses(Boolean(tripId), tripId ?? null);
+  const tier1Serves = tier1Expenses !== null;
+
+  // [Hook 2/2] The v1 query — paused (not unmounted) while Tier-1 serves.
+  const query = useQuery<TripExpense[]>({
     queryKey: tripId ? tripExpensesKeys.forTrip(tripId) : ['trip-expenses', 'none'],
-    enabled: Boolean(tripId),
+    enabled: Boolean(tripId) && !tier1Serves,
     queryFn: async () => {
       if (!tripId) return [];
       const { data, error } = await supabase
         .from('trip_expenses')
         .select('*')
         .eq('trip_id', tripId)
+        // X2.5: flag-on clients tombstone instead of hard-deleting — keep
+        // flag-off / fallback readers from resurrecting deleted expenses.
+        // Lockstep with selectTier1TripExpenses above.
+        .eq('deleted', false)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      // Best-effort runtime validation. We don't `parse` and throw on a
-      // single bad row because a stale UI seeing a row from a future
-      // category enum is preferable to crashing the whole list — narrow
-      // to the schema where it succeeds, fall back to the raw row
-      // otherwise. (Phase 21 may tighten this if product wants strict
-      // validation.)
+      // Cast (not parse) per project policy: a row from a future category
+      // enum degrades to stale UI rather than crashing the whole list.
       return (data ?? []) as TripExpense[];
     },
   });
+
+  if (!tier1Serves) return query;
+  return tier1SuccessResult(query, tier1Expenses as TripExpense[]);
 }
 
 /**
@@ -124,12 +230,30 @@ export function useTripExpenses(tripId: Uuid | undefined) {
  * per-trip expenses cache AND the trip detail cache, because the trip's
  * derived totals (sum across categories, comparison against
  * `total_budget`) depend on this data.
+ *
+ * Flag-on (root serving): an offline-safe optimistic create through the
+ * sync engine — the row is in every `useTripExpenses` consumer synchronously
+ * and the INSERT is queued (survives reload when persistence is attached).
  */
 export function useCreateTripExpense() {
   const qc = useQueryClient();
   return useMutation<TripExpense, Error, CreateTripExpenseInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const parsed = createTripExpenseSchema.parse(input);
+      if (tier1ExpensesServing()) {
+        const id = syncCreateExpense({
+          trip_id: parsed.trip_id,
+          category: parsed.category,
+          amount: parsed.amount,
+          kind: parsed.kind,
+          day_index: parsed.day_index ?? null,
+          label: parsed.label ?? null,
+        });
+        const row = tier1Store$.tripExpenses[id]?.peek() as TripExpense; // just written — present
+        return dressTier1Return(row);
+      }
       const { data, error } = await supabase
         .from('trip_expenses')
         .insert(parsed)
@@ -147,19 +271,28 @@ export function useCreateTripExpense() {
 
 /**
  * Patch a `trip_expenses` row by id. We strip `undefined` values from
- * the payload so the UPDATE only touches columns the caller named — this
- * matches the `useUpdateTripPlace` convention and keeps `updated_at`
- * trigger fires meaningful.
+ * the payload so the UPDATE only touches columns the caller named.
+ *
+ * Flag-on (row in the store): sync write; the UndoEntry is discarded —
+ * generic field edits are not in the undo catalog (mirrors useUpdateTripPlace).
  */
 export function useUpdateTripExpense() {
   const qc = useQueryClient();
   return useMutation<TripExpense, Error, UpdateTripExpenseInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const parsed = updateTripExpenseSchema.parse(input);
       const { id, ...patch } = parsed;
       const payload = Object.fromEntries(
         Object.entries(patch).filter(([, v]) => v !== undefined),
       );
+      if (tier1ExpenseRow(id)) {
+        // Every key this schema can produce is in EXPENSE_PATCH_FIELDS.
+        syncUpdateExpense(id, payload as ExpenseWritePatch);
+        const row = tier1Store$.tripExpenses[id]?.peek() as TripExpense; // present — gate just checked
+        return dressTier1Return(row);
+      }
       const { data, error } = await supabase
         .from('trip_expenses')
         .update(payload)
@@ -178,16 +311,22 @@ export function useUpdateTripExpense() {
 
 /**
  * Delete a `trip_expenses` row by id. The mutation requires the parent
- * `trip_id` so we can invalidate the right cache scope on success — the
- * deleted row's `trip_id` would round-trip if we returned it from the
- * DELETE, but PostgREST's DELETE with `.select()` is awkward and adds a
- * round trip; passing the id from the call site is cheaper and matches
- * `useDeleteTripPlace`.
+ * `trip_id` so we can invalidate the right cache scope on success.
+ *
+ * Flag-on (row in the store): TOMBSTONE through the sync layer (offline-safe;
+ * replicates through incremental pulls) with its UndoEntry pushed onto the
+ * session undo stack ("Remove expense"). Otherwise the v1 hard delete.
  */
 export function useDeleteTripExpense() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, { id: Uuid; trip_id: Uuid }>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async ({ id }) => {
+      if (tier1ExpenseRow(id)) {
+        getSessionUndoStack().push(syncTombstoneExpense(id));
+        return id;
+      }
       const { error } = await supabase.from('trip_expenses').delete().eq('id', id);
       if (error) throw error;
       return id;
@@ -204,24 +343,32 @@ export function useDeleteTripExpense() {
 // ===========================================================================
 
 /**
- * Fetch every `trip_expenses` row the current user can see (across all trips
- * they own or have collaborator access to). RLS restricts the result to
- * accessible trips, so this is safe to call without extra filtering.
+ * Every live `trip_expenses` row the current user can see (across all trips
+ * they own or collaborate on). RLS restricts the legacy read to accessible
+ * trips; the Tier-1 store is RLS-scoped the same way at hydration.
  *
- * Powers the analytics screen cross-trip spending charts.
+ * Powers the analytics screen's live spending fallback. X2.5: tombstones
+ * are excluded in both branches — lockstep with the 0029 migration's
+ * `expense_totals` filter on the nightly MV.
  */
-export function useAllUserExpenses() {
-  return useQuery<TripExpense[]>({
+export function useAllUserExpenses(): UseQueryResult<TripExpense[], Error> {
+  const tier1Expenses = useTier1Expenses(true, null);
+  const tier1Serves = tier1Expenses !== null;
+  const query = useQuery<TripExpense[]>({
     queryKey: [...tripExpensesKeys.all, 'mine'] as const,
+    enabled: !tier1Serves,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('trip_expenses')
         .select('*')
+        .eq('deleted', false)
         .order('created_at', { ascending: true });
       if (error) throw error;
       return (data ?? []) as TripExpense[];
     },
   });
+  if (!tier1Serves) return query;
+  return tier1SuccessResult(query, tier1Expenses as TripExpense[]);
 }
 
 // ===========================================================================

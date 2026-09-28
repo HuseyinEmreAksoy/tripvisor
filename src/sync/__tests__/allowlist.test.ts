@@ -6,6 +6,7 @@
  * regression net keeping Google-restricted Place content out of it
  * (docs/v2/risks-and-decisions.md C3).
  */
+import { describe, expect, it } from '@jest/globals';
 import {
   TIER1_FIELDS,
   TIER1_TABLES,
@@ -313,11 +314,19 @@ describe('sanitizeForTier1Write — structural ids (engine requirements)', () =>
 });
 
 describe('write-allowlist self-consistency', () => {
-  it('this wave write-enables exactly trips + trip_places', () => {
-    expect([...TIER1_WRITE_TABLES].sort()).toEqual(['trip_places', 'trips']);
+  it('write-enables exactly trips + trip_places (S2.4) + trip_expenses + trip_packing_items (X2.5)', () => {
+    expect([...TIER1_WRITE_TABLES].sort()).toEqual([
+      'trip_expenses',
+      'trip_packing_items',
+      'trip_places',
+      'trips',
+    ]);
     expect(isTier1WriteTable('trips')).toBe(true);
     expect(isTier1WriteTable('trip_places')).toBe(true);
+    expect(isTier1WriteTable('trip_expenses')).toBe(true);
+    expect(isTier1WriteTable('trip_packing_items')).toBe(true);
     expect(isTier1WriteTable('trip_days')).toBe(false);
+    expect(isTier1WriteTable('trip_accommodations')).toBe(false);
   });
 
   it('throws on a table that is not write-enabled', () => {
@@ -341,7 +350,6 @@ describe('write-allowlist self-consistency', () => {
   it.each(TIER1_WRITE_TABLES)('"%s" write fields never include the C1/C3 forbidden names', (table) => {
     const fields = TIER1_WRITE_FIELDS[table] as readonly string[];
     for (const forbidden of [
-      'day_index',
       'order_in_day',
       'details_refreshed_at',
       'created_at',
@@ -352,6 +360,9 @@ describe('write-allowlist self-consistency', () => {
     ]) {
       expect(fields).not.toContain(forbidden);
     }
+    // C1: day_index is OPTIMIZER order on trip_places (server-only). On
+    // trip_expenses it is the user's "spent on day N" label — writable there.
+    if (table === 'trip_places') expect(fields).not.toContain('day_index');
     for (const field of fields) {
       expect({ table, field, restricted: isRestrictedFieldName(field) }).toEqual({
         table,
@@ -359,5 +370,70 @@ describe('write-allowlist self-consistency', () => {
         restricted: false,
       });
     }
+  });
+});
+
+describe('sanitizeForTier1Write: X2.5 expenses + packing', () => {
+  const hydratedExpense = {
+    id: 'e1',
+    trip_id: 't1',
+    category: 'food',
+    amount: 12.5,
+    kind: 'actual',
+    day_index: 2,
+    label: 'Lunch',
+    deleted: false,
+    created_at: '2026-09-01T10:00:00Z',
+    updated_at: '2026-09-01T10:00:00Z',
+  };
+
+  it('expense UPDATE keeps user fields (incl. the day_index label), strips timestamps + trip_id', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write('trip_expenses', hydratedExpense, {
+      onDrop: (f, k) => dropped.push([f, k]),
+    }) as Record<string, unknown>;
+    expect(out).toEqual({
+      id: 'e1',
+      category: 'food',
+      amount: 12.5,
+      kind: 'actual',
+      day_index: 2,
+      label: 'Lunch',
+      deleted: false,
+    });
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['trip_id', 'server_only'],
+        ['created_at', 'server_only'],
+        ['updated_at', 'server_only'],
+      ]),
+    );
+  });
+
+  it('expense CREATE (no created_at) carries trip_id', () => {
+    const { created_at: _c, updated_at: _u, ...create } = hydratedExpense;
+    const out = sanitizeForTier1Write('trip_expenses', create) as Record<string, unknown>;
+    expect(out.trip_id).toBe('t1');
+  });
+
+  it('packing `auto` is create-only; updates drop it as server_only', () => {
+    const create = { id: 'k1', trip_id: 't1', label: 'Socks', category: null, checked: false, auto: true, deleted: false };
+    expect(sanitizeForTier1Write('trip_packing_items', create)).toEqual(create);
+
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trip_packing_items',
+      { ...create, checked: true, created_at: '2026-09-01T10:00:00Z', updated_at: '2026-09-01T10:00:00Z' },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    ) as Record<string, unknown>;
+    expect(out).toEqual({ id: 'k1', label: 'Socks', category: null, checked: true, deleted: false });
+    expect(dropped).toEqual(expect.arrayContaining([['auto', 'server_only'], ['trip_id', 'server_only']]));
+  });
+
+  it('C3 still throws on restricted names for the new tables', () => {
+    expect(() => sanitizeForTier1Write('trip_expenses', { id: 'e1', rating: 5 })).toThrow(SyncTosViolationError);
+    expect(() => sanitizeForTier1Write('trip_packing_items', { id: 'k1', photos: [] })).toThrow(
+      SyncTosViolationError,
+    );
   });
 });

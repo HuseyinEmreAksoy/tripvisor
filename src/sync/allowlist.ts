@@ -393,9 +393,13 @@ export function tier1SelectColumns(table: Tier1Table): string {
 // not a bug, which is why they're dropped (with telemetry) rather than
 // thrown on.
 
-/** The write-enabled slice this wave (S2.4): trips + trip_places only. The
- * other six roots stay read-only until a later slice widens them. */
-export type Tier1WriteTable = Extract<Tier1Table, 'trips' | 'trip_places'>;
+/** The write-enabled slice: trips + trip_places (S2.4), plus trip_expenses +
+ * trip_packing_items (M4 X2.5 — offline expense entry and packing ticks).
+ * The other four roots stay read-only until a later slice widens them. */
+export type Tier1WriteTable = Extract<
+  Tier1Table,
+  'trips' | 'trip_places' | 'trip_expenses' | 'trip_packing_items'
+>;
 
 /**
  * Client-writable column subsets, default-deny, compile-bound to the row
@@ -445,6 +449,15 @@ export const TIER1_WRITE_FIELDS: { readonly [K in Tier1WriteTable]: FieldsOf<Tie
     'manual_rank',
     'deleted',
   ],
+  // X2.5. `day_index` HERE is NOT optimizer order: on trip_expenses it is the
+  // user's optional "which day was this spent on" label (0010), authored in
+  // the expense sheet. C1's server-only day_index/order_in_day rule is about
+  // trip_places ORDER and stays enforced there (it is absent from the
+  // trip_places list above). `deleted` = the tombstone delete path.
+  trip_expenses: ['category', 'amount', 'kind', 'day_index', 'label', 'deleted'],
+  // X2.5. `auto` (seeded-by-template flag) is CREATE-only — see
+  // TIER1_WRITE_STRUCTURAL: an existing row's provenance is not re-writable.
+  trip_packing_items: ['label', 'category', 'checked', 'deleted'],
 };
 
 export const TIER1_WRITE_TABLES = Object.keys(TIER1_WRITE_FIELDS) as readonly Tier1WriteTable[];
@@ -485,6 +498,11 @@ const TIER1_WRITE_STRUCTURAL: {
 } = {
   trips: { always: new Set(['id']), createOnly: new Set() },
   trip_places: { always: new Set(['id']), createOnly: new Set(['trip_id']) },
+  trip_expenses: { always: new Set(['id']), createOnly: new Set(['trip_id']) },
+  // `auto` rides along on the CREATE only (seed provenance: true from the
+  // template seeder, false for manual adds) and is dropped as server_only on
+  // every later full-row update — nothing re-labels a row's origin.
+  trip_packing_items: { always: new Set(['id']), createOnly: new Set(['trip_id', 'auto']) },
 };
 
 /** Why a field was dropped from a write payload:
@@ -528,7 +546,7 @@ export function sanitizeForTier1Write<K extends Tier1WriteTable>(
     // Runtime guard for untyped callers (the engine wires save only for
     // write-enabled roots, but a JS caller could bypass the types).
     throw new Error(
-      `[sync] sanitizeForTier1Write: table "${table as string}" is not write-enabled in this wave (S2.4 slice = ${TIER1_WRITE_TABLES.join(', ')})`,
+      `[sync] sanitizeForTier1Write: table "${table as string}" is not write-enabled (write slice = ${TIER1_WRITE_TABLES.join(', ')})`,
     );
   }
   const mode = options?.mode ?? 'throw';

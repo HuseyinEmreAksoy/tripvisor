@@ -7,6 +7,7 @@
  *   3. Per-category actual/estimated amounts render for a non-zero slot.
  *   4. The totals visible in accessibilityLabels match the input rollup.
  */
+import { describe, expect, it } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import { CategoryBreakdown } from '../CategoryBreakdown';
 import { ThemeProvider } from '@/theme';

@@ -37,6 +37,15 @@
  *          (TIER1_FIELDS/TIER1_TABLES/TIER1_WRITE_*) and NO store-namespace
  *          key — static check against the real imported modules.
  *
+ * M4 X2.5 (appended; contract proofs, NOT R6 abort ids):
+ *   l1–l3. Expenses through the mutation layer: create (client UUID, server
+ *          stamps created_at) → edit after ack → tombstone (row kept
+ *          server-side with deleted=true; a fresh hydration excludes it).
+ *   m1–m3. Packing: the ≤30-row seed racing a tick on one of its own unacked
+ *          creates (the beta finding) lands every row exactly once with the
+ *          tick applied; later edits sync with `auto` untouched; tombstone +
+ *          UndoEntry.inverse round trip.
+ *
  * If a FAILURE traces to the beta plugin's write path itself, the verdict is
  * "ABORT GATE TRIPPED" (R6): stop, fall back to the named hand-rolled
  * expo-sqlite sync plan. Sanitize bugs (our code) are NOT abort verdicts.
@@ -101,6 +110,13 @@ const S2812_DESC = {
   j1: 'mutation tombstone: server deleted=true + fresh hydration excludes the place',
   j2: 'undo inverse: place live again server-side (deleted=false) and rehydrates',
   k: 'no-legs firewall (R4): trip_legs absent from allowlist exports + store namespace',
+  // M4 X2.5 — expense + packing write round trips (mutation layer → server → fresh hydration)
+  l1: 'expense create: mutations.createExpense → server row (client id, server-stamped created_at, deleted=false)',
+  l2: 'expense edit: updateExpense after ack → server amount/label/day_index updated; trip_id + created_at unchanged',
+  l3: 'expense tombstone: server deleted=true (row kept, not hard-deleted) + fresh hydration excludes it',
+  m1: 'packing seed race: 25-row bulk create + a tick BEFORE ack → all 25 rows land once, the ticked row is checked',
+  m2: 'packing edit: label + untick after ack reach the server; `auto` provenance unchanged (create-only)',
+  m3: 'packing tombstone: server deleted=true + fresh hydration excludes it; UndoEntry.inverse revives it',
 };
 
 /** Fail every id in `ids` that has not produced a result yet (block-level
@@ -290,6 +306,7 @@ async function main() {
   // S2.8.12 rows — declared here so the finally-cleanup can always see them.
   const pruneTripId = randomUUID();
   let rankTripId = null; // minted by mutations.createTrip inside block i
+  let ledgerTripId = null; // minted by mutations.createTrip inside block l (X2.5)
 
   /** Purge + reload the real src/sync modules and boot a brand-new engine
    * instance (the "fresh instance" the hydration proofs need). The previous
@@ -766,17 +783,181 @@ async function main() {
     } catch (err) {
       failRemaining(err, ['k']);
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // M4 X2.5 — expense + packing write round trips (l, m). Not R6 ids.
+    // ════════════════════════════════════════════════════════════════════
+
+    console.log('── X2.5 expense + packing proofs ──');
+
+    /** Fresh instance whose expense + packing roots have finished loading. */
+    async function freshLedgerInstance(label) {
+      const inst = await freshInstance(label);
+      await waitFor(`${label}: expenses loaded`, () => syncState(inst.store.tripExpenses).isLoaded.get());
+      await waitFor(`${label}: packing loaded`, () => syncState(inst.store.tripPackingItems).isLoaded.get());
+      return inst;
+    }
+
+    // One live writable instance for both blocks (the last one booted —
+    // sync3 when h3 succeeded, else a new one).
+    let live = null;
+    try {
+      live = sync3 ? { sync: sync3, store: store3 } : await freshInstance('l: live instance');
+      const m = live.sync.mutations;
+      ledgerTripId = m.createTrip({ title: `${runTag} ledger` });
+      await waitFor('ledger trip on server', async () => {
+        const { data } = await service.from('trips').select('id').eq('id', ledgerTripId).maybeSingle();
+        return data;
+      });
+      await waitFor('ledger trip create-ack', () => live.store.trips[ledgerTripId].created_at.get());
+    } catch (err) {
+      live = null;
+      failRemaining(err, ['l1', 'l2', 'l3', 'm1', 'm2', 'm3']);
+    }
+
+    // ── l. expenses ──────────────────────────────────────────────────────
+    if (live) {
+      let expenseId = null;
+      try {
+        const m = live.sync.mutations;
+        expenseId = m.createExpense({
+          trip_id: ledgerTripId,
+          category: 'food',
+          amount: 12.5,
+          kind: 'actual',
+          day_index: 0,
+          label: `${runTag} lunch`,
+        });
+        const row = await waitFor(`trip_expenses/${expenseId} on server`, async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', expenseId).maybeSingle();
+          return data;
+        });
+        check(
+          'l1',
+          S2812_DESC.l1,
+          row.id === expenseId &&
+            Number(row.amount) === 12.5 &&
+            row.kind === 'actual' &&
+            row.day_index === 0 &&
+            row.deleted === false &&
+            row.created_at != null,
+          `amount=${row.amount} kind=${row.kind} day_index=${row.day_index} deleted=${row.deleted} created_at=${row.created_at}`,
+        );
+        await waitFor('expense create-ack', () => live.store.tripExpenses[expenseId].created_at.get());
+
+        const before = row;
+        m.updateExpense(expenseId, { amount: 20, label: `${runTag} lunch (edited)`, day_index: 1 });
+        const edited = await waitFor('expense edit on server', async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', expenseId).maybeSingle();
+          return data && Number(data.amount) === 20 ? data : undefined;
+        });
+        check(
+          'l2',
+          S2812_DESC.l2,
+          edited.label === `${runTag} lunch (edited)` &&
+            edited.day_index === 1 &&
+            edited.trip_id === ledgerTripId &&
+            edited.created_at === before.created_at,
+          `amount=${edited.amount} label=${edited.label} day_index=${edited.day_index} created_at ${before.created_at} → ${edited.created_at}`,
+        );
+
+        m.tombstoneExpense(expenseId);
+        await waitFor('expense tombstone on server', async () => {
+          const { data } = await service.from('trip_expenses').select('deleted').eq('id', expenseId).maybeSingle();
+          return data?.deleted === true;
+        });
+        const inst = await freshLedgerInstance('l3');
+        const ghost = inst.store.tripExpenses[expenseId].get();
+        check('l3', S2812_DESC.l3, ghost === undefined, `fresh store row=${JSON.stringify(ghost) ?? 'undefined'}`);
+      } catch (err) {
+        failRemaining(err, ['l1', 'l2', 'l3']);
+      }
+    }
+
+    // ── m. packing ───────────────────────────────────────────────────────
+    if (live) {
+      try {
+        const m = live.sync.mutations;
+        const SEED = 25;
+        const items = Array.from({ length: SEED }, (_, i) => ({
+          label: `${runTag} item ${String(i).padStart(2, '0')}`,
+          category: i % 2 ? 'clothing' : 'toiletries',
+          auto: true,
+        }));
+        const ids = m.createPackingItems(ledgerTripId, items);
+        // THE RACE: tick one of the seed rows before any create is acked.
+        const ticked = ids[3];
+        m.updatePackingItem(ticked, { checked: true });
+
+        const rows = await waitFor(
+          'all seeded packing rows on server with the tick applied',
+          async () => {
+            const { data } = await service.from('trip_packing_items').select('*').eq('trip_id', ledgerTripId);
+            if (!data || data.length < SEED) return undefined;
+            const t = data.find((r) => r.id === ticked);
+            return t && t.checked === true ? data : undefined;
+          },
+          30000,
+        );
+        const uniqueIds = new Set(rows.map((r) => r.id));
+        check(
+          'm1',
+          S2812_DESC.m1,
+          rows.length === SEED &&
+            uniqueIds.size === SEED &&
+            ids.every((id) => uniqueIds.has(id)) &&
+            rows.every((r) => r.auto === true && r.deleted === false),
+          `server rows=${rows.length} unique=${uniqueIds.size} ticked=${rows.find((r) => r.id === ticked)?.checked}`,
+        );
+        for (const id of [ticked, ids[4]]) {
+          await waitFor(`packing ${id} create-ack`, () => live.store.tripPackingItems[id].created_at.get());
+        }
+
+        m.updatePackingItem(ticked, { checked: false, label: `${runTag} item 03 (renamed)` });
+        const edited = await waitFor('packing edit on server', async () => {
+          const { data } = await service.from('trip_packing_items').select('*').eq('id', ticked).maybeSingle();
+          return data && data.label === `${runTag} item 03 (renamed)` ? data : undefined;
+        });
+        check('m2', S2812_DESC.m2, edited.checked === false && edited.auto === true, `checked=${edited.checked} auto=${edited.auto}`);
+
+        const victim = ids[4];
+        const undo = m.tombstonePackingItem(victim);
+        await waitFor('packing tombstone on server', async () => {
+          const { data } = await service.from('trip_packing_items').select('deleted').eq('id', victim).maybeSingle();
+          return data?.deleted === true;
+        });
+        const inst = await freshLedgerInstance('m3');
+        const ghost = inst.store.tripPackingItems[victim].get();
+        await undo.inverse(); // closes over the ORIGIN (live) instance, like the in-app stack
+        await waitFor('packing undo on server (deleted=false)', async () => {
+          const { data } = await service.from('trip_packing_items').select('deleted').eq('id', victim).maybeSingle();
+          return data ? data.deleted === false : undefined;
+        });
+        check(
+          'm3',
+          S2812_DESC.m3,
+          ghost === undefined,
+          `fresh store row after tombstone=${JSON.stringify(ghost) ?? 'undefined'}; undo revived server-side`,
+        );
+      } catch (err) {
+        failRemaining(err, ['m1', 'm2', 'm3']);
+      }
+    }
   } finally {
     // ── cleanup: this run's rows + any strays from prior runs ───────────
     try {
-      for (const tid of [tripId, pruneTripId, rankTripId].filter(Boolean)) {
+      const sweep = async (tid) => {
         await service.from('trip_places').delete().eq('trip_id', tid);
+        await service.from('trip_expenses').delete().eq('trip_id', tid);
+        await service.from('trip_packing_items').delete().eq('trip_id', tid);
         await service.from('trips').delete().eq('id', tid);
+      };
+      for (const tid of [tripId, pruneTripId, rankTripId, ledgerTripId].filter(Boolean)) {
+        await sweep(tid);
       }
       const stale = await service.from('trips').select('id').eq('user_id', userId).like('title', 'SYNC-VALIDATE%');
       for (const t of stale.data ?? []) {
-        await service.from('trip_places').delete().eq('trip_id', t.id);
-        await service.from('trips').delete().eq('id', t.id);
+        await sweep(t.id);
       }
       console.log('cleanup: test rows removed');
     } catch (err) {

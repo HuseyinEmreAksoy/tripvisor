@@ -172,9 +172,22 @@ export default function TripsList() {
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // ── Server state ───────────────────────────────────────────────────────────
-  const { data: trips, isLoading, error, refetch, isRefetching } = useTrips({
+  const { data: trips, isLoading, error, refetch, isRefetching, isPlaceholderData } = useTrips({
     archived: tab === 'archived',
   });
+  // keepPreviousData: right after an Active/Archived switch the list still
+  // shows the OTHER tab's rows until the new query lands. Dim them and make
+  // them non-interactive so nobody archives/deletes/opens a stale row.
+  const stale = isPlaceholderData;
+  const gate = (node: ReactNode) => (
+    <View
+      pointerEvents={stale ? 'none' : 'auto'}
+      style={stale ? desktopStyles.stale : undefined}
+      accessibilityState={{ disabled: stale, busy: stale }}
+    >
+      {node}
+    </View>
+  );
 
   // The unified useTrips() already includes owned + accepted-collaborator rows,
   // each tagged with { isOwner, collaboratorRole }. Partition client-side to
@@ -494,7 +507,7 @@ export default function TripsList() {
 
   const renderSharedCard = (item: (typeof collaboratedTrips)[number]) => (
     <View style={{ position: 'relative' }}>
-      <TripCard trip={item} onPress={() => router.push(`/trip/${item.id}`)} />
+      {gate(<TripCard trip={item} onPress={() => router.push(`/trip/${item.id}`)} />)}
       <SharedBadge role={item.collaboratorRole} />
     </View>
   );
@@ -601,14 +614,16 @@ export default function TripsList() {
       >
         {hero}
         {renderGrid(displayedTrips, (item) => (
-          <TripCard
-            trip={item}
-            onPress={() => router.push(`/trip/${item.id}`)}
-            onArchive={(id) => archiveMutation.mutate(id)}
-            onUnarchive={(id) => unarchiveMutation.mutate(id)}
-            onDuplicate={handleDuplicate}
-            onDelete={handleDelete}
-          />
+          gate(
+            <TripCard
+              trip={item}
+              onPress={() => router.push(`/trip/${item.id}`)}
+              onArchive={(id) => archiveMutation.mutate(id)}
+              onUnarchive={(id) => unarchiveMutation.mutate(id)}
+              onDuplicate={handleDuplicate}
+              onDelete={handleDelete}
+            />,
+          )
         ))}
 
         {tab === 'active' ? (
@@ -626,14 +641,16 @@ export default function TripsList() {
         data={displayedTrips}
         keyExtractor={(trip) => trip.id}
         renderItem={({ item }) => (
-          <TripCard
-            trip={item}
-            onPress={() => router.push(`/trip/${item.id}`)}
-            onArchive={(id) => archiveMutation.mutate(id)}
-            onUnarchive={(id) => unarchiveMutation.mutate(id)}
-            onDuplicate={handleDuplicate}
-            onDelete={handleDelete}
-          />
+          gate(
+            <TripCard
+              trip={item}
+              onPress={() => router.push(`/trip/${item.id}`)}
+              onArchive={(id) => archiveMutation.mutate(id)}
+              onUnarchive={(id) => unarchiveMutation.mutate(id)}
+              onDuplicate={handleDuplicate}
+              onDelete={handleDelete}
+            />,
+          )
         )}
         contentContainerStyle={{
           padding: t.spacing.lg,
@@ -764,6 +781,8 @@ const sharedBadgeStyles = StyleSheet.create({
 // ── Desktop-specific static styles ───────────────────────────────────────────
 // These don't depend on the theme so they can be static.
 const desktopStyles = StyleSheet.create({
+  // Placeholder rows from the other tab while the new list loads.
+  stale: { opacity: 0.5 },
   // Centers a content block and constrains its max width.
   centeredContainer: {
     maxWidth: DESKTOP_MAX_WIDTH,

@@ -1,6 +1,7 @@
 /**
  * mutations.ts — the app-facing write API for the Tier-1 write-enabled slice
- * (v2 S2 Wave 3a; trips + trip_places per S2.4).
+ * (v2 S2 Wave 3a; trips + trip_places per S2.4; trip_expenses +
+ * trip_packing_items per M4 X2.5).
  *
  * This is the surface Wave 3b's drag path and the eventual flag-flip repoint
  * call INSTEAD of the v1 PostgREST hooks. Every helper writes the
@@ -49,8 +50,12 @@ import type {
   TransportMode,
   Trip,
   TripCurrency,
+  TripExpense,
+  TripExpenseCategory,
+  TripExpenseKind,
   TripPlace,
 } from '../api/types';
+import type { TripPackingItem } from '../api/trip-packing';
 import {
   TIER1_WRITE_FIELDS,
   isTier1WriteTable,
@@ -106,7 +111,7 @@ function assertWritable(table: Tier1Table): void {
   if (!isTier1WriteTable(table)) {
     throw new SyncWriteError(
       'table_not_writable',
-      `table "${table}" is not in the Tier-1 write slice (S2.4: trips, trip_places)`,
+      `table "${table}" is not in the Tier-1 write slice (trips, trip_places, trip_expenses, trip_packing_items)`,
     );
   }
 }
@@ -476,4 +481,210 @@ export function restoreRanks(snapshot: RankSnapshot): void {
     if (!row || row.deleted === true) continue;
     node(tier1Store$.tripPlaces[id]).manual_rank.set(rank);
   }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Trip expenses (M4 X2.5)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Same rules as places: client-minted id, COMPLETE create (every write field
+// explicit, `deleted: false` included), created_at/updated_at never set,
+// delete = tombstone. `day_index` on an expense is the USER's optional
+// "spent on day N" label, not optimizer order (allowlist.ts X2.5 note).
+
+export interface CreateExpenseInput {
+  trip_id: string;
+  category: TripExpenseCategory;
+  amount: number;
+  /** Defaults to 'estimated' (DB default — sent explicitly per the complete-create rule). */
+  kind?: TripExpenseKind;
+  day_index?: number | null;
+  label?: string | null;
+}
+
+/** Store shape of a locally-created expense (no server timestamps). */
+type ExpenseCreateRow = Omit<TripExpense, 'created_at' | 'updated_at'>;
+
+/** Create an expense through the sync engine. Returns the minted id
+ * (create-undo, when wanted, is `tombstoneExpense(id)` composed by the caller). */
+export function createExpense(input: CreateExpenseInput): string {
+  assertWritable('trip_expenses');
+  const id = mintId();
+  const row: ExpenseCreateRow = {
+    id,
+    trip_id: input.trip_id,
+    category: input.category,
+    amount: input.amount,
+    kind: input.kind ?? 'estimated',
+    day_index: input.day_index ?? null,
+    label: input.label ?? null,
+    deleted: false,
+  };
+  // Same cast rationale as createTrip: server-stamped fields must be absent.
+  node(tier1Store$.tripExpenses[id]).set(row as TripExpense);
+  return id;
+}
+
+/** Client-writable expense fields. `deleted` is excluded — tombstoneExpense()
+ * owns the delete lifecycle (and its inverse). */
+export type ExpenseWritePatch = Partial<
+  Pick<TripExpense, 'category' | 'amount' | 'kind' | 'day_index' | 'label'>
+>;
+
+const EXPENSE_PATCH_FIELDS: ReadonlySet<string> = new Set(
+  TIER1_WRITE_FIELDS.trip_expenses.filter((f) => f !== 'deleted'),
+);
+
+/** Patch an expense; returns the inverse-op entry (prior values restore). */
+export function updateExpense(id: string, patch: ExpenseWritePatch, label = 'Edit expense'): UndoEntry {
+  assertWritable('trip_expenses');
+  const prev = node(tier1Store$.tripExpenses[id]).peek();
+  if (!prev) throw new SyncWriteError('row_not_found', `expense "${id}" is not in the local store`);
+  const { clean, prior } = capturePatch(
+    patch as Record<string, unknown>,
+    EXPENSE_PATCH_FIELDS,
+    prev as unknown as Record<string, unknown>,
+  );
+  node(tier1Store$.tripExpenses[id]).assign(clean as ExpenseWritePatch);
+  return {
+    label,
+    inverse: () => {
+      assertWritable('trip_expenses');
+      node(tier1Store$.tripExpenses[id]).assign(prior as ExpenseWritePatch);
+    },
+  };
+}
+
+/**
+ * Tombstone an expense (`deleted: true` → UPDATE … SET deleted = true).
+ * Inverse un-tombstones; if the row was pruned locally in between, the full
+ * captured snapshot is re-seeded (its created_at marks it as an UPDATE of the
+ * still-existing server row, never a duplicate INSERT) — the tombstonePlace
+ * contract.
+ */
+export function tombstoneExpense(id: string, label = 'Remove expense'): UndoEntry {
+  assertWritable('trip_expenses');
+  const prev = node(tier1Store$.tripExpenses[id]).peek();
+  if (!prev) throw new SyncWriteError('row_not_found', `expense "${id}" is not in the local store`);
+  const snapshot: TripExpense = { ...prev };
+  node(tier1Store$.tripExpenses[id]).deleted.set(true);
+  return {
+    label,
+    inverse: () => {
+      assertWritable('trip_expenses');
+      const current = node(tier1Store$.tripExpenses[id]).peek();
+      if (current) {
+        node(tier1Store$.tripExpenses[id]).deleted.set(false);
+      } else {
+        node(tier1Store$.tripExpenses[id]).set({ ...snapshot, deleted: false });
+      }
+    },
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Trip packing items (M4 X2.5)
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface CreatePackingItemInput {
+  label: string;
+  category?: string | null;
+  /** true = seeded by the packing template (src/lib/packingSeed.ts). Defaults to false. */
+  auto?: boolean;
+}
+
+/** Store shape of a locally-created packing item (no server timestamps). */
+type PackingItemCreateRow = Omit<TripPackingItem, 'created_at' | 'updated_at'>;
+
+/**
+ * Create one or more packing items for a trip in ONE store write. Returns the
+ * minted ids in input order.
+ *
+ * Bulk-seed contract (X2.5 risk: the ≤30-row template seed racing its own
+ * unacked creates): every row is COMPLETE (checked/auto/deleted explicit) and
+ * the whole batch lands through a single `assign` on the table root, so the
+ * engine sees one change set — never a half-written batch that a quick
+ * follow-up tick could race with a sparse row.
+ */
+export function createPackingItems(
+  tripId: string,
+  items: readonly CreatePackingItemInput[],
+): string[] {
+  assertWritable('trip_packing_items');
+  const ids: string[] = [];
+  const rows: Record<string, TripPackingItem> = {};
+  for (const item of items) {
+    const id = mintId();
+    ids.push(id);
+    const row: PackingItemCreateRow = {
+      id,
+      trip_id: tripId,
+      label: item.label,
+      category: item.category ?? null,
+      checked: false,
+      auto: item.auto ?? false,
+      deleted: false,
+    };
+    // Same cast rationale as createTrip: server-stamped fields must be absent.
+    rows[id] = row as TripPackingItem;
+  }
+  if (ids.length > 0) tier1Store$.tripPackingItems.assign(rows);
+  return ids;
+}
+
+/** Client-writable packing fields. `deleted` → tombstonePackingItem();
+ * `auto` is create-only (allowlist.ts TIER1_WRITE_STRUCTURAL). */
+export type PackingItemWritePatch = Partial<Pick<TripPackingItem, 'label' | 'category' | 'checked'>>;
+
+const PACKING_PATCH_FIELDS: ReadonlySet<string> = new Set(
+  TIER1_WRITE_FIELDS.trip_packing_items.filter((f) => f !== 'deleted'),
+);
+
+/** Patch a packing item (the hot path is the `checked` tick); returns the inverse-op entry. */
+export function updatePackingItem(
+  id: string,
+  patch: PackingItemWritePatch,
+  label = 'Edit packing item',
+): UndoEntry {
+  assertWritable('trip_packing_items');
+  const prev = node(tier1Store$.tripPackingItems[id]).peek();
+  if (!prev) {
+    throw new SyncWriteError('row_not_found', `packing item "${id}" is not in the local store`);
+  }
+  const { clean, prior } = capturePatch(
+    patch as Record<string, unknown>,
+    PACKING_PATCH_FIELDS,
+    prev as unknown as Record<string, unknown>,
+  );
+  node(tier1Store$.tripPackingItems[id]).assign(clean as PackingItemWritePatch);
+  return {
+    label,
+    inverse: () => {
+      assertWritable('trip_packing_items');
+      node(tier1Store$.tripPackingItems[id]).assign(prior as PackingItemWritePatch);
+    },
+  };
+}
+
+/** Tombstone a packing item; the inverse un-tombstones (tombstonePlace contract). */
+export function tombstonePackingItem(id: string, label = 'Remove packing item'): UndoEntry {
+  assertWritable('trip_packing_items');
+  const prev = node(tier1Store$.tripPackingItems[id]).peek();
+  if (!prev) {
+    throw new SyncWriteError('row_not_found', `packing item "${id}" is not in the local store`);
+  }
+  const snapshot: TripPackingItem = { ...prev };
+  node(tier1Store$.tripPackingItems[id]).deleted.set(true);
+  return {
+    label,
+    inverse: () => {
+      assertWritable('trip_packing_items');
+      const current = node(tier1Store$.tripPackingItems[id]).peek();
+      if (current) {
+        node(tier1Store$.tripPackingItems[id]).deleted.set(false);
+      } else {
+        node(tier1Store$.tripPackingItems[id]).set({ ...snapshot, deleted: false });
+      }
+    },
+  };
 }

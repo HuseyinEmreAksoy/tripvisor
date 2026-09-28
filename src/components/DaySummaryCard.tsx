@@ -14,6 +14,9 @@
  * retired — time and duration are the primary planning model; money lives in
  * the category-based budget surface (BudgetCard / trip_expenses).
  *
+ * v2 M4 X2.3: `compact` (itinerary on phones) trims the band padding and
+ * chip padding so the summary costs one short line; print keeps the default.
+ *
  * Usage:
  *   <DaySummaryCard dayIndex={0} places={places} legs={legs} />
  *
@@ -31,9 +34,11 @@ export interface DaySummaryCardProps {
   dayIndex: number;
   places: TripPlace[];
   legs: TripLeg[];
+  /** v2 M4 X2.3: tighter band for phone itineraries. Default false. */
+  compact?: boolean;
 }
 
-export function DaySummaryCard({ dayIndex, places, legs }: DaySummaryCardProps) {
+export function DaySummaryCard({ dayIndex, places, legs, compact = false }: DaySummaryCardProps) {
   const t = useTheme();
 
   const dayPlaces = useMemo(
@@ -102,7 +107,7 @@ export function DaySummaryCard({ dayIndex, places, legs }: DaySummaryCardProps) 
           // the information, whitespace carries the structure.
           backgroundColor: t.colors.bgMuted,
           borderRadius: t.radius.lg,
-          padding: t.spacing.md,
+          padding: compact ? t.spacing.sm : t.spacing.md,
         },
       ]}
       accessible
@@ -113,22 +118,26 @@ export function DaySummaryCard({ dayIndex, places, legs }: DaySummaryCardProps) 
         <Chip
           label={`${dayPlaces.length} place${dayPlaces.length !== 1 ? 's' : ''}`}
           t={t}
+          compact={compact}
         />
         {/* Step 23.8: three distinct time chips */}
         <Chip
           label={`Visit ${formattedVisit}`}
           t={t}
+          compact={compact}
         />
         <Chip
           label={`Travel ${formattedTravel}`}
           t={t}
+          compact={compact}
         />
         <Chip
           label={`Day ${formattedTotal}`}
           t={t}
+          compact={compact}
           highlight
         />
-        <Chip label={formattedDistance} t={t} />
+        <Chip label={formattedDistance} t={t} compact={compact} />
       </View>
     </View>
   );
@@ -138,10 +147,12 @@ function Chip({
   label,
   t,
   highlight = false,
+  compact = false,
 }: {
   label: string;
   t: ReturnType<typeof useTheme>;
   highlight?: boolean;
+  compact?: boolean;
 }) {
   return (
     <View
@@ -150,8 +161,8 @@ function Chip({
         {
           backgroundColor: highlight ? t.colors.primary : t.colors.cardBgSolid,
           borderRadius: t.radius.pill,
-          paddingHorizontal: t.spacing.md,
-          paddingVertical: 4,
+          paddingHorizontal: compact ? t.spacing.sm : t.spacing.md,
+          paddingVertical: compact ? 2 : 4,
         },
       ]}
     >

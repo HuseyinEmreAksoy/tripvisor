@@ -14,7 +14,9 @@
  * QueryClientProvider). We mock that module at the boundary and wrap renders
  * with a fresh QueryClientProvider so the hook context is always satisfied.
  */
-import { render, fireEvent } from '@testing-library/react-native';
+import { describe, expect, it, jest } from '@jest/globals';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { Linking } from 'react-native';
 import { AccommodationCard } from '../AccommodationCard';
 import { ThemeProvider } from '@/theme';
 import type { TripAccommodation } from '@/api/types';
@@ -29,6 +31,11 @@ jest.mock('@/api/trip-accommodations', () => ({
     mutate: jest.fn(),
     isPending: false,
   }),
+}));
+
+jest.mock('@/lib/clipboard', () => ({ copyToClipboard: jest.fn(async () => true) }));
+jest.mock('@/lib/haptics', () => ({
+  haptics: { tap: jest.fn(), select: jest.fn(), success: jest.fn(), impact: jest.fn(), warning: jest.fn(), error: jest.fn() },
 }));
 
 // ---- Helpers -----------------------------------------------------------------
@@ -82,7 +89,7 @@ describe('AccommodationCard', () => {
     expect(getByText('Grand Hotel')).toBeTruthy();
   });
 
-  it('formats the date range as "check_in → check_out"', () => {
+  it('shows formatted check-in / check-out dates and the night count (X2.4)', () => {
     const { getByText } = wrap(
       <AccommodationCard
         accommodation={makeAccommodation({
@@ -95,7 +102,9 @@ describe('AccommodationCard', () => {
         onDelete={jest.fn()}
       />,
     );
-    expect(getByText('2026-05-10 → 2026-05-13')).toBeTruthy();
+    expect(getByText('Sun 10 May')).toBeTruthy();
+    expect(getByText('Wed 13 May')).toBeTruthy();
+    expect(getByText('3 nights')).toBeTruthy();
   });
 
   it('renders a day-bridge label when tripStartDate is provided', () => {
@@ -234,7 +243,73 @@ describe('AccommodationCard', () => {
         onDelete={jest.fn()}
       />,
     );
-    // accessibilityLabel: "Grand Hotel, 2026-05-10 → 2026-05-13"
-    expect(getByLabelText('Grand Hotel, 2026-05-10 → 2026-05-13')).toBeTruthy();
+    expect(
+      getByLabelText('Grand Hotel, check-in Sun 10 May, check-out Wed 13 May, 3 nights'),
+    ).toBeTruthy();
+  });
+
+  it('opens directions to the stay coordinates when Navigate is pressed (X2.4)', () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    const { getByRole } = wrap(
+      <AccommodationCard
+        accommodation={makeAccommodation({ lat: 41.9, lng: 12.5, google_place_id: 'ChIJx' })}
+        tripStartDate={null}
+        canEdit={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    fireEvent.press(getByRole('button', { name: /navigate to grand hotel/i }));
+    expect(openURL).toHaveBeenCalledTimes(1);
+    expect(String(openURL.mock.calls[0]?.[0])).toMatch(/41\.9(%2C|,)12\.5/);
+    openURL.mockRestore();
+  });
+
+  it('falls back to the address when the stay has no coordinates (X2.4)', () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    const { getByRole } = wrap(
+      <AccommodationCard
+        accommodation={makeAccommodation()}
+        tripStartDate={null}
+        canEdit={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    fireEvent.press(getByRole('button', { name: /navigate to grand hotel/i }));
+    expect(String(openURL.mock.calls[0]?.[0])).toContain(encodeURIComponent('42 Main Street, Rome'));
+    openURL.mockRestore();
+  });
+
+  it('hides Navigate when there is neither an address nor coordinates', () => {
+    const { queryByRole } = wrap(
+      <AccommodationCard
+        accommodation={makeAccommodation({ address: null })}
+        tripStartDate={null}
+        canEdit={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(queryByRole('button', { name: /navigate/i })).toBeNull();
+  });
+
+  it('shows a copyable confirmation code parsed from notes and hides that line from the notes (X2.4)', async () => {
+    const { copyToClipboard } = jest.requireMock('@/lib/clipboard') as { copyToClipboard: jest.Mock };
+    const { getByRole, getByText, queryByText } = wrap(
+      <AccommodationCard
+        accommodation={makeAccommodation({ notes: 'Confirmation: HX7Q29\nLate check-in OK' })}
+        tripStartDate={null}
+        canEdit={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(getByText('HX7Q29')).toBeTruthy();
+    expect(getByText('Late check-in OK')).toBeTruthy();
+    expect(queryByText(/Confirmation: HX7Q29/)).toBeNull();
+    fireEvent.press(getByRole('button', { name: /copy confirmation code hx7q29/i }));
+    await waitFor(() => expect(getByText('Copied ✓')).toBeTruthy());
+    expect(copyToClipboard).toHaveBeenCalledWith('HX7Q29');
   });
 });

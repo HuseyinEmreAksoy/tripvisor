@@ -19,6 +19,7 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { haptics } from '@/lib/haptics';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
 
 export interface BudgetCardProps {
@@ -27,9 +28,11 @@ export interface BudgetCardProps {
   currency?: string | null;
   onSetBudget: () => void;
   canEdit: boolean;
+  /** X2.4: when set (and canEdit), shows a one-tap "Add expense" quick action. */
+  onAddExpense?: () => void;
 }
 
-export function BudgetCard({ rollup, currency, onSetBudget, canEdit }: BudgetCardProps) {
+export function BudgetCard({ rollup, currency, onSetBudget, canEdit, onAddExpense }: BudgetCardProps) {
   const t = useTheme();
 
   const { hasBudget, budget, totalActual, totalEstimated, remaining } = rollup;
@@ -69,12 +72,6 @@ export function BudgetCard({ rollup, currency, onSetBudget, canEdit }: BudgetCar
           ...t.shadows.sm(t.colors.shadowColor),
         },
       ]}
-      accessible
-      accessibilityLabel={
-        hasBudget && budget
-          ? `Budget: ${fmt(totalActual)} spent of ${fmt(budget)}, ${pct}%`
-          : 'No budget configured'
-      }
     >
       {/* Header row */}
       <View style={styles.row}>
@@ -109,8 +106,13 @@ export function BudgetCard({ rollup, currency, onSetBudget, canEdit }: BudgetCar
 
       {hasBudget && budget ? (
         <>
-          {/* Amounts row */}
-          <View style={styles.row}>
+          {/* Amounts row — one screen-reader stop for the summary; the card
+              itself is not `accessible` so its buttons stay reachable. */}
+          <View
+            style={styles.row}
+            accessible
+            accessibilityLabel={`Budget: ${fmt(totalActual)} spent of ${fmt(budget)}, ${pct}%`}
+          >
             <View>
               <Text style={[t.typography.display, { color: t.colors.text, fontSize: 28, lineHeight: 34 }]}>
                 {fmt(totalActual)}
@@ -203,6 +205,29 @@ export function BudgetCard({ rollup, currency, onSetBudget, canEdit }: BudgetCar
           ) : null}
         </View>
       )}
+
+      {canEdit && onAddExpense ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add expense"
+          onPress={() => {
+            haptics.tap();
+            onAddExpense();
+          }}
+          style={({ pressed }) => [
+            styles.quickAdd,
+            {
+              borderColor: t.colors.primary,
+              backgroundColor: pressed ? t.colors.gradientSubtle : 'transparent',
+              borderRadius: t.radius.pill,
+            },
+          ]}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '700' }]}>
+            + Add expense
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -218,4 +243,5 @@ const styles = StyleSheet.create({
   barTrack: { height: 8, width: '100%', overflow: 'hidden' },
   barFill: { height: '100%' },
   ctaBtn: {},
+  quickAdd: { borderWidth: 1.5, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
 });

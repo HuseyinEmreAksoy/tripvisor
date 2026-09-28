@@ -3,54 +3,58 @@
  * in v2 Phase N1 step 1.1 — pure refactor).
  *
  * Phase 23 Step 23.8: displays Visit and Travel as two distinct labeled values.
- * Phase 23 Step 23.9: when transportMode is 'transit' the travel connector
- * renders a "Plan transit" deep-link that opens Google Maps directions in the
- * external browser.
+ * Phase 23 Step 23.9: transit trips get a "Plan transit" deep link.
  * Phase 25 Step 25.8: small thumbnail image prepended to the row.
  *
  * v2 N1 step 1.2: arrival→departure chip ("10:00 → 12:30") under the visit-
  * duration label. Computed in ItineraryTab (computeDayTimeline) and passed in
  * as a presentational `timeline` prop — this row does zero time math.
- * v2 N1 step 1.7: 💬 comment chip next to the reaction chip; always visible
- * when `onOpenComments` is provided (count badge appears at ≥1) so the
- * feature is discoverable even on quiet places.
+ * v2 N1 step 1.7: comment chip next to the reaction chip; always visible
+ * when `onOpenComments` is provided (count badge appears at ≥1).
  * v2 P1.1: time-window chip ("⏰ 10:00–17:00") straight from the place row's
- * arrive_after/leave_before, plus timeline-driven wait info ("waits until
- * 10:00") and a non-blocking amber conflict warning ("⚠ arrives 18:40 —
- * window ends 18:00"). All strings prebuilt in ItineraryTab; zero math here.
- * NO live Google-hours fetches in this list (metered cost; windows are
- * user-set data).
- * v2 P1.2: the transit travel connector names the rides when the leg carries
- * transit_steps ("🚇 M2 → ~12 min"); deep link unchanged.
+ * arrive_after/leave_before, plus timeline-driven wait info and a
+ * non-blocking amber conflict warning. All strings prebuilt in ItineraryTab.
+ * NO live Google-hours fetches in this list (metered cost).
+ * v2 P1.2: transit connectors name the rides ("🚇 M2 → ~12 min").
  * v2 S2.8.13 (F4): web-only "Place actions" kebab (⋮) in the chip rail opens
- * the same PlaceActionsSheet that long-press opens on native — desktop web
- * users don't long-press, and it was the ONLY route to move/duration/delete.
- * The card was also restructured so the open-details Pressable wraps ONLY
- * non-interactive content (thumbnail + text): the chip rail (comments,
- * reaction, kebab) is now a SIBLING inside the card View, which removes the
- * invalid <button>-inside-<button> DOM nesting RNW produced on web (the
- * "cannot be a descendant of <button>" console error). Visuals unchanged.
+ * the same PlaceActionsSheet that long-press opens on native.
+ *
+ * v2 M4 X2.3:
+ *  - The WHOLE card is the open-details target again, without nesting
+ *    interactive elements (S2.8.13 had narrowed it to thumbnail + title to
+ *    avoid <button>-in-<button> on web). An absolutely-positioned underlay
+ *    Pressable fills the card; the read-only content above it is
+ *    `pointerEvents="none"` so taps fall through to the underlay; the chip
+ *    rail is a SIBLING on top and keeps its own buttons. The underlay also
+ *    carries the drag long-press forwarded by DraggableItinerary
+ *    (`onLongPress`), so pickup works from anywhere on the card.
+ *  - Denser on phones (smaller thumbnail, category + visit on one line,
+ *    tighter padding); ≥44pt touch targets via hitSlop.
+ *  - The travel connector moved to itinerary/TravelConnector, which fixes
+ *    the destination-less transit link (`nextStop`).
  */
-import { Image, Linking, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
-import { dayColor } from '@/components/Map';
+// Direct types import: keeps the map runtime out of this module graph.
+import { dayColor } from '@/components/Map/types';
 import { Icon } from '@/components/Icon';
 import { ReactionChip } from '@/components/ReactionChip';
-import { formatDuration, formatDurationSeconds } from '@/lib/formatDuration';
+import { formatDuration } from '@/lib/formatDuration';
+import type { DirectionsPoint } from '@/lib/directions';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { TransportMode, TripLeg, TripPlace } from '@/api';
 import type { TripPlaceReactionType } from '@/api/trip-place-reactions';
 import { usePlaceDetails } from '@/api/places';
 import { usePlacePhotoUrl } from '@/api/place-photos';
 import { PlaceNotesEditor } from './NotesEditors';
 import { formatClockTime, parseTimeOfDay } from './computeDayTimeline';
+import { TravelConnector } from './itinerary/TravelConnector';
 
 // ── PlaceThumbnail (Phase 25 Step 25.8) ──────────────────────────────────────
-// 40×40 square photo for each itinerary row. Uses the same place-details +
+// Square photo for each itinerary row. Uses the same place-details +
 // place-photo flow as the TripCard cover. Renders nothing when Google returns
-// no photos — keeps the list clean rather than showing a placeholder.
-// Keeps its own Tier-2 hooks (usePlaceDetails / usePlacePhotoUrl) — v1 already
-// fetched here, and photo URLs are memory-only (ToS firewall).
-function PlaceThumbnail({ googlePlaceId }: { googlePlaceId: string }) {
+// no photos. Keeps its own Tier-2 hooks — photo URLs are memory-only (ToS).
+function PlaceThumbnail({ googlePlaceId, size }: { googlePlaceId: string; size: number }) {
   const { data: details } = usePlaceDetails({
     placeId: googlePlaceId,
     fields: ['photos'],
@@ -62,7 +66,7 @@ function PlaceThumbnail({ googlePlaceId }: { googlePlaceId: string }) {
   return (
     <Image
       source={{ uri: url }}
-      style={styles.placeThumbnail}
+      style={[styles.placeThumbnail, { width: size, height: size }]}
       resizeMode="cover"
       accessibilityElementsHidden
       importantForAccessibility="no"
@@ -82,48 +86,43 @@ export interface PlaceRowProps {
   reaction?: TripPlaceReactionType | null;
   onReactionChange?: (next: TripPlaceReactionType | null) => void;
   /**
-   * v2 N1 1.2: computed arrival/departure clock labels for this stop
-   * (e.g. { arrival: "10:00", departure: "12:30" }). Null/undefined hides
-   * the chip (unscheduled "Ideas" rows have no timeline).
-   *
-   * v2 P1.1b extras (all prebuilt strings — presentational only):
-   *  - `waitUntil`: window-start label when the visit waits for the place's
-   *    arrive_after window ("10:00" → info chip "waits until 10:00").
-   *  - `warning`: human conflict message when the stop violates its
-   *    leave_before window ("arrives 18:40 — window ends 18:00") → amber,
-   *    non-blocking warning chip.
+   * v2 N1 1.2: computed arrival/departure clock labels for this stop.
+   * Null/undefined hides the chip (unscheduled "Ideas" rows have no timeline).
+   * v2 P1.1b extras (prebuilt strings): `waitUntil`, `warning`.
    */
   timeline?: {
     arrival: string;
     departure: string;
     waitUntil?: string | null;
     warning?: string | null;
-    /**
-     * T1: non-null when the user pinned this stop's arrival ("14:00") — the
-     * arrival chip renders in its pinned styling (primary tint + pin glyph).
-     */
+    /** T1: non-null when the user pinned this stop's arrival ("14:00"). */
     pinnedAt?: string | null;
   } | null;
-  /** v2 N1 1.7: comment count for the badge (0 shows the bare 💬 affordance). */
+  /** v2 N1 1.7: comment count for the badge (0 shows the bare affordance). */
   commentCount?: number;
   /** v2 N1 1.7: opens the comment thread sheet. Chip hidden when absent. */
   onOpenComments?: () => void;
   /**
-   * v2 S2.8.13 (F4): opens PlaceActionsSheet (move day / duration / windows /
-   * delete). Renders a web-only kebab (⋮) button in the chip rail — mouse
-   * users have no long-press, so without it the sheet is unreachable on
-   * desktop web. Native keeps the long-press path (DraggableItinerary) and
-   * never shows the kebab. Hidden when absent.
+   * v2 S2.8.13 (F4): opens PlaceActionsSheet. Renders a web-only kebab (⋮)
+   * in the chip rail — mouse users have no long-press. Hidden when absent.
    */
   onOpenActions?: () => void;
   /**
    * v2 S2.6 (sync flag-gated): true while this row's OFFLINE reorder awaits
-   * its next route recompute — the displayed travel legs are stale for the
-   * new order. Renders a muted "route recompute pending" pill (same chip
-   * language as the timeline pills). Defaults to false, so flag-off renders
-   * are unchanged. Derivation + clear heuristic live in ItineraryTab.
+   * its next route recompute. Defaults to false (flag-off renders unchanged).
    */
   pendingRecompute?: boolean;
+  /**
+   * v2 M4 X2.3: the next stop in this day — destination of the transit
+   * "Plan transit ↗" link (resolved by ItineraryTab). Absent → link hidden.
+   */
+  nextStop?: DirectionsPoint | null;
+  /**
+   * v2 M4 X2.3: long-press on the card (drag pickup + actions, forwarded by
+   * DraggableItinerary). The full-card underlay is the innermost pressable,
+   * so it carries the gesture itself.
+   */
+  onLongPress?: () => void;
 }
 
 export function PlaceRow({
@@ -141,14 +140,202 @@ export function PlaceRow({
   onOpenComments,
   onOpenActions,
   pendingRecompute = false,
+  nextStop,
+  onLongPress,
 }: PlaceRowProps) {
   const t = useTheme();
-
+  // v2 M4 X2.3: denser card on phones (one-handed scanning).
+  const compact = useBreakpoint() === 'mobile';
+  const title = place.user_title ?? 'place';
   const visitLabel = formatDuration(place.visit_duration_minutes);
 
-  // ── v2 P1.1: user-set time window chip ("⏰ 10:00–17:00") ────────────────
-  // Pure label derivation from the row's own columns — never fetched from
-  // Google hours (those stay on the place-detail screen as reference).
+  return (
+    <View style={{ gap: compact ? 2 : t.spacing.xs }}>
+      <View
+        style={[
+          styles.placeCard,
+          {
+            borderRadius: t.radius.lg,
+            backgroundColor: t.colors.cardBgSolid,
+            padding: compact ? t.spacing.sm + 2 : t.spacing.md,
+            opacity: dragging ? 0.85 : 1,
+            // Slim day-color rail keeps the map↔list color link.
+            borderLeftWidth: 3,
+            borderLeftColor: dayColor(place.day_index ?? -1),
+            ...t.shadows.sm(t.colors.shadowColor),
+          },
+        ]}
+      >
+        {/* Full-card open-details target (X2.3). Rendered FIRST so it sits
+            beneath the content; the content layer lets taps through. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            Platform.OS === 'web'
+              ? // Web: the kebab is the actions affordance — don't teach
+                // mouse users a long-press gesture they don't have.
+                `Open details for ${title}.`
+              : `Open details for ${title}. Long-press to drag, change day, duration, or delete.`
+          }
+          onPress={onOpenDetails}
+          onLongPress={onLongPress}
+          delayLongPress={180}
+          style={({ pressed }) => [
+            StyleSheet.absoluteFill,
+            {
+              borderRadius: t.radius.lg,
+              backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
+            },
+            Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+          ]}
+        />
+
+        <View style={[styles.cardRow, { pointerEvents: 'box-none' }]}>
+          {/* Read-only content: taps fall through to the underlay. */}
+          <View
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              gap: compact ? 8 : 10,
+              pointerEvents: 'none',
+            }}
+          >
+            {!dragging ? (
+              <PlaceThumbnail googlePlaceId={place.google_place_id} size={compact ? 44 : 52} />
+            ) : null}
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[t.typography.bodyStrong, { color: t.colors.text }]}
+                numberOfLines={compact ? 2 : undefined}
+              >
+                {place.user_title ?? 'Place'}
+              </Text>
+              {compact ? (
+                <Text
+                  style={[t.typography.small, { color: t.colors.textMuted }]}
+                  numberOfLines={1}
+                  accessibilityLabel={`${place.category ?? 'Unclassified'}, visit duration ${place.visit_duration_minutes} minutes`}
+                >
+                  {place.category ?? 'Unclassified'}
+                  {' · ⏱ ~'}
+                  {visitLabel}
+                </Text>
+              ) : (
+                <>
+                  <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                    {place.category ?? 'Unclassified'}
+                  </Text>
+                  {/* Step 23.8: Visit duration label */}
+                  <Text
+                    style={[t.typography.caption, { color: t.colors.textMuted }]}
+                    accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+                  >
+                    {'⏱ Visit ~'}
+                    {visitLabel}
+                  </Text>
+                </>
+              )}
+              <TimeChips place={place} timeline={timeline} pendingRecompute={pendingRecompute} />
+            </View>
+          </View>
+
+          {/* Right rail: comment chip (N1 1.7) + reaction chip (Phase 24) +
+              web-only kebab (S2.8.13 F4). Siblings of the open-details
+              underlay — never its children — so the web DOM stays free of
+              nested <button> elements. */}
+          <View style={[styles.chipRail, { pointerEvents: 'box-none' }]}>
+            {onOpenComments ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  commentCount > 0
+                    ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${title}. Open the thread.`
+                    : `No comments yet on ${title}. Start the discussion.`
+                }
+                onPress={onOpenComments}
+                // 32pt chip + 6pt vertical slop = 44pt target.
+                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                style={({ pressed }) => [
+                  styles.commentChip,
+                  {
+                    backgroundColor: t.colors.bgMuted,
+                    borderRadius: t.radius.pill,
+                    opacity: pressed ? 0.6 : 1,
+                  },
+                ]}
+              >
+                <Icon name="message-circle" size={13} color={t.colors.textMuted} />
+                {commentCount > 0 ? (
+                  <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                    {commentCount}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+            {onReactionChange ? (
+              <ReactionChip
+                reaction={reaction ?? null}
+                onChange={onReactionChange}
+                accentColor={dayColor(place.day_index ?? -1)}
+                size="sm"
+              />
+            ) : null}
+            {onOpenActions && Platform.OS === 'web' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Place actions"
+                onPress={onOpenActions}
+                // styles.actionsKebab enforces the 44px minimum touch target.
+                style={({ pressed }) => [
+                  styles.actionsKebab,
+                  {
+                    borderRadius: t.radius.pill,
+                    backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
+                  },
+                  { cursor: 'pointer' } as ViewStyle,
+                ]}
+              >
+                <Icon name="ellipsis-vertical" size={18} color={t.colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </View>
+
+      {/* Per-place notes editor (Step 9.4 / Phase 25 Step 25.10) */}
+      {!dragging ? <PlaceNotesEditor place={place} canEdit={canEdit} /> : null}
+
+      {/* Step 23.8: Travel connector — two distinct labeled time values */}
+      {hasNext ? (
+        <View style={[styles.travelConnector, { paddingHorizontal: 12 }]}>
+          <TravelConnector
+            legAfter={legAfter}
+            transportMode={transportMode}
+            from={{ lat: place.lat, lng: place.lng, placeId: place.google_place_id, label: place.user_title }}
+            to={nextStop}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Timeline / window / wait / pending / warning chips (v2 N1 1.2 + P1.1 +
+ * S2.6). Presentational only — every string is prebuilt by ItineraryTab
+ * except the window label, derived from the row's own columns.
+ */
+function TimeChips({
+  place,
+  timeline,
+  pendingRecompute,
+}: {
+  place: TripPlace;
+  timeline: PlaceRowProps['timeline'];
+  pendingRecompute: boolean;
+}) {
+  const t = useTheme();
   const windowStart = parseTimeOfDay(place.arrive_after);
   const windowEnd = parseTimeOfDay(place.leave_before);
   const windowLabel =
@@ -168,351 +355,90 @@ export function PlaceRow({
           ? `Time window: leave before ${formatClockTime(windowEnd)}`
           : null;
 
-  // Step 23.9: transit deep-link URL.
-  function buildTransitDeepLink(leg: TripLeg, fromPlace: TripPlace): string {
-    // We have `leg.from_place_id` and `leg.to_place_id` but those map back
-    // to place coordinates via `place` (from-place) and the next place
-    // (to-place). We have the from-place here; the to-place lat/lng comes
-    // from the leg's distance/duration metadata (not directly from the leg).
-    // For the deep-link we use from=place.lat,place.lng and destination via
-    // the leg. Since `legAfter.to_place_id` resolves to the next row's place,
-    // and we don't have it here, we use a generic Maps search fallback and
-    // let the caller handle it. The simplest correct approach: we build the
-    // link from the fromPlace's coords only, which opens Maps routing from
-    // the current place. The spec only requires `origin` from this place.
-    void fromPlace; // intentionally unused — included for future coord lookup
-    const origin = `${place.lat},${place.lng}`;
-    // leg doesn't carry to-place coords directly; we pass the leg id as a
-    // reference. For now, open Maps directions from origin without a fixed
-    // destination — the transit planner shows nearby transit options.
-    // (Full to-place coords require a cross-reference from the places list,
-    // which ItineraryTab does in the legIndex but not passed to PlaceRow.)
-    void leg;
-    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&travelmode=transit`;
-  }
+  if (!timeline && !windowLabel && !pendingRecompute) return null;
 
-  function openTransitLink() {
-    if (!legAfter) return;
-    const url = buildTransitDeepLink(legAfter, place);
-    if (Platform.OS === 'web') {
-      // Platform-gated: window only touched on web (RNW-safe).
-      if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
-    } else {
-      Linking.openURL(url).catch((e) =>
-        console.warn('[PlaceRow] Failed to open transit URL', e),
-      );
-    }
-  }
+  const muted = [styles.timelineChip, { backgroundColor: t.colors.bgMuted, borderRadius: t.radius.pill }];
+  const mutedText = [t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' as const }];
 
   return (
-    <View style={{ gap: t.spacing.xs }}>
-      <View
-        style={[
-          styles.placeCard,
-          {
-            borderRadius: t.radius.lg,
-            backgroundColor: t.colors.cardBgSolid,
-            padding: t.spacing.md,
-            opacity: dragging ? 0.85 : 1,
-            // Slim day-color rail keeps the map↔list color link without a
-            // full border — v2 cards are borderless + soft elevation.
-            borderLeftWidth: 3,
-            borderLeftColor: dayColor(place.day_index ?? -1),
-            ...t.shadows.sm(t.colors.shadowColor),
-          },
-        ]}
-      >
-        {/* Title row: open-details press surface + sibling chip rail. The
-            Pressable wraps ONLY non-interactive content (thumbnail + text) —
-            v2 S2.8.13: interactive chips as Pressable children rendered
-            nested <button> elements on web (invalid HTML, console noise,
-            unpredictable AT behavior). */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              Platform.OS === 'web'
-                ? // Web: the kebab below is the actions affordance — don't
-                  // teach mouse users a long-press gesture they don't have.
-                  `Open details for ${place.user_title ?? 'place'}.`
-                : `Open details for ${place.user_title ?? 'place'}. Long-press to change day, duration, or delete.`
-            }
-            onPress={onOpenDetails}
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
-          >
-            {/* Phase 25 Step 25.8: thumbnail — omitted when no photo URL */}
-            {!dragging ? (
-              <PlaceThumbnail googlePlaceId={place.google_place_id} />
-            ) : null}
-
-            <View style={{ flex: 1 }}>
-              <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>
-                {place.user_title ?? 'Place'}
-              </Text>
-              <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                {place.category ?? 'Unclassified'}
-              </Text>
-              {/* Step 23.8: Visit duration label */}
-              <Text
-                style={[t.typography.caption, { color: t.colors.textMuted }]}
-                accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
-              >
-                {'⏱ Visit ~'}{visitLabel}
-              </Text>
-              {/* v2 N1 1.2 + P1.1: timeline / window / wait / warning chips
-                  (+ v2 S2.6 pending-recompute — flag-off it is always false,
-                  so the render condition reduces to the original). */}
-              {timeline || windowLabel || pendingRecompute ? (
-                <View style={styles.timeChipRow}>
-                  {/* arrival → departure (computed in ItineraryTab) */}
-                  {timeline ? (
-                    <View
-                      style={[
-                        styles.timelineChip,
-                        {
-                          backgroundColor: t.colors.gradientSubtle,
-                          borderRadius: t.radius.pill,
-                          // T1: pinned arrivals read as deliberate — a quiet
-                          // primary outline distinguishes them from computed.
-                          borderWidth: timeline.pinnedAt ? 1 : 0,
-                          borderColor: timeline.pinnedAt ? t.colors.primary : 'transparent',
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 4,
-                        },
-                      ]}
-                      accessible
-                      accessibilityLabel={
-                        timeline.pinnedAt
-                          ? `Arrival pinned to ${timeline.pinnedAt}, departs ${timeline.departure}`
-                          : `Arrives ${timeline.arrival}, departs ${timeline.departure}`
-                      }
-                    >
-                      {timeline.pinnedAt ? (
-                        <Icon name="pin" size={11} color={t.colors.primary} />
-                      ) : null}
-                      <Text
-                        style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}
-                      >
-                        {timeline.arrival}{' → '}{timeline.departure}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* v2 P1.1a: user-set window ("⏰ 10:00–17:00") — same chip
-                      language as the timeline pill, muted tint. */}
-                  {windowLabel ? (
-                    <View
-                      style={[
-                        styles.timelineChip,
-                        {
-                          backgroundColor: t.colors.bgMuted,
-                          borderRadius: t.radius.pill,
-                        },
-                      ]}
-                      accessible
-                      accessibilityLabel={windowA11y ?? undefined}
-                    >
-                      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                        {'⏰ '}{windowLabel}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* v2 P1.1b: wait info — arrival pushed to the window start */}
-                  {timeline?.waitUntil ? (
-                    <View
-                      style={[
-                        styles.timelineChip,
-                        {
-                          backgroundColor: t.colors.bgMuted,
-                          borderRadius: t.radius.pill,
-                        },
-                      ]}
-                      accessible
-                      accessibilityLabel={`Arrives before the time window opens — waits until ${timeline.waitUntil}`}
-                    >
-                      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                        {'⏳ waits until '}{timeline.waitUntil}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* v2 S2.6: offline reorder saved; travel times refresh
-                      with the next route recompute. Muted info pill — never
-                      a warning (the user's plan is intact, only the leg
-                      labels are stale). */}
-                  {pendingRecompute ? (
-                    <View
-                      style={[
-                        styles.timelineChip,
-                        {
-                          backgroundColor: t.colors.bgMuted,
-                          borderRadius: t.radius.pill,
-                        },
-                      ]}
-                      accessible
-                      accessibilityLiveRegion="polite"
-                      accessibilityLabel="Order saved on this device. Travel times update with the next route recompute once you're back online."
-                    >
-                      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                        {'⟳ route recompute pending'}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* v2 P1.1b: window conflict — amber, NON-BLOCKING (the user
-                      can always keep the plan as-is; nothing is locked) */}
-                  {timeline?.warning ? (
-                    <View
-                      style={[
-                        styles.timelineChip,
-                        {
-                          backgroundColor: t.colors.warningLight,
-                          borderRadius: t.radius.pill,
-                        },
-                      ]}
-                      accessible
-                      accessibilityLabel={`Warning: ${timeline.warning}. This is just a heads-up — your plan is unchanged.`}
-                    >
-                      <Text style={[t.typography.caption, { color: t.colors.warningText, fontWeight: '600' }]}>
-                        {'⚠ '}{timeline.warning}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-          </Pressable>
-
-          {/* Right rail: comment chip (v2 N1 1.7) + reaction chip (Phase 24)
-              + web-only "Place actions" kebab (v2 S2.8.13 F4). Siblings of
-              the open-details press surface — never its children — so the
-              web DOM stays free of nested <button> elements. */}
-          <View style={styles.chipRail}>
-            {onOpenComments ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  commentCount > 0
-                    ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${place.user_title ?? 'place'}. Open the thread.`
-                    : `No comments yet on ${place.user_title ?? 'place'}. Start the discussion.`
-                }
-                onPress={onOpenComments}
-                hitSlop={6}
-                style={({ pressed }) => [
-                  styles.commentChip,
-                  {
-                    backgroundColor: t.colors.bgMuted,
-                    borderRadius: t.radius.pill,
-                    opacity: pressed ? 0.6 : 1,
-                  },
-                ]}
-              >
-                {/* v3: Lucide message-circle replaces 💬 (functional spot). */}
-                <Icon name="message-circle" size={13} color={t.colors.textMuted} />
-                {commentCount > 0 ? (
-                  <Text
-                    style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}
-                  >
-                    {commentCount}
-                  </Text>
-                ) : null}
-              </Pressable>
-            ) : null}
-            {onReactionChange ? (
-              <ReactionChip
-                reaction={reaction ?? null}
-                onChange={onReactionChange}
-                accentColor={dayColor(place.day_index ?? -1)}
-                size="sm"
-              />
-            ) : null}
-            {/* v2 S2.8.13 (F4): "Place actions" kebab — opens the same
-                PlaceActionsSheet that long-press opens on native. Web only:
-                mouse users don't long-press, and this was the ONLY route to
-                move-day / duration / windows / delete on desktop web. Also
-                the keyboard-reachable path (a real button, unlike a
-                long-press gesture). Native is untouched. */}
-            {onOpenActions && Platform.OS === 'web' ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Place actions"
-                onPress={onOpenActions}
-                // styles.actionsKebab enforces the 44px minimum touch target
-                // (WCAG 2.5.8 / Apple HIG), matching the UndoToast action.
-                style={({ pressed }) => [
-                  styles.actionsKebab,
-                  {
-                    borderRadius: t.radius.pill,
-                    backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
-                  },
-                  { cursor: 'pointer' } as ViewStyle,
-                ]}
-              >
-                <Icon name="ellipsis-vertical" size={18} color={t.colors.textMuted} />
-              </Pressable>
-            ) : null}
-          </View>
+    <View style={styles.timeChipRow}>
+      {timeline ? (
+        <View
+          style={[
+            styles.timelineChip,
+            {
+              backgroundColor: t.colors.gradientSubtle,
+              borderRadius: t.radius.pill,
+              // T1: pinned arrivals read as deliberate — primary outline.
+              borderWidth: timeline.pinnedAt ? 1 : 0,
+              borderColor: timeline.pinnedAt ? t.colors.primary : 'transparent',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+            },
+          ]}
+          accessible
+          accessibilityLabel={
+            timeline.pinnedAt
+              ? `Arrival pinned to ${timeline.pinnedAt}, departs ${timeline.departure}`
+              : `Arrives ${timeline.arrival}, departs ${timeline.departure}`
+          }
+        >
+          {timeline.pinnedAt ? <Icon name="pin" size={11} color={t.colors.primary} /> : null}
+          <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
+            {timeline.arrival}
+            {' → '}
+            {timeline.departure}
+          </Text>
         </View>
-      </View>
-
-      {/* ── Per-place notes editor (Step 9.4 / Phase 25 Step 25.10) — Option A inline ── */}
-      {!dragging ? (
-        <PlaceNotesEditor place={place} canEdit={canEdit} />
       ) : null}
 
-      {/* Step 23.8: Travel connector — two distinct labeled time values */}
-      {hasNext ? (
-        <View style={[styles.travelConnector, { paddingHorizontal: 12 }]}>
-          {transportMode === 'transit' && legAfter ? (
-            // Step 23.9: transit mode — show duration + deep-link.
-            // v2 P1.2: when the leg carries transit_steps, name the rides
-            // ("🚇 M2 → ~12 min"); WALK connectors are omitted from the label.
-            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: t.spacing.xs }}>
-              {(() => {
-                const lineNames = (legAfter.transit_steps ?? [])
-                  .filter((s) => s.travelMode === 'TRANSIT' && s.lineName)
-                  .map((s) => s.lineName as string);
-                const durationLabel = formatDurationSeconds(legAfter.duration_seconds);
-                return (
-                  <Text
-                    style={[t.typography.small, { color: t.colors.textMuted }]}
-                    accessibilityLabel={
-                      lineNames.length > 0
-                        ? `Transit via ${lineNames.join(', then ')}, approximately ${Math.round(legAfter.duration_seconds / 60)} minutes`
-                        : `Travel to next, approximately ${Math.round(legAfter.duration_seconds / 60)} minutes`
-                    }
-                  >
-                    {lineNames.length > 0
-                      ? `↓ 🚇 ${lineNames.join(' → ')} → ~${durationLabel}`
-                      : `↓ Travel ~${durationLabel}`}
-                  </Text>
-                );
-              })()}
-              <Pressable
-                accessibilityRole="link"
-                accessibilityLabel="Plan transit on Google Maps, opens external"
-                onPress={openTransitLink}
-              >
-                <Text style={[t.typography.small, { color: t.colors.primary }]}>
-                  {'· Plan transit ↗'}
-                </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Text
-              style={[t.typography.small, { color: t.colors.textMuted }]}
-              accessibilityLabel={
-                legAfter
-                  ? `Travel to next, approximately ${Math.round(legAfter.duration_seconds / 60)} minutes`
-                  : 'Travel time unknown'
-              }
-            >
-              {'↓ Travel '}{legAfter ? `~${formatDurationSeconds(legAfter.duration_seconds)}` : '—'}
-              {legAfter ? ` · ${(legAfter.distance_meters / 1000).toFixed(legAfter.distance_meters < 10000 ? 1 : 0)} km` : ''}
-            </Text>
-          )}
+      {windowLabel ? (
+        <View style={muted} accessible accessibilityLabel={windowA11y ?? undefined}>
+          <Text style={mutedText}>
+            {'⏰ '}
+            {windowLabel}
+          </Text>
+        </View>
+      ) : null}
+
+      {timeline?.waitUntil ? (
+        <View
+          style={muted}
+          accessible
+          accessibilityLabel={`Arrives before the time window opens — waits until ${timeline.waitUntil}`}
+        >
+          <Text style={mutedText}>
+            {'⏳ waits until '}
+            {timeline.waitUntil}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* v2 S2.6: offline reorder saved; travel times refresh with the next
+          route recompute. Muted info pill — never a warning. */}
+      {pendingRecompute ? (
+        <View
+          style={muted}
+          accessible
+          accessibilityLiveRegion="polite"
+          accessibilityLabel="Order saved on this device. Travel times update with the next route recompute once you're back online."
+        >
+          <Text style={mutedText}>{'⟳ route recompute pending'}</Text>
+        </View>
+      ) : null}
+
+      {/* v2 P1.1b: window conflict — amber, NON-BLOCKING */}
+      {timeline?.warning ? (
+        <View
+          style={[styles.timelineChip, { backgroundColor: t.colors.warningLight, borderRadius: t.radius.pill }]}
+          accessible
+          accessibilityLabel={`Warning: ${timeline.warning}. This is just a heads-up — your plan is unchanged.`}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.warningText, fontWeight: '600' }]}>
+            {'⚠ '}
+            {timeline.warning}
+          </Text>
         </View>
       ) : null}
     </View>
@@ -520,8 +446,9 @@ export function PlaceRow({
 }
 
 const styles = StyleSheet.create({
-  placeCard: {},
-  // v2 N1 1.2 / P1.1: wrapping row of time chips (timeline, window, wait, warning)
+  placeCard: { position: 'relative' },
+  cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  // wrapping row of time chips (timeline, window, wait, warning)
   timeChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -529,13 +456,12 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 6,
   },
-  // v2 N1 1.2: arrival → departure pill (shared base for ALL time chips —
-  // one chip language: pill, tinted surface, w600 caption text)
+  // shared base for ALL time chips — one chip language
   timelineChip: {
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
-  // v2 N1 1.7: right-side chip rail (comments + reaction)
+  // right-side chip rail (comments + reaction + web kebab)
   chipRail: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,30 +470,27 @@ const styles = StyleSheet.create({
   commentChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    minHeight: 28,
+    minHeight: 32,
+    minWidth: 36,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
   },
-  // v2 S2.8.13 (F4): web-only place-actions kebab. 44px minimum touch
-  // target (WCAG 2.5.8 / Apple HIG) — same convention as UndoToast's action.
+  // web-only place-actions kebab — 44px minimum target (WCAG 2.5.8 / HIG)
   actionsKebab: {
     minWidth: 44,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Phase 25 Step 25.8: place thumbnail in itinerary row
   placeThumbnail: {
-    width: 52,
-    height: 52,
     borderRadius: 12,
     flexShrink: 0,
   },
-  // Travel connector between place cards (Step 23.8)
   travelConnector: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 24,
   },
 });

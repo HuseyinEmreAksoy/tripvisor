@@ -28,6 +28,7 @@ import {
 } from '@/api';
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
+import { getLocationPermissionState } from './locationPermission';
 
 // v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
 // in a muted gray (same neutral as dayColor()'s unscheduled fallback) so the
@@ -69,7 +70,11 @@ export interface MapTabProps {
   legs: TripLeg[];
   trip: Trip;
   canEdit: boolean;
-  onMarker: (googlePlaceId: string) => void;
+  /**
+   * Marker tap. v2 M4 X2.2: also receives the trip_places row id so the
+   * route can open place detail WITH trip context (reactions need it).
+   */
+  onMarker: (googlePlaceId: string, tripPlaceId: string) => void;
 }
 
 export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTabProps) {
@@ -243,8 +248,13 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
   }, [filteredPolylinesFull, virtualLegPolyline]);
 
   // Handle the toggle button press.
+  // v2 M4 X2.2: the button shows "on" only when a fix backs it. A persisted
+  // "on" without a fix (permission not yet granted) renders off, and the
+  // tap below is the user gesture that asks for permission.
+  const locationOn = useMyLocation && Boolean(userLocation);
+
   async function handleMyLocationToggle() {
-    if (useMyLocation) {
+    if (locationOn) {
       setUseMyLocation(false);
       return;
     }
@@ -263,10 +273,19 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
   // when the persisted intent is "on" and we have no fix yet, fetch one so
   // the active button is backed by an actual location (and the virtual leg
   // renders) instead of looking on while doing nothing.
+  //
+  // v2 M4 X2.2: only when the permission is ALREADY granted. Checking first
+  // means a mount never raises an OS/browser prompt without a user gesture;
+  // otherwise the button renders "off" until the user taps it.
   useEffect(() => {
-    if (useMyLocation && !userLocation && locationStatus === 'idle') {
-      void requestLocation();
-    }
+    if (!useMyLocation || userLocation || locationStatus !== 'idle') return;
+    let cancelled = false;
+    void getLocationPermissionState().then((state) => {
+      if (!cancelled && state === 'granted') void requestLocation();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [useMyLocation, userLocation, locationStatus, requestLocation]);
 
   // Enable the toggle automatically once location is granted after a tap.
@@ -404,14 +423,14 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
         <View style={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.sm, gap: t.spacing.xs }}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={useMyLocation ? 'Disable route from my location' : 'Route from my location'}
-            accessibilityState={{ selected: useMyLocation }}
+            accessibilityLabel={locationOn ? 'Disable route from my location' : 'Route from my location'}
+            accessibilityState={{ selected: locationOn }}
             onPress={handleMyLocationToggle}
             style={({ pressed }) => [
               styles.myLocationBtn,
               {
-                backgroundColor: useMyLocation ? t.colors.primary : t.colors.bgElevated,
-                borderColor: useMyLocation ? t.colors.primary : t.colors.border,
+                backgroundColor: locationOn ? t.colors.primary : t.colors.bgElevated,
+                borderColor: locationOn ? t.colors.primary : t.colors.border,
                 opacity: pressed ? 0.75 : 1,
                 borderRadius: t.radius.md,
               },
@@ -420,13 +439,13 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
             {locationStatus === 'requesting' ? (
               <ActivityIndicator
                 size="small"
-                color={useMyLocation ? t.colors.primaryText : t.colors.primary}
+                color={locationOn ? t.colors.primaryText : t.colors.primary}
               />
             ) : (
               <Text
                 style={{
                   fontSize: 14,
-                  color: useMyLocation ? t.colors.primaryText : t.colors.textMuted,
+                  color: locationOn ? t.colors.primaryText : t.colors.textMuted,
                 }}
                 accessible={false}
               >
@@ -437,12 +456,12 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
               style={[
                 t.typography.caption,
                 {
-                  color: useMyLocation ? t.colors.primaryText : t.colors.text,
-                  fontWeight: useMyLocation ? '600' : '400',
+                  color: locationOn ? t.colors.primaryText : t.colors.text,
+                  fontWeight: locationOn ? '600' : '400',
                 },
               ]}
             >
-              {useMyLocation ? 'From my location' : 'From my location'}
+              {locationOn ? 'From my location' : 'From my location'}
             </Text>
           </Pressable>
 
@@ -501,7 +520,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
           onMarkerPress={(markerId: string) => {
             if (markerId === '__my_location__') return; // user marker — no action
             const p = byId.get(markerId);
-            if (p) onMarker(p.google_place_id);
+            if (p) onMarker(p.google_place_id, p.id);
           }}
         />
       </View>

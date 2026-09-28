@@ -7,7 +7,11 @@
  *   - Address (manual fallback when no Google place is linked)
  *   - Check-in date
  *   - Check-out date (must be > check-in, validated client-side)
+ *   - Optional confirmation code (v2 M4 X2.4) — stored as a "Confirmation: CODE"
+ *     line in notes (no dedicated column; see stayUtils), shown copyable on the card
  *   - Optional notes
+ *   - The form re-initializes on every open, so one mounted sheet can edit
+ *     different stays without showing stale values.
  *
  * Google place autocomplete:
  *   - Uses usePlacesAutocomplete + usePlaceDetails from src/api/places.ts.
@@ -28,6 +32,15 @@ import { BottomSheet } from '@/components';
 import { Button } from '@/components/Button';
 import { DateField } from '@/components/DateField';
 import { useTheme } from '@/theme';
+import { haptics } from '@/lib/haptics';
+import { FormField } from './FormField';
+import {
+  extractAppConfirmationCode,
+  nightsBetween,
+  nightsLabel,
+  stripConfirmationLine,
+  withConfirmationCode,
+} from './stayUtils';
 import { useCreateTripAccommodation, useUpdateTripAccommodation } from '@/api';
 import {
   PlacesError,
@@ -86,6 +99,7 @@ interface FormState {
   checkIn: string | null;
   checkOut: string | null;
   notes: string;
+  confirmationCode: string;
 }
 
 function initialState(acc: TripAccommodation | null): FormState {
@@ -98,7 +112,8 @@ function initialState(acc: TripAccommodation | null): FormState {
     lng: acc?.lng ?? null,
     checkIn: acc?.check_in_date ?? null,
     checkOut: acc?.check_out_date ?? null,
-    notes: acc?.notes ?? '',
+    notes: stripConfirmationLine(acc?.notes) ?? '',
+    confirmationCode: extractAppConfirmationCode(acc?.notes) ?? '',
   };
 }
 
@@ -125,6 +140,14 @@ export function AccommodationEditSheet({
   const isEdit = accommodation !== null;
   const [form, setForm] = useState<FormState>(initialState(accommodation));
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+
+  // X2.4: re-initialize on every open / when a different stay is edited.
+  useEffect(() => {
+    if (!visible) return;
+    setForm(initialState(accommodation));
+    setErrors({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on open / row change
+  }, [visible, accommodation?.id]);
 
   // ── Google Places state ────────────────────────────────────────────────────
   // One session token per sheet open. Generated once via useState initializer
@@ -233,7 +256,7 @@ export function AccommodationEditSheet({
           lng: form.lng,
           check_in_date: checkIn,
           check_out_date: checkOut,
-          notes: form.notes.trim() || null,
+          notes: withConfirmationCode(form.notes, form.confirmationCode),
         });
       } else {
         await createAccommodation.mutateAsync({
@@ -245,9 +268,10 @@ export function AccommodationEditSheet({
           lng: form.lng,
           check_in_date: checkIn,
           check_out_date: checkOut,
-          notes: form.notes.trim() || null,
+          notes: withConfirmationCode(form.notes, form.confirmationCode),
         });
       }
+      haptics.success();
       handleClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not save accommodation. Please try again.';
@@ -497,6 +521,36 @@ export function AccommodationEditSheet({
           onChange={(v) => patch('checkOut', v)}
           error={errors.checkOut}
         />
+        {form.checkIn && form.checkOut && form.checkOut > form.checkIn ? (
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            {nightsLabel(nightsBetween(form.checkIn, form.checkOut))}
+          </Text>
+        ) : null}
+
+        {/* ── Confirmation code (X2.4) ────────────────────────────────── */}
+        <FormField label="Confirmation code (optional)">
+          <TextInput
+            value={form.confirmationCode}
+            onChangeText={(v) => patch('confirmationCode', v.replace(/\s+/g, ''))}
+            placeholder="e.g. HX7Q29"
+            placeholderTextColor={t.colors.textMuted}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={30}
+            accessibilityLabel="Booking confirmation code"
+            style={[
+              styles.textField,
+              {
+                borderColor: t.colors.border,
+                borderRadius: t.radius.md,
+                backgroundColor: t.colors.bgElevated,
+                color: t.colors.text,
+                ...t.typography.body,
+                padding: t.spacing.md,
+              },
+            ]}
+          />
+        </FormField>
 
         {/* ── Notes ───────────────────────────────────────────────────── */}
         <FormField label="Notes (optional)">
@@ -533,32 +587,6 @@ export function AccommodationEditSheet({
         <Button label="Cancel" variant="ghost" onPress={handleClose} />
       </ScrollView>
     </BottomSheet>
-  );
-}
-
-function FormField({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  const t = useTheme();
-  return (
-    <View style={{ gap: t.spacing.xs }}>
-      <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{label}</Text>
-      {children}
-      {error ? (
-        <Text
-          style={[t.typography.caption, { color: t.colors.danger }]}
-          accessibilityLiveRegion="polite"
-        >
-          {error}
-        </Text>
-      ) : null}
-    </View>
   );
 }
 

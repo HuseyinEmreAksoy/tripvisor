@@ -49,9 +49,31 @@
  * undo entry (D4), and move-to-day affordances disable while offline with
  * honest copy (D5 — the server mutation cannot run without a network).
  * Flag-off, every path below is byte-identical to v1.
+ *
+ * v2 M4 X2.3 (phone usability):
+ *  - Day-jump chip strip (itinerary/DayJumpStrip) rendered OUTSIDE the
+ *    scroll view — never a sticky list header — so it stays pinned without
+ *    fighting the native DraggableFlatList. Each section reports its y via
+ *    onLayout; a chip tap scrolls there (scrollTo on the measured offset —
+ *    the list is a ScrollView of per-day draggable lists, so this is the
+ *    scrollToIndex equivalent). While the trip is live, the list opens on
+ *    today's day once and today's chip is highlighted.
+ *  - Collapsible days (itinerary/useCollapsedDays): past days start
+ *    collapsed while the trip is live; explicit choices are remembered per
+ *    device. Jumping to a collapsed day expands it.
+ *  - The AI tool chips (AI edit, Import, gap-fill) fold into one "✨ Assist"
+ *    menu at the end of the strip. The per-day "~Nh free" footer chip stays
+ *    (contextual to that day).
+ *  - Pull-to-refresh re-reads places (Tier-1 facade refetch → resync) and
+ *    legs; skeleton rows while the first places read is in flight.
+ *  - Place rows open details WITH trip context (`/place/[gid]?tripId=…&
+ *    tripPlaceId=…`) so the detail screen's reactions are reachable, and
+ *    get the next stop's coordinates for the transit directions link.
+ *  - The drag / manual_rank commit path below is unchanged; haptics fire in
+ *    DraggableItinerary on pickup and drop.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   DraggableItinerary,
@@ -61,7 +83,6 @@ import {
   type DraggableItem,
 } from '@/components';
 import { noPlaces } from '@/components/emptyStates';
-import { dayColor } from '@/components/Map';
 import { useTheme } from '@/theme';
 import {
   countCommentsByPlace,
@@ -73,6 +94,7 @@ import {
   useTripComments,
   useTripDays,
   useTripLegs,
+  useTripPlaces,
   useUpdateRouteRenderMode,
   type Trip,
   type TripDay,
@@ -90,6 +112,7 @@ import { useSession } from '@/api/auth';
 import type { TripAccommodation } from '@/api/types';
 import { StayingAtPill } from '@/components/accommodation/StayingAtPill';
 import { AiEditSheet, GapFillSheet, ImportPlacesSheet } from '@/components/ai-edit';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { formatDuration } from '@/lib/formatDuration';
 import { DayNotesEditor } from './NotesEditors';
 import { PlaceRow } from './PlaceRow';
@@ -103,6 +126,18 @@ import {
   parseStartTime,
   type TimelineStop,
 } from './computeDayTimeline';
+import { AssistMenu, type AssistItem } from './itinerary/AssistMenu';
+import { DayJumpStrip } from './itinerary/DayJumpStrip';
+import { DaySectionHeader } from './itinerary/DaySectionHeader';
+import { GapFillChip, IdeasAddToDayRow } from './itinerary/ItineraryChips';
+import { ItinerarySkeleton } from './itinerary/ItinerarySkeleton';
+import {
+  buildConflictMessage,
+  groupByDay,
+  groupPlacesPreservingOrder,
+  pickGapFillDay,
+} from './itinerary/sections';
+import { useDayNavigation } from './itinerary/useDayNavigation';
 
 // v2 N4 4.2: a day advertises gap-fill only when ≥1h of budget is left —
 // below that, suggestions would mostly be unusable (server floor is 30m).
@@ -123,7 +158,12 @@ export interface ItineraryTabProps {
   accommodations: TripAccommodation[];
   /** Phase 25 Step 25.10: role gate for notes. Viewers see notes read-only. */
   canEdit?: boolean;
-  onOpen: (googlePlaceId: string) => void;
+  /**
+   * Extra bottom padding for the scroll content so a floating control (the
+   * quick-add FAB) never covers the last row. Rows open the place screen
+   * themselves WITH trip context (v2 M4 X2.3), so there is no onOpen prop.
+   */
+  bottomInset?: number;
 }
 
 export function ItineraryTab({
@@ -133,12 +173,13 @@ export function ItineraryTab({
   trip,
   accommodations,
   canEdit = true,
-  onOpen,
+  bottomInset = 0,
 }: ItineraryTabProps) {
   const t = useTheme();
   const router = useRouter();
   const reorderDay = useReorderDay();
   const moveToDay = useMoveToDay();
+  const compact = useBreakpoint() === 'mobile';
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
   // v2 N1 1.7: which place's comment thread is open (null = closed).
   const [commentsPlaceId, setCommentsPlaceId] = useState<string | null>(null);
@@ -199,6 +240,20 @@ export function ItineraryTab({
     setPendingRecompute((prev) => (prev.size === 0 ? prev : new Set()));
   }, [legsUpdatedAt]);
 
+  // ── v2 M4 X2.3: pull-to-refresh + first-load skeleton ───────────────────
+  // Same query keys as the route shell's reads (deduped — no extra fetch).
+  // Flag-on, the places facade's refetch also triggers a Tier-1 resync.
+  const placesQuery = useTripPlaces(tripId);
+  const legsQuery = useTripLegs(tripId);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.allSettled([placesQuery.refetch(), legsQuery.refetch()]).finally(() =>
+      setRefreshing(false),
+    );
+  }, [placesQuery, legsQuery]);
+  const firstLoad = places.length === 0 && placesQuery.isLoading;
+
   // Phase 24: reaction data for the whole trip + current user id.
   const { data: session } = useSession();
   const currentUserId = session?.user?.id;
@@ -249,6 +304,32 @@ export function ItineraryTab({
     return m;
   }, [legs]);
 
+  // ── v2 M4 X2.3: day strip, collapse, scroll-to-day (itinerary/useDayNavigation)
+  const {
+    todayIndex,
+    dayChips,
+    chipByDay,
+    collapsedDays,
+    activeDay,
+    scrollRef,
+    onJump,
+    onSectionLayout,
+    onScroll,
+  } = useDayNavigation(
+    tripId,
+    trip,
+    byDay.map((s) => s.dayIndex),
+    t.spacing.sm,
+  );
+
+  // v2 M4 X2.3: rows open details WITH trip context so the place screen can
+  // show and set this trip's reaction (tripId + tripPlaceId params).
+  const openPlace = (place: TripPlace) =>
+    router.push({
+      pathname: '/place/[placeId]',
+      params: { placeId: place.google_place_id, tripId, tripPlaceId: place.id },
+    });
+
   // ── v2 N1 1.2: per-day timeline ──────────────────────────────────────────
   // Session-local start-time overrides (dayIndex → minutes). Committed edits
   // land here instantly so the timeline updates without waiting for the
@@ -294,6 +375,11 @@ export function ItineraryTab({
     const stop = timeline.stops.get(last.id);
     if (!stop) return null;
     return budgetMinutes - (stop.departureMinutes - timeline.startMinutes);
+  };
+
+  const openGapFill = (dayIndex: number, slackMinutes: number) => {
+    setGapFill({ dayIndex, slackMinutes });
+    setGapFillVisible(true);
   };
 
   // ── v2 P2.1: per-day weather chips ───────────────────────────────────────
@@ -358,31 +444,55 @@ export function ItineraryTab({
     </>
   ) : null;
 
-  // v2 N4: header row — compact AI affordances, pinned above the scroll.
-  const aiToolbar = canEdit ? (
-    <View
-      style={[
-        styles.aiToolbar,
-        { paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.md, gap: t.spacing.sm },
-      ]}
-    >
-      <ToolChip
-        label="📥 Import"
-        accessibilityLabel="Import a list of places into your Ideas"
-        onPress={() => setImportOpen(true)}
-      />
-      <ToolChip
-        label="✨ AI edit"
-        accessibilityLabel="Edit this trip with AI — preview every change before it applies"
-        onPress={() => setAiEditOpen(true)}
-      />
-    </View>
-  ) : null;
+  // v2 M4 X2.3: "✨ Assist" folds AI edit / import / gap-fill (editors only).
+  const gapFillTarget = pickGapFillDay(
+    byDay.map((s) => ({ dayIndex: s.dayIndex, slack: slackForDay(s) })),
+    todayIndex,
+    GAP_FILL_MIN_SLACK_MINUTES,
+  );
+  const assistItems: AssistItem[] = [
+    {
+      key: 'ai-edit',
+      title: '✨ Edit with AI',
+      description: 'Describe a change — preview every edit before it applies.',
+      onPress: () => setAiEditOpen(true),
+    },
+    {
+      key: 'import',
+      title: '📥 Import a list',
+      description: 'Paste places or a Takeout CSV into your Ideas.',
+      onPress: () => setImportOpen(true),
+    },
+    {
+      key: 'gap-fill',
+      title: '🕳 Fill free time',
+      description: gapFillTarget
+        ? `Day ${gapFillTarget.dayIndex + 1} has ~${formatDuration(gapFillTarget.slack)} free — see ideas to fill it.`
+        : 'No day has an hour or more free right now.',
+      disabled: gapFillTarget === null,
+      onPress: () => {
+        if (!gapFillTarget) return;
+        openGapFill(
+          gapFillTarget.dayIndex,
+          Math.min(GAP_FILL_MAX_SLACK_MINUTES, gapFillTarget.slack),
+        );
+      },
+    },
+  ];
+  const assist = canEdit ? <AssistMenu items={assistItems} /> : null;
+
+  if (firstLoad) {
+    return (
+      <View style={{ flex: 1 }}>
+        <ItinerarySkeleton />
+      </View>
+    );
+  }
 
   if (places.length === 0) {
     return (
       <View style={{ flex: 1 }}>
-        {aiToolbar}
+        {assist ? <DayJumpStrip chips={[]} activeDayIndex={null} onJump={onJump} trailing={assist} /> : null}
         <EmptyState
           {...noPlaces}
           onPress={() => router.push(`/trip/${tripId}/add`)}
@@ -396,110 +506,112 @@ export function ItineraryTab({
 
   return (
     <View style={{ flex: 1 }}>
-      {aiToolbar}
+      <DayJumpStrip
+        chips={dayChips}
+        activeDayIndex={activeDay}
+        onJump={onJump}
+        trailing={assist}
+      />
       {/*
        * keyboardShouldPersistTaps="handled" is required so tapping outside a
        * focused TextInput inside the list correctly dismisses the keyboard on
        * native without eating the tap event (risk M from planner spec Step 9.4).
        */}
       <ScrollView
+        ref={scrollRef}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md }}
+        onScroll={onScroll}
+        scrollEventThrottle={64}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={{
+          padding: compact ? t.spacing.md : t.spacing.lg,
+          gap: compact ? t.spacing.sm : t.spacing.md,
+          paddingBottom: (compact ? t.spacing.md : t.spacing.lg) + bottomInset,
+        }}
       >
         {byDay.map((section) => {
           // v2 N4 4.2: spare time vs the daily budget (scheduled days only).
           const slack = canEdit ? slackForDay(section) : null;
           // v2 P2.1: this day's forecast (undefined hides the chip quietly).
           const dayWeather = weatherForSection(section.dayIndex);
+          // v2 M4 X2.3: collapsed sections render the header only.
+          const collapsed = collapsedDays.isCollapsed(section.dayIndex);
+          const chip = chipByDay.get(section.dayIndex);
           return (
-          <View key={`day-${section.dayIndex}`} style={{ gap: t.spacing.sm }}>
-            {/* v2 redesign: day header is a strong typographic group — colored
-                day dot + bold heading + chips on whitespace (dividers out). */}
-            <View style={[styles.dayHeader, { paddingTop: t.spacing.sm }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm, flexWrap: 'wrap' }}>
-                <View
-                  style={[styles.dayDot, { backgroundColor: dayColor(section.dayIndex) }]}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
+          <View
+            key={`day-${section.dayIndex}`}
+            onLayout={onSectionLayout(section.dayIndex)}
+            style={{ gap: t.spacing.sm }}
+          >
+            <DaySectionHeader
+              dayIndex={section.dayIndex}
+              title={section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
+              dateLabel={chip?.dateLabel ?? null}
+              isToday={chip?.isToday ?? false}
+              collapsed={collapsed}
+              onToggle={() => collapsedDays.toggle(section.dayIndex)}
+              placeCount={section.places.length}
+              subtitle={section.dayIndex < 0 ? 'Saved, not scheduled yet' : null}
+            >
+              {/* v2 P2.1: forecast chip; rainy days open GapFillSheet
+                  (Ideas-first indoor fix) for editors. Passing the day's
+                  real slack keeps the sheet header honest; GapFillSheet
+                  clamps to its 30..480 input bounds itself. */}
+              {dayWeather ? (
+                <WeatherChip
+                  day={dayWeather}
+                  dayNumber={section.dayIndex + 1}
+                  onPressRainy={
+                    canEdit && isRainy(dayWeather)
+                      ? () => {
+                          const free = slackForDay(section);
+                          openGapFill(
+                            section.dayIndex,
+                            Math.max(30, Math.min(GAP_FILL_MAX_SLACK_MINUTES, free ?? 30)),
+                          );
+                        }
+                      : null
+                  }
                 />
-                <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
-                  {section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
-                </Text>
-                {/* v2 P2.1: forecast chip; rainy days open GapFillSheet
-                    (Ideas-first indoor fix) for editors. Passing the day's
-                    real slack keeps the sheet header honest; GapFillSheet
-                    clamps to its 30..480 input bounds itself. */}
-                {dayWeather ? (
-                  <WeatherChip
-                    day={dayWeather}
-                    dayNumber={section.dayIndex + 1}
-                    onPressRainy={
-                      canEdit && isRainy(dayWeather)
-                        ? () => {
-                            const free = slackForDay(section);
-                            setGapFill({
-                              dayIndex: section.dayIndex,
-                              slackMinutes: Math.max(
-                                30,
-                                Math.min(GAP_FILL_MAX_SLACK_MINUTES, free ?? 30),
-                              ),
-                            });
-                            setGapFillVisible(true);
-                          }
-                        : null
-                    }
-                  />
-                ) : null}
-                {/* v2 N4 4.3: import lands in Ideas — offer it right here */}
-                {section.dayIndex < 0 && canEdit ? (
-                  <ToolChip
-                    label="📥 Import"
-                    accessibilityLabel="Import a list of places into your Ideas"
-                    onPress={() => setImportOpen(true)}
-                  />
-                ) : null}
-                {section.dayIndex >= 0 ? (
-                  <StayingAtPill
-                    dayIndex={section.dayIndex}
-                    tripStartDate={trip.start_date}
-                    accommodations={accommodations}
-                  />
-                ) : null}
-                {/* v2 N1 1.2: editable day start time — drives the timeline */}
-                {section.dayIndex >= 0 ? (
-                  <DayStartTimeControl
-                    tripId={tripId}
-                    dayIndex={section.dayIndex}
-                    dayRecord={dayNotesIndex.get(section.dayIndex) ?? null}
-                    valueMinutes={
-                      timelinesByDay.get(section.dayIndex)?.startMinutes ??
-                      parseStartTime(null)
-                    }
-                    onChangeMinutes={(minutes) =>
-                      setStartTimeOverrides((prev) => {
-                        const next = new Map(prev);
-                        next.set(section.dayIndex, minutes);
-                        return next;
-                      })
-                    }
-                    canEdit={canEdit}
-                  />
-                ) : null}
-              </View>
-              {/* v2 N1 1.4: Ideas subtitle */}
-              {section.dayIndex < 0 ? (
-                <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
-                  Saved, not scheduled yet
-                </Text>
               ) : null}
-            </View>
+              {section.dayIndex >= 0 ? (
+                <StayingAtPill
+                  dayIndex={section.dayIndex}
+                  tripStartDate={trip.start_date}
+                  accommodations={accommodations}
+                />
+              ) : null}
+              {/* v2 N1 1.2: editable day start time — drives the timeline */}
+              {section.dayIndex >= 0 ? (
+                <DayStartTimeControl
+                  tripId={tripId}
+                  dayIndex={section.dayIndex}
+                  dayRecord={dayNotesIndex.get(section.dayIndex) ?? null}
+                  valueMinutes={
+                    timelinesByDay.get(section.dayIndex)?.startMinutes ??
+                    parseStartTime(null)
+                  }
+                  onChangeMinutes={(minutes) =>
+                    setStartTimeOverrides((prev) => {
+                      const next = new Map(prev);
+                      next.set(section.dayIndex, minutes);
+                      return next;
+                    })
+                  }
+                  canEdit={canEdit}
+                />
+              ) : null}
+            </DaySectionHeader>
 
+            {collapsed ? null : (
+            <>
             {/* ── Per-day summary strip (Step 8.4) — only for scheduled days */}
             {section.dayIndex >= 0 ? (
               <DaySummaryCard
                 dayIndex={section.dayIndex}
                 places={places}
                 legs={legs}
+                compact={compact}
               />
             ) : null}
 
@@ -523,7 +635,7 @@ export function ItineraryTab({
                 const stop = timelinesByDay.get(section.dayIndex)?.stops.get(place.id);
                 return {
                   id: place.id,
-                  render: (dragging) => {
+                  render: (dragging, gesture) => {
                     const myReaction = currentUserId
                       ? (tripReactions.find(
                           (r) => r.trip_place_id === place.id && r.user_id === currentUserId,
@@ -537,7 +649,22 @@ export function ItineraryTab({
                           legAfter={leg}
                           hasNext={Boolean(next)}
                           transportMode={trip.transport_mode}
-                          onOpenDetails={() => onOpen(place.google_place_id)}
+                          onOpenDetails={() => openPlace(place)}
+                          // v2 M4 X2.3: the full-card target carries the
+                          // drag long-press (see DraggableRowGesture).
+                          onLongPress={gesture.onLongPress}
+                          // v2 M4 X2.3: transit link destination = the
+                          // next stop of this day (the leg's to-place).
+                          nextStop={
+                            next
+                              ? {
+                                  lat: next.lat,
+                                  lng: next.lng,
+                                  placeId: next.google_place_id,
+                                  label: next.user_title,
+                                }
+                              : null
+                          }
                           canEdit={canEdit}
                           reaction={myReaction}
                           onReactionChange={(next) =>
@@ -684,15 +811,13 @@ export function ItineraryTab({
               <GapFillChip
                 slackMinutes={slack}
                 dayNumber={section.dayIndex + 1}
-                onPress={() => {
-                  setGapFill({
-                    dayIndex: section.dayIndex,
-                    slackMinutes: Math.min(GAP_FILL_MAX_SLACK_MINUTES, slack),
-                  });
-                  setGapFillVisible(true);
-                }}
+                onPress={() =>
+                  openGapFill(section.dayIndex, Math.min(GAP_FILL_MAX_SLACK_MINUTES, slack))
+                }
               />
             ) : null}
+            </>
+            )}
           </View>
           );
         })}
@@ -732,249 +857,3 @@ export function ItineraryTab({
     </View>
   );
 }
-
-/**
- * ToolChip (v2 N4) — compact pill action for the itinerary header row and
- * the Ideas section header ("📥 Import", "✨ AI edit").
- */
-function ToolChip({
-  label,
-  accessibilityLabel,
-  onPress,
-}: {
-  label: string;
-  accessibilityLabel: string;
-  onPress: () => void;
-}) {
-  const t = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      hitSlop={4}
-      style={({ pressed }) => [
-        styles.toolChip,
-        {
-          borderColor: t.colors.border,
-          backgroundColor: t.colors.bgElevated,
-          borderRadius: t.radius.pill,
-          opacity: pressed ? 0.6 : 1,
-        },
-        Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
-      ]}
-    >
-      <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-/**
- * GapFillChip (v2 N4 4.2) — subtle dashed footer chip under a day with ≥1h
- * of slack vs the daily time budget. Opens GapFillSheet (Ideas first).
- */
-function GapFillChip({
-  slackMinutes,
-  dayNumber,
-  onPress,
-}: {
-  slackMinutes: number;
-  dayNumber: number;
-  onPress: () => void;
-}) {
-  const t = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`About ${formatDuration(slackMinutes)} free on Day ${dayNumber} — see ideas to fill it`}
-      onPress={onPress}
-      hitSlop={4}
-      style={({ pressed }) => [
-        styles.gapChip,
-        {
-          borderColor: t.colors.borderStrong,
-          backgroundColor: t.colors.bgElevated,
-          borderRadius: t.radius.pill,
-          paddingHorizontal: t.spacing.md,
-          opacity: pressed ? 0.6 : 1,
-        },
-        Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
-      ]}
-    >
-      <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '600' }]}>
-        ✨ ~{formatDuration(slackMinutes)} free — fill this day
-      </Text>
-    </Pressable>
-  );
-}
-
-/**
- * IdeasAddToDayRow (v2 N1 1.4) — one-tap "Add to Day N" chips under each
- * Ideas card. Offers every existing day plus one new-day slot (capped at
- * Day 10, matching PlaceActionsSheet's MoveToDay).
- */
-function IdeasAddToDayRow({
-  placeTitle,
-  availableDays,
-  disabled,
-  offlineLocked,
-  onMove,
-}: {
-  placeTitle: string;
-  availableDays: number[];
-  disabled?: boolean;
-  /** v2 S2.8.7 / D5: move-to-day is a legacy server mutation flag-on, so it
-   * cannot work offline — the chips disable with honest copy instead of
-   * letting the write silently fail. Always false flag-off. */
-  offlineLocked?: boolean;
-  onMove: (toDayIndex: number) => void;
-}) {
-  const t = useTheme();
-  const targets = [...availableDays];
-  const maxDay = targets.length > 0 ? Math.max(...targets) : -1;
-  if (maxDay < 9) targets.push(maxDay + 1);
-  const locked = Boolean(disabled) || Boolean(offlineLocked);
-
-  return (
-    <View style={[styles.ideasAddRow, { gap: t.spacing.xs }]}>
-      <Text style={[t.typography.small, { color: t.colors.textMuted }]}>Add to:</Text>
-      {targets.map((day) => {
-        const isNew = day > maxDay || availableDays.length === 0;
-        return (
-          <Pressable
-            key={day}
-            accessibilityRole="button"
-            // a11y: the disabled reason rides the label so screen-reader
-            // users hear WHY the chip is inert, not just "dimmed".
-            accessibilityLabel={`Add ${placeTitle} to Day ${day + 1}${isNew ? ', a new day' : ''}${offlineLocked ? '. Available when back online' : ''}`}
-            disabled={locked}
-            onPress={() => onMove(day)}
-            hitSlop={4}
-            style={({ pressed }) => [
-              styles.ideasDayChip,
-              {
-                borderColor: dayColor(day),
-                backgroundColor: t.colors.bgElevated,
-                borderRadius: t.radius.pill,
-                opacity: locked ? 0.5 : pressed ? 0.6 : 1,
-              },
-            ]}
-          >
-            <Text style={[t.typography.small, { color: t.colors.text, fontWeight: '600' }]}>
-              {`Day ${day + 1}${isNew ? ' +' : ''}`}
-            </Text>
-          </Pressable>
-        );
-      })}
-      {offlineLocked ? (
-        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-          Available when back online
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-/**
- * v2 P1.1b: human copy for a stop's time-window conflict. Non-blocking by
- * design (ux-principles) — the chip informs; the user decides whether to
- * shorten the visit, reorder the day, or simply ignore it.
- */
-function buildConflictMessage(stop: TimelineStop): string | null {
-  if (!stop.conflict) return null;
-  // T1: an unreachable pin — the day flow gets here after the pinned time.
-  if (stop.conflict === 'pinned_tight') {
-    return stop.pinnedStartMinutes !== null
-      ? `arrives ${formatClockTime(stop.arrivalMinutes)} — pinned ${formatClockTime(stop.pinnedStartMinutes)}`
-      : null;
-  }
-  if (stop.windowEndMinutes === null) return null;
-  const windowEnd = formatClockTime(stop.windowEndMinutes);
-  return stop.conflict === 'arrives_late'
-    ? `arrives ${formatClockTime(stop.arrivalMinutes)} — window ends ${windowEnd}`
-    : `leaves ${formatClockTime(stop.departureMinutes)} — window ends ${windowEnd}`;
-}
-
-/**
- * v2 S2.8.7: group an ALREADY display-ordered list (orderPlacesForDisplay's
- * output) into day sections WITHOUT re-sorting inside each day — the
- * helper's per-day order is canonical (rank-aware in manual mode), and
- * re-sorting by order_in_day here (as groupByDay does) would undo it.
- * Section order matches groupByDay's output: Ideas (-1) first, then days
- * ascending — which is also exactly the order orderPlacesForDisplay emits,
- * so the trailing sort is a determinism guarantee, not a reshuffle.
- */
-function groupPlacesPreservingOrder(
-  ordered: readonly TripPlace[],
-): Array<{ dayIndex: number; places: TripPlace[] }> {
-  const map = new Map<number, TripPlace[]>();
-  for (const p of ordered) {
-    const key = p.day_index ?? -1;
-    const arr = map.get(key);
-    if (arr) arr.push(p);
-    else map.set(key, [p]);
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([dayIndex, ps]) => ({ dayIndex, places: ps }));
-}
-
-function groupByDay(places: TripPlace[]): Array<{ dayIndex: number; places: TripPlace[] }> {
-  const map = new Map<number, TripPlace[]>();
-  for (const p of places) {
-    const key = p.day_index ?? -1;
-    const arr = map.get(key) ?? [];
-    arr.push(p);
-    map.set(key, arr);
-  }
-  for (const [, arr] of map) {
-    arr.sort((a: TripPlace, b: TripPlace) => (a.order_in_day ?? 0) - (b.order_in_day ?? 0));
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([dayIndex, ps]) => ({ dayIndex, places: ps }));
-}
-
-const styles = StyleSheet.create({
-  dayHeader: { gap: 2 },
-  // Colored day marker — matches the map's per-day palette (dayColor).
-  dayDot: { width: 10, height: 10, borderRadius: 5 },
-  // v2 N1 1.4: "Add to Day N" chip row under Ideas cards
-  ideasAddRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    paddingHorizontal: 12,
-  },
-  ideasDayChip: {
-    borderWidth: 1.5,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    minHeight: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // v2 N4: compact AI affordances row (right-aligned, above the scroll)
-  aiToolbar: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  toolChip: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    minHeight: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // v2 N4 4.2: dashed "empty space" affordance under under-budget days
-  gapChip: {
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    minHeight: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'flex-start',
-  },
-});

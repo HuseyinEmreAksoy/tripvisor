@@ -4,27 +4,41 @@
  * v2 Phase N1 step 1.1: this file is the route OWNER only. It fetches the
  * trip-scoped server state (useTrip / useTripPlaces / useTripLegs /
  * useTripAccommodations / useTripRole), owns the tab state + the debounced
- * auto-optimize loop, and lays out the desktop split view vs the mobile tab
- * view. All tab content lives in src/components/trip-detail/:
+ * auto-optimize loop, and lays out the desktop split view vs the phone tab
+ * view. All tab content lives in src/components/trip-detail/.
  *
- *   TripHeader   — back + title + print + meta + optimize pill + route summary
- *   MapTab       — render-mode toggle + day chips + my-location + TripMap
- *   ItineraryTab — day sections, drag wiring, summaries, notes, reactions
- *   SettingsTab  — cover, meta form, budget, stays, collab, share, export, delete
+ * v2 M4 X2.2 (phone rebuild):
+ *   TripHeader        — compact on phones: back · title/dates · ⋯ menu, plus
+ *                       a one-line route chip row. Full card on desktop.
+ *   Plan · Map · Trip — phone tabs; the tab lives in `?tab=` so back nav and
+ *                       deep links keep it (legacy `itinerary`/`settings`
+ *                       values still resolve). Default: Plan when the trip
+ *                       has places, else Map.
+ *   TripHubTab        — the "Trip" tab: budget / stays / packing / docs /
+ *                       people / share summary cards (+ reactions catalog).
+ *   TripSettingsSheet — cover, hours, transport, currency, .ics, delete;
+ *                       opened from the ⋯ menu.
+ *   QuickAddFab/Sheet — replaces the full-width "Add a place" bar (editors).
+ * Desktop keeps the map + itinerary split; the hub replaces the old
+ * Settings panel behind the "Trip" tab.
  *
- * Behavior is identical to the pre-split 2442-line version (v1 parity
- * checklist, docs/v2/features.md §L).
+ * v1 parity (docs/v2/features.md §L): print + share + duplicate (⋯ menu),
+ * .ics + delete (settings sheet), notes + reactions (itinerary / place
+ * detail with trip context), account export (Profile tab).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
-import { Button, Heading, Screen, TabBar } from '@/components';
+import { BottomSheet, Button, Heading, Screen, TabBar } from '@/components';
+import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { haptics } from '@/lib/haptics';
 import {
   orderPlacesForDisplay,
   useDeleteTrip,
+  useDuplicateTrip,
   useOptimizeTrip,
   useTrip,
   useTripLegs,
@@ -34,38 +48,61 @@ import {
 import { isTier1SyncActive } from '@/sync/mutations';
 import { useTripAccommodations } from '@/api/trip-accommodations';
 import { useTripRole } from '@/hooks/useTripRole';
-import { TripHeader } from '@/components/trip-detail/TripHeader';
+import { TripHeader, TripMenuSheet } from '@/components/trip-detail/TripHeader';
 import { MapTab } from '@/components/trip-detail/MapTab';
 import { ItineraryTab } from '@/components/trip-detail/ItineraryTab';
-import { SettingsTab } from '@/components/trip-detail/SettingsTab';
+import { TripHubTab } from '@/components/trip-detail/TripHubTab';
+import { TripSettingsSheet } from '@/components/trip-detail/TripSettingsSheet';
+import { QuickAddFab, QuickAddSheet } from '@/components/trip-detail/QuickAddSheet';
+import { resolveTripTab, type TripTabKey } from '@/components/trip-detail/tripTabs';
+import { ActionErrorBanner } from '@/components/trip-detail/ActionErrorBanner';
+import { PlanSkeleton, TripDetailSkeleton } from '@/components/trip-detail/TripDetailSkeleton';
 
-type TabKey = 'map' | 'itinerary' | 'settings';
+// FAB (56) + its bottom offset — the hub and the Plan list pad by this so the last row clears it.
+const FAB_CLEARANCE = 88;
+const MAP_ATTRIBUTION_CLEARANCE = 32;
 
 export default function TripDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab: tabParam } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
   const goBack = useSafeBack('/trips');
   const t = useTheme();
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
-  // On desktop, the map + itinerary are shown side-by-side; the tab defaults
-  // to 'settings' for the TabBar which only shows the Settings tab on desktop.
-  // On mobile/tablet, the original tab behaviour (map | itinerary | settings) applies.
-  const [tab, setTab] = useState<TabKey>('map');
 
   const { data: trip, isLoading, error, refetch } = useTrip(id);
-  const { data: places = [] } = useTripPlaces(id);
+  const { data: places = [], isLoading: placesLoading } = useTripPlaces(id);
   const { data: legs = [] } = useTripLegs(id);
   const optimize = useOptimizeTrip();
   const optimizeMutate = optimize.mutate;
   const deleteTrip = useDeleteTrip();
+  const duplicateTrip = useDuplicateTrip();
+
+  // Tab state lives in the URL (?tab=) so back navigation and deep links
+  // keep it. Without a param: Plan when the trip has places, else Map.
+  // While places load, assume Plan (its skeleton shows) so the tab does not
+  // flash Map → Plan once they arrive.
+  const tab: TripTabKey = resolveTripTab(tabParam, placesLoading ? 1 : places.length);
+  const selectTab = (key: TripTabKey) => {
+    if (key === tab) return;
+    haptics.select();
+    router.setParams({ tab: key });
+  };
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // Visible failures for Duplicate (menu already closed) and Delete (shown in the settings sheet).
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Phase 21 Step 21.10/21.11: Role-gating for budget + accommodation + collaborators.
   const { canEditTrip, role: tripRole } = useTripRole(id);
   const isOwner = tripRole === 'owner';
 
   // Accommodations at TripDetail level so ItineraryTab's StayingAtPill can consume them.
-  // The SettingsTab also calls useTripAccommodations internally; TanStack Query dedupes
+  // TripHubTab also calls useTripAccommodations internally; TanStack Query dedupes
   // the request, so there's zero extra network cost for having it here too.
   const { data: tripAccommodations = [] } = useTripAccommodations(id);
 
@@ -138,8 +175,8 @@ export default function TripDetail() {
 
   if (isLoading) {
     return (
-      <Screen>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>Loading…</Text>
+      <Screen padded={false}>
+        <TripDetailSkeleton />
       </Screen>
     );
   }
@@ -171,7 +208,44 @@ export default function TripDetail() {
     );
   }
 
-  // ── Shared page header (title, meta, cost rollup) ────────────────────────
+  // ── Navigation helpers ───────────────────────────────────────────────────
+  // Place detail WITH trip context (tripId + tripPlaceId) so reactions work.
+  const openPlace = (googlePlaceId: string, tripPlaceId?: string) =>
+    router.push({
+      pathname: '/place/[placeId]',
+      params: tripPlaceId
+        ? { placeId: googlePlaceId, tripId: trip.id, tripPlaceId }
+        : { placeId: googlePlaceId },
+    });
+  const openHubPlace = (p: TripPlace) => openPlace(p.google_place_id, p.id);
+  const goToAdd = () => router.push(`/trip/${trip.id}/add`);
+
+  const handleDelete = async () => {
+    setDeleteError(null);
+    try {
+      await deleteTrip.mutateAsync(trip.id);
+    } catch {
+      haptics.error();
+      setDeleteError("Couldn't delete this trip. Check your connection and try again.");
+      return;
+    }
+    setSettingsOpen(false);
+    router.replace('/trips');
+  };
+  const handleDuplicate = async () => {
+    setDuplicateError(null);
+    try {
+      const newTripId = await duplicateTrip.mutateAsync(trip.id);
+      haptics.success();
+      router.push(`/trip/${newTripId}`);
+    } catch {
+      haptics.error();
+      // The menu has already closed, so surface the failure on the screen.
+      setDuplicateError("Couldn't duplicate this trip. Check your connection and try again.");
+    }
+  };
+
+  // ── Shared pieces ────────────────────────────────────────────────────────
   const pageHeader = (
     <TripHeader
       trip={trip}
@@ -181,62 +255,141 @@ export default function TripDetail() {
       optimizeError={optimize.error}
       onBack={goBack}
       onPrint={() => router.push(`/trip/${trip.id}/print`)}
+      onOpenMenu={() => setMenuOpen(true)}
+      compact={!isDesktop}
+    />
+  );
+  const actionError = (
+    <ActionErrorBanner message={duplicateError} onDismiss={() => setDuplicateError(null)} />
+  );
+
+  const mapTab = (
+    <MapTab
+      tripId={trip.id}
+      places={places}
+      legs={legs}
+      trip={trip}
+      canEdit={canEditTrip}
+      onMarker={(gid, rowId) => openPlace(gid, rowId)}
     />
   );
 
-  // ── Desktop: map + itinerary side-by-side, Settings behind a tab ──────────
+  const itineraryTab = placesLoading ? (
+    <PlanSkeleton />
+  ) : (
+    <ItineraryTab
+      tripId={trip.id}
+      places={places}
+      legs={legs}
+      trip={trip}
+      accommodations={tripAccommodations}
+      canEdit={canEditTrip}
+      bottomInset={canEditTrip ? FAB_CLEARANCE : 0}
+    />
+  );
+
+  const hubTab = (
+    <TripHubTab
+      tripId={trip.id}
+      tripStartDate={trip.start_date}
+      currency={trip.currency}
+      tripDayCount={tripDayCount}
+      canEdit={canEditTrip}
+      isOwner={isOwner}
+      onOpenPlace={openHubPlace}
+      initialExpanded={isDesktop ? ['budget', 'stays'] : []}
+      bottomInset={canEditTrip ? FAB_CLEARANCE : 0}
+    />
+  );
+
+  const overlays = (
+    <>
+      {canEditTrip ? (
+        <>
+          {/* On the phone Map tab the FAB sits higher so the map's bottom-right
+              attribution control stays visible and tappable. */}
+          <QuickAddFab
+            onPress={() => setQuickAddOpen(true)}
+            bottom={!isDesktop && tab === 'map' ? t.spacing.lg + MAP_ATTRIBUTION_CLEARANCE : t.spacing.lg}
+          />
+          <QuickAddSheet
+            visible={quickAddOpen}
+            onClose={() => setQuickAddOpen(false)}
+            tripId={trip.id}
+            places={places}
+            routeRenderMode={trip.route_render_mode}
+            currency={trip.currency}
+            tripDayCount={tripDayCount}
+            tripStartDate={trip.start_date}
+            onSearch={goToAdd}
+          />
+        </>
+      ) : null}
+      <TripMenuSheet
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onPrint={() => router.push(`/trip/${trip.id}/print`)}
+        onShare={() => setShareOpen(true)}
+        onOpenPeople={() => router.push(`/trip/${trip.id}/collaborators`)}
+        onDuplicate={isOwner ? handleDuplicate : undefined}
+        duplicating={duplicateTrip.isPending}
+      />
+      <TripSettingsSheet
+        visible={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          setDeleteError(null);
+        }}
+        tripId={trip.id}
+        startDate={trip.start_date}
+        endDate={trip.end_date}
+        dailyHoursBudget={trip.daily_hours_budget}
+        transportMode={trip.transport_mode}
+        currency={trip.currency}
+        hasPlaces={places.length > 0}
+        canEdit={canEditTrip}
+        isOwner={isOwner}
+        coverPhotoPlaceId={trip.cover_photo_google_place_id}
+        onDelete={handleDelete}
+        deleting={deleteTrip.isPending}
+        deleteError={deleteError}
+      />
+      <BottomSheet visible={shareOpen} onClose={() => setShareOpen(false)} accessibilityLabel="Share trip">
+        <Heading level={3}>Share this trip</Heading>
+        {canEditTrip ? (
+          <ShareLinkCard tripId={trip.id} />
+        ) : (
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+            Only the owner or an editor can create a share link. Ask them to send you one.
+          </Text>
+        )}
+        <Button variant="ghost" label="Close" onPress={() => setShareOpen(false)} />
+      </BottomSheet>
+    </>
+  );
+
+  // ── Desktop: map + itinerary side-by-side, the hub behind the Trip tab ───
   // The two content columns share the remaining screen height after the header.
   // Map (~60%) is sticky (doesn't scroll), itinerary (~40%) scrolls on its own.
-  // The Settings tab is still accessible via the TabBar below the header.
   if (isDesktop) {
+    const showHub = tab === 'trip';
     return (
       <Screen padded={false}>
         {pageHeader}
+        {actionError}
 
-        {/*
-         * Desktop TabBar shows only the Settings tab — on desktop the map and
-         * itinerary are always visible side-by-side rather than tab-switched.
-         * We still use the TabBar component for visual consistency and keyboard
-         * accessibility. When "settings" is the only tab it still receives focus
-         * correctly.
-         *
-         * The `tab` state governs whether the side-by-side panel or the settings
-         * panel is visible: any value !== 'settings' shows the split panel.
-         */}
-        <TabBar<TabKey>
-          activeKey={tab === 'settings' ? 'settings' : 'map'}
-          onSelect={(key) => setTab(key)}
+        <TabBar<TripTabKey>
+          activeKey={showHub ? 'trip' : 'plan'}
+          onSelect={selectTab}
           tabs={[
-            { key: 'map', label: 'Map & Itinerary' },
-            { key: 'settings', label: 'Settings' },
+            { key: 'plan', label: 'Map & Itinerary' },
+            { key: 'trip', label: 'Trip' },
           ]}
         />
 
-        {tab === 'settings' ? (
-          <>
-            <SettingsTab
-              tripId={trip.id}
-              tripStartDate={trip.start_date}
-              dailyHoursBudget={trip.daily_hours_budget}
-              transportMode={trip.transport_mode}
-              currency={trip.currency}
-              hasPlaces={places.length > 0}
-              tripDayCount={tripDayCount}
-              canEdit={canEditTrip}
-              isOwner={isOwner}
-              coverPhotoPlaceId={trip.cover_photo_google_place_id}
-              onDelete={async () => {
-                await deleteTrip.mutateAsync(trip.id);
-                router.replace('/trips');
-              }}
-              deleting={deleteTrip.isPending}
-            />
-            {canEditTrip ? (
-              <View style={{ padding: t.spacing.lg }}>
-                <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-              </View>
-            ) : null}
-          </>
+        {showHub ? (
+          <View style={desktopDetailStyles.hubWrap}>{hubTab}</View>
         ) : (
           /*
            * Side-by-side panel: map (left, ~60%, sticky) + itinerary (right, ~40%, scrolling).
@@ -245,100 +398,37 @@ export default function TripDetail() {
            * positioned elements don't escape its bounds on web.
            */
           <View style={desktopDetailStyles.splitRow}>
-            {/* Left: map column — sticky (no scroll) */}
-            <View style={desktopDetailStyles.mapColumn}>
-              <MapTab
-                tripId={trip.id}
-                places={places}
-                legs={legs}
-                trip={trip}
-                canEdit={canEditTrip}
-                onMarker={(pid) => router.push(`/place/${pid}`)}
-              />
-            </View>
-
-            {/* Right: itinerary + add-place button */}
+            <View style={desktopDetailStyles.mapColumn}>{mapTab}</View>
             <View style={[desktopDetailStyles.itineraryColumn, { borderLeftColor: t.colors.border }]}>
-              <ItineraryTab
-                tripId={trip.id}
-                places={places}
-                legs={legs}
-                trip={trip}
-                accommodations={tripAccommodations}
-                canEdit={canEditTrip}
-                onOpen={(gid) => router.push(`/place/${gid}`)}
-              />
-              {canEditTrip ? (
-                <View style={{ padding: t.spacing.lg, borderTopWidth: 1, borderTopColor: t.colors.border }}>
-                  <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-                </View>
-              ) : null}
+              {itineraryTab}
             </View>
           </View>
         )}
+        {overlays}
       </Screen>
     );
   }
 
-  // ── Mobile / tablet: original tab layout ─────────────────────────────────
+  // ── Phone / tablet: Plan · Map · Trip ────────────────────────────────────
   return (
     <Screen padded={false}>
       {pageHeader}
+      {actionError}
 
-      <TabBar<TabKey>
+      <TabBar<TripTabKey>
         activeKey={tab}
-        onSelect={setTab}
+        onSelect={selectTab}
         tabs={[
+          { key: 'plan', label: 'Plan' },
           { key: 'map', label: 'Map' },
-          { key: 'itinerary', label: 'Itinerary' },
-          { key: 'settings', label: 'Settings' },
+          { key: 'trip', label: 'Trip' },
         ]}
       />
 
-      {tab === 'map' ? (
-        <MapTab
-          tripId={trip.id}
-          places={places}
-          legs={legs}
-          trip={trip}
-          canEdit={canEditTrip}
-          onMarker={(pid) => router.push(`/place/${pid}`)}
-        />
-      ) : tab === 'itinerary' ? (
-        <ItineraryTab
-          tripId={trip.id}
-          places={places}
-          legs={legs}
-          trip={trip}
-          accommodations={tripAccommodations}
-          canEdit={canEditTrip}
-          onOpen={(gid) => router.push(`/place/${gid}`)}
-        />
-      ) : (
-        <SettingsTab
-          tripId={trip.id}
-          tripStartDate={trip.start_date}
-          dailyHoursBudget={trip.daily_hours_budget}
-          transportMode={trip.transport_mode}
-          currency={trip.currency}
-          hasPlaces={places.length > 0}
-          tripDayCount={tripDayCount}
-          canEdit={canEditTrip}
-          isOwner={isOwner}
-          coverPhotoPlaceId={trip.cover_photo_google_place_id}
-          onDelete={async () => {
-            await deleteTrip.mutateAsync(trip.id);
-            router.replace('/trips');
-          }}
-          deleting={deleteTrip.isPending}
-        />
-      )}
-
-      {canEditTrip ? (
-        <View style={{ padding: t.spacing.lg }}>
-          <Button label="Add a place" onPress={() => router.push(`/trip/${trip.id}/add`)} />
-        </View>
-      ) : null}
+      <View style={{ flex: 1 }}>
+        {tab === 'map' ? mapTab : tab === 'plan' ? itineraryTab : hubTab}
+      </View>
+      {overlays}
     </Screen>
   );
 }
@@ -391,5 +481,12 @@ const desktopDetailStyles = StyleSheet.create({
   itineraryColumn: {
     flex: 2, // 40% share
     borderLeftWidth: 1,
+  },
+  // X2.2: the hub on desktop — a readable column, not a stretched phone.
+  hubWrap: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 880,
+    alignSelf: 'center',
   },
 });

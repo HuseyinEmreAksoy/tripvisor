@@ -9,7 +9,8 @@
  * The component is purely presentational; no hooks or network calls. The rollup
  * shape is built inline.
  */
-import { render } from '@testing-library/react-native';
+import { describe, expect, it, jest } from '@jest/globals';
+import { fireEvent, render } from '@testing-library/react-native';
 import { BudgetCard } from '../BudgetCard';
 import { ThemeProvider } from '@/theme';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
@@ -120,5 +121,21 @@ describe('BudgetCard', () => {
     // accessibilityLabel: "Budget: 250 spent of 500, 50%"
     expect(getByLabelText(/250.*500/)).toBeTruthy();
     // Also confirm the text "250 remaining" appears.
+  });
+
+  it('shows the Add expense quick action only when onAddExpense is passed (X2.4)', () => {
+    const onAddExpense = jest.fn();
+    const { getByRole, rerender } = wrap(
+      <BudgetCard rollup={makeRollup()} onSetBudget={jest.fn()} canEdit onAddExpense={onAddExpense} />,
+    );
+    fireEvent.press(getByRole('button', { name: 'Add expense' }));
+    expect(onAddExpense).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThemeProvider>
+        <BudgetCard rollup={makeRollup()} onSetBudget={jest.fn()} canEdit />
+      </ThemeProvider>,
+    );
+    expect(() => getByRole('button', { name: 'Add expense' })).toThrow();
   });
 });

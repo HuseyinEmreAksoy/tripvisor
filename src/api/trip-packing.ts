@@ -17,13 +17,32 @@
 // ONE statement (one network round trip, one RLS evaluation pass) — seeded
 // rows carry `auto: true` so a future re-seed can replace only them.
 //
-// Delete model: HARD delete (pre-offline-engine; see the migration header).
+// Delete model (M4 X2.5): TOMBSTONE (deleted = true) through the Tier-1 sync
+// engine when it is serving; the v1 HARD delete otherwise (flag off / not yet
+// hydrated). Every direct read filters deleted = false.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
 import type { Uuid } from './types';
 import { tripPackingKeys } from './_keys';
+import {
+  TIER1_MUTATION_NETWORK_MODE,
+  compareCreatedAtAscLocalLast,
+  dressTier1Return,
+  tier1SuccessResult,
+} from './_tier1Facade';
+import {
+  createPackingItems as syncCreatePackingItems,
+  isTier1SyncActive,
+  tombstonePackingItem as syncTombstonePackingItem,
+  updatePackingItem as syncUpdatePackingItem,
+} from '@/sync/mutations';
+import { tier1RootLoaded$ } from '@/sync/hydrate';
+import { tier1Store$ } from '@/sync/store';
+import { getSessionUndoStack } from '@/sync/undo';
 
 // Re-export so consumers can import everything from `@/api`.
 export { tripPackingKeys };
@@ -43,8 +62,9 @@ export interface TripPackingItem {
   auto: boolean;
   /**
    * v2 S2.1 (migration 0027): soft-delete tombstone for the offline sync
-   * engine — supersedes the "hard delete until S2" stance in 0024. Optional:
-   * nothing writes `true` until S2 Wave 2 enables Tier-1 writes.
+   * engine — supersedes the "hard delete until S2" stance in 0024. Written
+   * `true` by the Tier-1 delete path since M4 X2.5. Optional on the type
+   * because PACKING_SELECT_FIELDS does not request it (reads filter on it).
    */
   deleted?: boolean;
   created_at: string;
@@ -102,6 +122,64 @@ export interface DeleteTripPackingItemInput {
 }
 
 // ===========================================================================
+// M4 X2.5 — Tier-1 sync facade (reads + write repoint)
+// ===========================================================================
+//
+// Identical contract to the ./trip-expenses.ts facade (read its header):
+// serving gate = engine active AND (packing root has rows OR its first
+// remote load completed — `tier1RootLoaded$`); writes follow the same gate
+// (create when serving, update/delete when the ROW is in the store); delete
+// is a TOMBSTONE whose UndoEntry lands on the session undo stack; flag-off
+// keeps v1 (hard delete) and every direct read filters `deleted = false`.
+// Hook signatures are UNCHANGED.
+//
+// The optimistic TanStack cache surgery in update/delete stays in both
+// branches: flag-off it IS the optimism; flag-on it only touches the paused
+// fallback cache (the store write is already synchronous and optimistic).
+
+/** The packing row in the Tier-1 store, IF the engine is active. */
+function tier1PackingRow(itemId: Uuid): TripPackingItem | undefined {
+  if (!isTier1SyncActive()) return undefined;
+  return tier1Store$.tripPackingItems[itemId]?.peek();
+}
+
+/** Non-reactive twin of the read gate (for mutationFns). */
+function tier1PackingServing(): boolean {
+  if (!isTier1SyncActive()) return false;
+  const record = tier1Store$.tripPackingItems.peek();
+  const hasRows = record != null && Object.keys(record).length > 0;
+  return hasRows || tier1RootLoaded$.tripPackingItems.peek() === true;
+}
+
+/** v1 ORDER BY created_at asc, label asc; unacked local creates last
+ * (label, then id — so a locally-seeded batch renders alphabetically, like
+ * the v1 single-statement seed whose rows share one timestamp). */
+function compareTier1Packing(a: TripPackingItem, b: TripPackingItem): number {
+  const cmp = compareCreatedAtAscLocalLast(a, b);
+  if (cmp !== null && cmp !== 0) return cmp;
+  const labelCmp = a.label.localeCompare(b.label);
+  return labelCmp !== 0 ? labelCmp : a.id.localeCompare(b.id);
+}
+
+/**
+ * Pure Tier-1 selector — the v1 `useTripPackingItems` queryFn contract
+ * (per-trip, live rows only, created_at then label) over the store record.
+ * Rows are shallow-copied so consumers can never mutate the synced store.
+ */
+export function selectTier1PackingItems(
+  record: Record<string, TripPackingItem>,
+  tripId: Uuid,
+): TripPackingItem[] {
+  const out: TripPackingItem[] = [];
+  for (const row of Object.values(record)) {
+    if (!row || row.trip_id !== tripId) continue;
+    if (row.deleted === true) continue; // tombstones are pulled on purpose
+    out.push({ ...row });
+  }
+  return out.sort(compareTier1Packing);
+}
+
+// ===========================================================================
 // Hooks: reads
 // ===========================================================================
 
@@ -111,16 +189,33 @@ export interface DeleteTripPackingItemInput {
  * alphabetically and later manual adds append at the bottom. Grouping by
  * `category` is the UI's job (one list, client-side group-by).
  */
-export function useTripPackingItems(tripId: Uuid | undefined) {
-  return useQuery<TripPackingItem[]>({
+export function useTripPackingItems(
+  tripId: Uuid | undefined,
+): UseQueryResult<TripPackingItem[], Error> {
+  // [Hook 1/2] Tier-1 selector (root + loaded flag tracked from first render).
+  const tier1Items = use$((): TripPackingItem[] | null => {
+    const record = tier1Store$.tripPackingItems.get();
+    const loaded = tier1RootLoaded$.tripPackingItems.get();
+    if (!tripId) return null;
+    const hasRows = record != null && Object.keys(record).length > 0;
+    if ((!hasRows && !loaded) || !isTier1SyncActive()) return null;
+    return selectTier1PackingItems(record ?? {}, tripId);
+  });
+  const tier1Serves = tier1Items !== null;
+
+  // [Hook 2/2] The v1 query — paused (not unmounted) while Tier-1 serves.
+  const query = useQuery<TripPackingItem[]>({
     queryKey: tripId ? tripPackingKeys.forTrip(tripId) : [...tripPackingKeys.all, 'none'],
-    enabled: Boolean(tripId),
+    enabled: Boolean(tripId) && !tier1Serves,
     queryFn: async () => {
       if (!tripId) return [];
       const { data, error } = await supabase
         .from('trip_packing_items')
         .select(PACKING_SELECT_FIELDS)
         .eq('trip_id', tripId)
+        // X2.5: flag-on clients tombstone — never resurrect deleted items on
+        // the legacy path. Lockstep with selectTier1PackingItems.
+        .eq('deleted', false)
         .order('created_at', { ascending: true })
         .order('label', { ascending: true });
       if (error) throw error;
@@ -129,6 +224,9 @@ export function useTripPackingItems(tripId: Uuid | undefined) {
       return (data ?? []) as TripPackingItem[];
     },
   });
+
+  if (!tier1Serves) return query;
+  return tier1SuccessResult(query, tier1Items as TripPackingItem[]);
 }
 
 // ===========================================================================
@@ -144,16 +242,26 @@ interface PackingMutationContext {
  * (`seedPackingList(...)` → ~20-30 rows with `auto: true`) AND the manual
  * single-add path (an array of one).
  *
- * No optimistic append: seeding is a one-shot action behind a button with
- * room for a spinner, and the invalidation round trip returns the real ids
- * immediately. (Toggle/delete below ARE optimistic — they're the high-
- * frequency interactions.)
+ * Flag-on (root serving): the whole batch lands in the store through ONE
+ * write (complete rows — the X2.5 seed-race mitigation) and the INSERTs are
+ * queued offline-safe; the returned rows are the optimistic store rows.
  */
 export function useCreateTripPackingItems() {
   const qc = useQueryClient();
   return useMutation<TripPackingItem[], Error, CreateTripPackingItemsInput>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async (input) => {
       const { tripId, items } = createTripPackingItemsSchema.parse(input);
+      if (tier1PackingServing()) {
+        const ids = syncCreatePackingItems(
+          tripId,
+          items.map((it) => ({ label: it.label, category: it.category ?? null, auto: it.auto ?? false })),
+        );
+        return ids.map((id) =>
+          dressTier1Return(tier1Store$.tripPackingItems[id]?.peek() as TripPackingItem), // just written — present
+        );
+      }
       const rows = items.map((it) => ({
         trip_id: tripId,
         label: it.label,
@@ -178,15 +286,24 @@ export function useCreateTripPackingItems() {
 /**
  * Patch a packing item — the hot path is the `checked` toggle, so the update
  * is OPTIMISTIC against the per-trip list with snapshot rollback on error.
+ * Flag-on (row in the store): a sync write (offline-safe tick); the
+ * UndoEntry is discarded — a tick is its own undo (tap again).
  */
 export function useUpdateTripPackingItem() {
   const qc = useQueryClient();
   return useMutation<TripPackingItem, Error, UpdateTripPackingItemInput, PackingMutationContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async ({ itemId, patch }) => {
       // Validate patched fields with the same bounds as create.
       if (patch.label !== undefined) newPackingItemSchema.shape.label.parse(patch.label);
       if (patch.category != null) {
         z.string().min(1).max(60).parse(patch.category);
+      }
+      if (tier1PackingRow(itemId)) {
+        syncUpdatePackingItem(itemId, patch);
+        const row = tier1Store$.tripPackingItems[itemId]?.peek() as TripPackingItem; // present — gate just checked
+        return dressTier1Return(row);
       }
       const { data, error } = await supabase
         .from('trip_packing_items')
@@ -224,13 +341,21 @@ export function useUpdateTripPackingItem() {
 }
 
 /**
- * HARD delete a packing item (pre-offline-engine; see the migration header).
- * Optimistic removal from the per-trip list with snapshot rollback.
+ * Delete a packing item. Flag-on (row in the store): TOMBSTONE through the
+ * sync layer with its UndoEntry on the session undo stack. Otherwise the v1
+ * HARD delete. Optimistic removal from the per-trip list with snapshot
+ * rollback either way.
  */
 export function useDeleteTripPackingItem() {
   const qc = useQueryClient();
   return useMutation<{ itemId: Uuid }, Error, DeleteTripPackingItemInput, PackingMutationContext>({
+    // Offline Tier-1 writes must run immediately — see TIER1_MUTATION_NETWORK_MODE.
+    networkMode: TIER1_MUTATION_NETWORK_MODE,
     mutationFn: async ({ itemId }) => {
+      if (tier1PackingRow(itemId)) {
+        getSessionUndoStack().push(syncTombstonePackingItem(itemId));
+        return { itemId };
+      }
       const { error } = await supabase
         .from('trip_packing_items')
         .delete()

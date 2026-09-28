@@ -121,7 +121,8 @@ export function DayStartTimeControl({
           setInvalidDraft(false);
           setExpanded(true);
         }}
-        hitSlop={6}
+        // v2 M4 X2.3: 32pt chip + 6pt vertical slop = 44pt target.
+        hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
         style={({ pressed }) => [
           styles.chip,
           {
@@ -189,7 +190,7 @@ export function DayStartTimeControl({
             commitDraftText(draftText ?? label);
             setExpanded(false);
           }}
-          hitSlop={6}
+          style={styles.doneBtn}
         >
           <Text style={[t.typography.caption, { color: t.colors.primary, fontWeight: '600' }]}>
             Done
@@ -235,7 +236,7 @@ function StepButton({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      hitSlop={6}
+      hitSlop={4}
       style={({ pressed }) => [
         styles.stepBtn,
         {
@@ -253,20 +254,24 @@ function StepButton({
 }
 
 const styles = StyleSheet.create({
-  chip: { borderWidth: 1, alignSelf: 'flex-start' },
+  chip: { borderWidth: 1, alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' },
   editorRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   timeInput: {
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
     minWidth: 64,
+    minHeight: 36,
     textAlign: 'center',
   },
+  // v2 M4 X2.3: ≥44pt targets for the inline editor on phones.
+  doneBtn: { minHeight: 44, minWidth: 44, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
   stepBtn: {
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 5,
-    minHeight: 28,
+    minHeight: 36,
+    minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

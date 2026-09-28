@@ -3,6 +3,7 @@
  * an "Add accommodation" button (canEdit only).
  *
  * Consumed in the Settings tab of the trip detail screen.
+ * v2 M4 X2.4: stays render in check-in order (earliest first).
  */
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
@@ -80,7 +81,9 @@ export function AccommodationList({
         </Text>
       ) : (
         <View style={{ gap: t.spacing.sm }}>
-          {accommodations.map((acc) => (
+          {[...accommodations]
+            .sort((a, b) => a.check_in_date.localeCompare(b.check_in_date))
+            .map((acc) => (
             <AccommodationCard
               key={acc.id}
               accommodation={acc}

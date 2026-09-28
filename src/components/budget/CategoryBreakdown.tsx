@@ -148,6 +148,21 @@ function CategoryRow({
             />
           </View>
         ) : null}
+        {/* X2.4: estimated-vs-actual variance, per category (never per-km). */}
+        {!isEmpty && slot.estimated > 0 ? (
+          <Text
+            style={[
+              t.typography.small,
+              { color: slot.actual > slot.estimated ? t.colors.budgetOverLimit : t.colors.textMuted },
+            ]}
+          >
+            {slot.actual > slot.estimated
+              ? `${fmt(slot.actual - slot.estimated)} over estimate`
+              : `${fmt(slot.estimated - slot.actual)} left of estimate`}
+          </Text>
+        ) : !isEmpty ? (
+          <Text style={[t.typography.small, { color: t.colors.textMuted }]}>No estimate set</Text>
+        ) : null}
       </View>
     </View>
   );
