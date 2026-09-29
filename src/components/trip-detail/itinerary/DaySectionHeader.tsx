@@ -13,6 +13,7 @@ import { useTheme } from '@/theme';
 // Direct types import: keeps the map runtime out of this module graph.
 import { dayColor } from '@/components/Map/types';
 import { Icon } from '@/components/Icon';
+import { useT } from '@/i18n';
 
 export interface DaySectionHeaderProps {
   dayIndex: number;
@@ -40,13 +41,20 @@ export function DaySectionHeader({
   children,
 }: DaySectionHeaderProps) {
   const t = useTheme();
-  const countLabel = `${placeCount} place${placeCount === 1 ? '' : 's'}`;
+  const { t: tx } = useT('routes');
+  const countLabel = tx('header.places', { count: placeCount });
+  const a11yKey = collapsed
+    ? isToday ? 'header.a11yShowToday' : 'header.a11yShow'
+    : isToday ? 'header.a11yHideToday' : 'header.a11yHide';
   return (
     <View style={[styles.header, { paddingTop: t.spacing.sm }]}>
       <View style={[styles.row, { gap: t.spacing.sm }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${title}${dateLabel ? `, ${dateLabel}` : ''}${isToday ? ', today' : ''}, ${countLabel}. ${collapsed ? 'Show' : 'Hide'} this day's places.`}
+          accessibilityLabel={tx(a11yKey, {
+            title: dateLabel ? tx('header.titleWithDate', { title, date: dateLabel }) : title,
+            places: countLabel,
+          })}
           accessibilityState={{ expanded: !collapsed }}
           onPress={onToggle}
           style={({ pressed }) => [
@@ -74,12 +82,12 @@ export function DaySectionHeader({
               ]}
             >
               <Text style={[t.typography.small, { color: t.colors.primaryText, fontWeight: '700' }]}>
-                Today
+                {tx('header.today')}
               </Text>
             </View>
           ) : null}
           {collapsed ? (
-            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>· {countLabel}</Text>
+            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{`· ${countLabel}`}</Text>
           ) : null}
           <View style={{ transform: [{ rotate: collapsed ? '0deg' : '90deg' }] }}>
             <Icon name="chevron-right" size={16} color={t.colors.textMuted} />

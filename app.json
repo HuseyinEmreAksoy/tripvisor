@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.tripvisor.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to show where you are on the map and to build a route from your current location to the first place on your itinerary."
+        "NSLocationWhenInUseUsageDescription": "Tripvisor uses your location to show where you are on the map and to build a route from your current location to the first place on your itinerary.",
+        "NSPhotoLibraryUsageDescription": "Tripvisor lets you pick photos from your library to add them to your trip memories. Photos stay private unless you share them with your trip."
       }
     },
     "android": {
@@ -48,6 +49,14 @@
             "tr"
           ],
           "allowDynamicLocaleChangesAndroid": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Tripvisor lets you pick photos from your library to add them to your trip memories. Photos stay private unless you share them with your trip.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       "expo-secure-store",

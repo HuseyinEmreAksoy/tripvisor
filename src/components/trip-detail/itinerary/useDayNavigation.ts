@@ -24,6 +24,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { notifyViewportChange } from '@/hooks/useSeenOnScreen';
 import { sampleFromScrollEvent, useHeroScrollReporter } from '../heroCollapse';
 import { haptics } from '@/lib/haptics';
+import { useAppLocale } from '@/i18n';
 import { buildDayChips, liveDayIndex, sectionAtOffset, type DayChip } from './dayChips';
 import { useCollapsedDays, type CollapsedDays } from './useCollapsedDays';
 
@@ -92,11 +93,14 @@ export function useDayNavigation(
     [tripId, start_date, end_date, archived_at],
   );
   const dayKey = sectionDayIndexes.join(',');
+  // M5 Y3.3: chip labels follow the app language (hydration-safe on web).
+  const { language } = useAppLocale();
   const dayChips = useMemo(
-    () => buildDayChips({ id: tripId, start_date, end_date, archived_at }, sectionDayIndexes),
+    () =>
+      buildDayChips({ id: tripId, start_date, end_date, archived_at }, sectionDayIndexes, new Date(), language),
     // dayKey stands in for the array identity (same contents → same chips).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tripId, start_date, end_date, archived_at, dayKey],
+    [tripId, start_date, end_date, archived_at, dayKey, language],
   );
   const chipByDay = useMemo(() => new Map(dayChips.map((c) => [c.dayIndex, c])), [dayChips]);
   const collapsedDays = useCollapsedDays(tripId, todayIndex);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import { formatDate } from '@/i18n';
 import {
   buildDayChips,
   dayDateParts,
@@ -15,7 +16,7 @@ const BEFORE = new Date(2026, 9, 1, 10, 0);
 
 describe('dayDateParts', () => {
   it('adds whole days across a month boundary', () => {
-    expect(dayDateParts('2026-10-30', 3)).toEqual({ weekday: 1, day: 2, month: 10 });
+    expect(dayDateParts('2026-10-30', 3)).toEqual({ weekday: 1, day: 2, month: 10, year: 2026 });
   });
   it('returns null for undated or malformed trips', () => {
     expect(dayDateParts(null, 0)).toBeNull();
@@ -30,7 +31,22 @@ describe('buildDayChips', () => {
     expect(chips.map((c) => c.isToday)).toEqual([false, false, false, true, false]);
     expect(chips.map((c) => c.isPast)).toEqual([false, true, true, false, false]);
     expect(chips[3]!.dateLabel).toBe('Wed 14');
-    expect(chips[3]!.accessibilityLabel).toBe('Day 3, Wednesday 14 October, today');
+    // Spoken date comes from the shared Intl formatter (app language).
+    const spoken = formatDate(new Date(2026, 9, 14), 'weekdayLong', 'en');
+    expect(chips[3]!.accessibilityLabel).toBe(`Day 3, ${spoken}, today`);
+    expect(chips[1]!.accessibilityLabel).toMatch(/, past$/);
+  });
+
+  it('translates labels and dates into Turkish (no English "D1 Thu 18")', () => {
+    const chips = buildDayChips(TRIP, [-1, 0, 3], DURING, 'tr');
+    const weekday = formatDate(new Date(2026, 9, 15), 'weekdayOnly', 'tr');
+    expect(chips[0]!.label).toBe('Fikirler');
+    expect(chips[2]!.dateLabel).toBe(`15 ${weekday}`);
+    expect(chips[2]!.label).toBe(`4. gün · 15 ${weekday}`);
+    expect(chips[2]!.label).not.toMatch(/Thu|D4/);
+    expect(chips[1]!.accessibilityLabel).toMatch(/^1\. gün, .*geçti$/);
+    const undated = buildDayChips({ ...TRIP, start_date: null, end_date: null }, [0], DURING, 'tr');
+    expect(undated[0]!.label).toBe('1. gün');
   });
 
   it('has no today/past before the trip starts', () => {

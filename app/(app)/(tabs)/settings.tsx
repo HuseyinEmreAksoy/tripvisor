@@ -30,6 +30,7 @@ import { PRIVACY_HREF, TERMS_HREF } from '@/components/legal/LegalLinks';
 import { ChangeEmailModal } from '@/components/profile/ChangeEmailModal';
 import { isAccountGoneError } from '@/components/profile/deleteAccountOutcome';
 import { LanguagePicker } from '@/components/profile/LanguagePicker';
+import { PreferencesSection } from '@/components/discover/PreferencesSection';
 import { toLocaleUpper, useT } from '@/i18n';
 
 const THEME_OPTIONS = [
@@ -42,7 +43,7 @@ type ErrorKey = 'errors:account.deleteFailed' | 'errors:unexpected';
 
 export default function SettingsScreen() {
   const t = useTheme();
-  const { t: tx } = useT(['profile', 'common', 'errors']);
+  const { t: tx } = useT(['profile', 'common', 'errors', 'discover']);
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
   const { data: session } = useSession();
@@ -273,6 +274,15 @@ export default function SettingsScreen() {
           {tx('sections.language')}
         </Text>
         <LanguagePicker />
+
+        {/* ─── Travel preferences (M5 Y3.4): interests, home currency, language mirror ─── */}
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}
+          accessibilityRole="header"
+          aria-level={2}
+        >
+          {tx('discover:prefs.section')}
+        </Text>
+        <PreferencesSection />
 
         {/* ─── Actions card ──────────────────────────────────────────────── */}
         <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}

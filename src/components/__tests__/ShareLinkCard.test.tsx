@@ -7,19 +7,24 @@
  * the module boundary ("mock"-prefixed so babel-jest allows them in factories).
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
 import { ShareLinkCard } from '../ShareLinkCard';
 import { ThemeProvider } from '@/theme';
-import { i18n } from '@/i18n';
+import { i18n, setLanguagePreference } from '@/i18n';
 
-const mockCreateMutateAsync = jest.fn<() => Promise<{ token: string }>>();
+const mockCreateMutateAsync = jest.fn<(input?: unknown) => Promise<{ token: string }>>();
+const mockUpdateMutate = jest.fn<(input: unknown, opts?: { onError?: (e: Error) => void }) => void>();
+const mockRefetchCurrent = jest.fn();
+// Last toggle-save failure (null = none).
+let mockUpdateError: Error | null = null;
 const mockRevokeMutateAsync = jest.fn<(input?: { token?: string }) => Promise<{ revoked: number }>>();
 const mockConfirm = jest.fn<() => Promise<boolean>>();
 const mockShareLink = jest.fn<(input: { url: string; title: string; message: string }) => Promise<string>>();
 // Last create failure as the mutation would expose it (null = no error).
 let mockCreateError: Error | null = null;
 // Server-side current link (useCurrentShareLink): undefined = loading, null = none.
-let mockCurrent: { token: string } | null | undefined = null;
+type MockSettings = { showItinerary: boolean; showExpenses: boolean; showMemories: boolean };
+let mockCurrent: { token: string; settings?: MockSettings } | null | undefined = null;
 
 jest.mock('@/api/share', () => {
   class ShareLinkError extends Error {
@@ -39,9 +44,18 @@ jest.mock('@/api/share', () => {
       isError: mockCreateError !== null,
       error: mockCreateError,
     }),
+    DEFAULT_SHARE_SETTINGS: { showItinerary: true, showExpenses: false, showMemories: false },
     useCurrentShareLink: () => ({
       data: mockCurrent,
       isLoading: mockCurrent === undefined,
+      refetch: mockRefetchCurrent,
+    }),
+    useTripShareSettings: () => ({ data: mockCurrent ? (mockCurrent.settings ?? null) : mockCurrent }),
+    useUpdateShareSettings: () => ({
+      mutate: mockUpdateMutate,
+      reset: jest.fn(),
+      isError: mockUpdateError !== null,
+      error: mockUpdateError,
     }),
     useRevokeShareLink: () => ({
       mutateAsync: mockRevokeMutateAsync,
@@ -91,6 +105,9 @@ beforeEach(() => {
   mockConfirm.mockReset();
   mockShareLink.mockReset();
   mockCreateError = null;
+  mockUpdateError = null;
+  mockUpdateMutate.mockReset();
+  mockRefetchCurrent.mockReset();
   mockCurrent = null;
   mockCreateMutateAsync.mockResolvedValue({ token: TOKEN });
   mockRevokeMutateAsync.mockResolvedValue({ revoked: 1 });
@@ -203,5 +220,76 @@ describe('ShareLinkCard — revoke', () => {
     mockCurrent = null; // the hook's onSuccess clears the current-link cache
     await waitFor(() => expect(queryByText(new RegExp(`/share/${TOKEN}`))).toBeNull());
     expect(getByRole('button', CREATE)).toBeTruthy();
+  });
+});
+
+describe('ShareLinkCard — what the link shows (M5 Y3.5)', () => {
+  const switchNamed = (utils: ReturnType<typeof wrap>, name: RegExp) => utils.getByRole('switch', { name });
+
+  it('defaults to itinerary on, expenses and memories off, and creates the link with the chosen toggles', async () => {
+    const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(switchNamed(utils, /itinerary/i).props.accessibilityState).toMatchObject({ checked: true });
+    expect(switchNamed(utils, /expense summary/i).props.accessibilityState).toMatchObject({ checked: false });
+    expect(switchNamed(utils, /your memories/i).props.accessibilityState).toMatchObject({ checked: false });
+
+    fireEvent.press(switchNamed(utils, /your memories/i));
+    expect(switchNamed(utils, /your memories/i).props.accessibilityState).toMatchObject({ checked: true });
+    // A draft flip never calls the server.
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
+
+    fireEvent.press(utils.getByRole('button', CREATE));
+    await waitFor(() =>
+      expect(mockCreateMutateAsync).toHaveBeenCalledWith({
+        settings: { showItinerary: true, showExpenses: false, showMemories: true },
+      }),
+    );
+  });
+
+  it('says the memories toggle publishes only YOUR shared memories', () => {
+    const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(utils.getByText(i18n.t('share:toggles.memories.hint'))).toBeTruthy();
+    expect(i18n.t('share:toggles.memories.hint')).toMatch(/only YOUR memories/);
+  });
+
+  it('shows the live link toggles after a reload and saves a flip right away', () => {
+    mockCurrent = { token: 'live-token-1234567', settings: { showItinerary: true, showExpenses: true, showMemories: false } };
+    const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(utils.getByText(/\/share\/live-token-1234567/)).toBeTruthy();
+    expect(switchNamed(utils, /expense summary/i).props.accessibilityState).toMatchObject({ checked: true });
+    expect(utils.getByText(i18n.t('share:link.statusOn'))).toBeTruthy();
+
+    fireEvent.press(switchNamed(utils, /itinerary/i));
+    expect(mockUpdateMutate).toHaveBeenCalledWith({ showItinerary: false }, expect.anything());
+  });
+
+  it('handles no_active_link: explains, refetches and falls back to Create', () => {
+    mockCurrent = { token: 'live-token-1234567', settings: { showItinerary: true, showExpenses: false, showMemories: false } };
+    mockUpdateMutate.mockImplementation((_input, opts) => {
+      mockCurrent = null; // the refetch finds no live link
+      opts?.onError?.(new MockShareLinkError('no_active_link', 'gone', 404));
+    });
+    const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    fireEvent.press(switchNamed(utils, /expense summary/i));
+    expect(mockRefetchCurrent).toHaveBeenCalled();
+    expect(utils.getByText(i18n.t('share:link.noActiveLink'))).toBeTruthy();
+    expect(utils.getByRole('button', CREATE)).toBeTruthy();
+  });
+
+  it('shows a save error for other toggle failures', () => {
+    mockCurrent = { token: 'live-token-1234567', settings: { showItinerary: true, showExpenses: false, showMemories: false } };
+    mockUpdateError = new MockShareLinkError('db_error', 'db down', 500);
+    const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(utils.getByText(i18n.t('share:link.updateFailed'))).toBeTruthy();
+  });
+
+  it('renders in Turkish', async () => {
+    await act(() => setLanguagePreference('tr'));
+    try {
+      const utils = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+      expect(utils.getByText('Paylaşım bağlantısı oluştur')).toBeTruthy();
+      expect(utils.getByText('Anıların')).toBeTruthy();
+    } finally {
+      await act(() => setLanguagePreference('system'));
+    }
   });
 });

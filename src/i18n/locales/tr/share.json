@@ -2,7 +2,158 @@
   "link": {
     "ownerOnly": "Paylaşım bağlantısını yalnızca gezinin sahibi oluşturabilir. Sana bir bağlantı göndermesini iste.",
     "createFailed": "Bağlantı oluşturulamadı. Tekrar dene.",
-    "revokeFailed": "Bağlantı iptal edilemedi. Tekrar dene."
+    "revokeFailed": "Bağlantı iptal edilemedi. Tekrar dene.",
+    "updateFailed": "Bu ayar kaydedilemedi. Tekrar dene.",
+    "noActiveLink": "Bu bağlantı kapatılmış, belki başka bir cihazdan. Yeniden paylaşmak için yeni bir bağlantı oluştur.",
+    "title": "Herkese açık bağlantı",
+    "subtitle": "Bağlantıya sahip herkes görüntüleyebilir",
+    "sectionA11y": "Herkese açık bağlantıyla paylaşım",
+    "statusOn": "Açık",
+    "statusOff": "Kapalı",
+    "statusA11y": "Herkese açık bağlantı {{status}}",
+    "offBody": "Herkesin giriş yapmadan açabileceği, salt okunur bir bağlantı oluştur. Neleri göstereceğini aşağıdan seç.",
+    "checking": "Mevcut bağlantı kontrol ediliyor…",
+    "create": "Paylaşım bağlantısı oluştur",
+    "createA11y": "Bu gezi için salt okunur bir paylaşım bağlantısı oluştur",
+    "urlA11y": "Paylaşım adresi: {{url}}",
+    "share": "Bağlantıyı paylaş",
+    "shareA11y": "Gezinin herkese açık bağlantısını paylaş",
+    "copy": "Bağlantıyı kopyala",
+    "copied": "Kopyalandı!",
+    "copyA11y": "Paylaşım bağlantısını panoya kopyala",
+    "copiedA11y": "Bağlantı panoya kopyalandı",
+    "revoke": "Kapat",
+    "revokeA11y": "Paylaşım bağlantısını kapat — bağlantıya sahip herkes erişimini kaybeder",
+    "revokeConfirm": {
+      "title": "Herkese açık bağlantı kapatılsın mı?",
+      "message": "Bu bağlantıya sahip herkes erişimini hemen kaybeder. Daha sonra yeni bir bağlantı oluşturabilirsin.",
+      "confirm": "Kapat"
+    },
+    "untitledTrip": "gezim",
+    "shareTitle": "{{title}} · Tripvisor",
+    "shareMessage": "{{title}} gezisine Tripvisor’da göz at — salt okunur, giriş gerekmez."
   },
-  "hubSummary": "Herkese açık, salt okunur bağlantı ya da e-postayla davet"
+  "toggles": {
+    "heading": "Bağlantıda neler görünsün",
+    "liveNote": "Değişiklikler yayındaki bağlantıya hemen uygulanır.",
+    "draftNote": "Bunları bağlantıyı oluşturduktan sonra da istediğin zaman değiştirebilirsin.",
+    "itinerary": {
+      "label": "Gezi planı",
+      "hint": "Günler, duraklar ve rota haritası."
+    },
+    "expenses": {
+      "label": "Harcama özeti",
+      "hint": "Kategori ve para birimine göre toplamlar. Tek tek harcamalar asla gösterilmez."
+    },
+    "memories": {
+      "label": "Anıların",
+      "hint": "Yalnızca SENİN geziyle paylaştığın anılarını yayınlar: fotoğraflar, günlük ve değerlendirmeler. Diğer katılımcıların anıları ve “Yalnızca ben” öğeleri asla herkese açık olmaz."
+    }
+  },
+  "invite": {
+    "title": "Katılımcı davet et",
+    "subtitle": "Belirli bir kişiyi e-postayla davet et",
+    "sectionA11y": "Belirli bir katılımcıyı e-postayla davet et",
+    "body": "Katılımcılar geziye erişmek için giriş yapar. Onlara görüntüleyici ya da düzenleyici yetkisi ver.",
+    "manage": "Katılımcıları yönet",
+    "manageA11y": "Birini e-postayla davet etmek için katılımcı yönetimi ekranına git"
+  },
+  "feedback": {
+    "copied": "Bağlantı panoya kopyalandı",
+    "failed": "Paylaşım açılamadı — bunun yerine bağlantıyı kopyala."
+  },
+  "page": {
+    "loading": "Gezi yükleniyor…",
+    "errorTitle": "Bu gezi yüklenemedi",
+    "errorBody": "Bağlantını kontrol edip tekrar dene.",
+    "retry": "Tekrar dene",
+    "busyTitle": "Bu bağlantı şu an çok yoğun",
+    "busyBody": "Son zamanlarda çok ziyaret aldı. Lütfen biraz sonra tekrar dene.",
+    "notFoundTitle": "Bağlantı bulunamadı",
+    "notFoundBody": "Bu gezi silinmiş ya da paylaşım bağlantısı kapatılmış.",
+    "planOwn": "Kendi gezini planla",
+    "planOwnShort": "Kendi gezini planla",
+    "planOwnA11y": "Tripvisor ile kendi gezini planla. Giriş ekranını açar.",
+    "overline": "Paylaşılan gezi · salt okunur",
+    "untitled": "Adsız gezi",
+    "datesNotSet": "Tarih belirlenmedi",
+    "days_one": "{{count}} gün",
+    "days_other": "{{count}} gün",
+    "stops_one": "{{count}} durak",
+    "stops_other": "{{count}} durak",
+    "hoursPerDay": "Günde {{hours}}",
+    "shareA11y": "Bu geziyi paylaş",
+    "shareMessage": "{{title}} gezisine Tripvisor’da göz at.",
+    "mapAll": "Gezinin tamamının haritası",
+    "mapDay": "{{day}}. günün haritası",
+    "mapEmptyTitle": "Bu gezide henüz durak yok",
+    "mapEmptyBody": "Yerler eklendiğinde rota burada görünecek.",
+    "hiddenTitle": "Gezi planı sahibi tarafından gizlendi",
+    "hiddenBody": "Gezinin sahibi gün gün planı bu bağlantıda paylaşmamayı seçti.",
+    "ctaTitle": "Bu geziyi beğendin mi?",
+    "ctaBody": "Tripvisor ile dakikalar içinde kendi gün gün rotanı oluştur."
+  },
+  "timeline": {
+    "tabsA11y": "Gezi günleri",
+    "overview": "Genel bakış",
+    "day": "{{day}}. gün",
+    "unscheduled": "Plansız",
+    "empty": "Henüz planlanmış durak yok.",
+    "place": "Yer",
+    "stopA11y": "{{n}}. durak: {{name}}",
+    "travel": "{{duration}} · {{distance}}",
+    "estimated": "≈ {{travel}}",
+    "estimatedA11y": "Yaklaşık {{travel}}, tahmini",
+    "notCalculated": "Yol süresi hesaplanmadı"
+  },
+  "expenses": {
+    "title": "Harcamalar",
+    "summary_one": "{{count}} harcama · toplamlar {{currency}} cinsinden",
+    "summary_other": "{{count}} harcama · toplamlar {{currency}} cinsinden",
+    "spent": "Harcanan",
+    "planned": "Planlanan",
+    "byCategory": "Kategoriye göre",
+    "byCurrency": "Ödeme para birimleri",
+    "currencyCount_one": "{{count}} harcama",
+    "currencyCount_other": "{{count}} harcama",
+    "pending_one": "{{count}} harcama kur bilgisi bekliyor ve henüz toplamlara dahil değil.",
+    "pending_other": "{{count}} harcama kur bilgisi bekliyor ve henüz toplamlara dahil değil.",
+    "empty": "Henüz harcama kaydedilmedi.",
+    "category": {
+      "accommodation": "Konaklama",
+      "food": "Yeme içme",
+      "transport": "Ulaşım",
+      "shopping": "Alışveriş",
+      "activities": "Etkinlikler",
+      "other": "Diğer"
+    }
+  },
+  "memories": {
+    "title": "Anılar",
+    "photos": "Fotoğraflar",
+    "journal": "Günlük",
+    "reviews": "Değerlendirmeler",
+    "empty": "Henüz paylaşılan anı yok.",
+    "truncated": "En yeni anılar gösteriliyor.",
+    "day": "{{day}}. gün",
+    "openPhoto": "Fotoğraf {{n}} / {{total}} — aç",
+    "openPhotoCaption": "Fotoğraf {{n}} / {{total}} — aç: {{caption}}",
+    "rating": "5 üzerinden {{rating}} puan",
+    "unnamedPlace": "Bu gezideki bir yer",
+    "lightbox": {
+      "a11y": "Fotoğraf {{n}} / {{total}}",
+      "close": "Fotoğrafı kapat",
+      "prev": "Önceki fotoğraf",
+      "next": "Sonraki fotoğraf",
+      "loading": "Tam boyut yükleniyor…",
+      "busy": "Önizleme gösteriliyor — tam boyut şu an yoğun. Biraz sonra tekrar dene.",
+      "failed": "Tam boyutlu fotoğraf yüklenemedi. Önizleme gösteriliyor."
+    }
+  },
+  "hubSummary": "Herkese açık, salt okunur bağlantı ya da e-postayla davet",
+  "a11y": {
+    "pair": "{{label}}: {{value}}",
+    "list": "{{first}}, {{second}}",
+    "sentence": "{{title}}. {{body}}"
+  }
 }

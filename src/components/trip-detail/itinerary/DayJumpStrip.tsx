@@ -17,6 +17,7 @@ import { useTheme } from '@/theme';
 // Direct types import: keeps the map runtime out of this module graph.
 import { dayColor } from '@/components/Map/types';
 import type { DayChip } from './dayChips';
+import { useT } from '@/i18n';
 
 export interface DayJumpStripProps {
   chips: DayChip[];
@@ -28,6 +29,7 @@ export interface DayJumpStripProps {
 
 export function DayJumpStrip({ chips, activeDayIndex, onJump, trailing }: DayJumpStripProps) {
   const t = useTheme();
+  const { t: tx } = useT('routes');
   const stripRef = useRef<ScrollView>(null);
   const chipX = useRef(new Map<number, number>());
 
@@ -62,7 +64,7 @@ export function DayJumpStrip({ chips, activeDayIndex, onJump, trailing }: DayJum
           style={styles.strip}
           contentContainerStyle={[styles.stripContent, { gap: t.spacing.xs }]}
           accessibilityRole="tablist"
-          accessibilityLabel="Jump to a day"
+          accessibilityLabel={tx('strip.label')}
         >
           {chips.map((chip) => {
             const active = chip.dayIndex === activeDayIndex;
@@ -71,7 +73,7 @@ export function DayJumpStrip({ chips, activeDayIndex, onJump, trailing }: DayJum
                 key={chip.dayIndex}
                 onLayout={(e) => chipX.current.set(chip.dayIndex, e.nativeEvent.layout.x)}
                 accessibilityRole="tab"
-                accessibilityLabel={`Jump to ${chip.accessibilityLabel}`}
+                accessibilityLabel={tx('strip.jump', { label: chip.accessibilityLabel })}
                 accessibilityState={{ selected: active }}
                 onPress={() => onJump(chip.dayIndex)}
                 hitSlop={{ top: 4, bottom: 4 }}
@@ -111,7 +113,7 @@ export function DayJumpStrip({ chips, activeDayIndex, onJump, trailing }: DayJum
                     },
                   ]}
                 >
-                  {chip.isToday ? `${chip.label} · Today` : chip.label}
+                  {chip.isToday ? tx('strip.today', { label: chip.label }) : chip.label}
                 </Text>
               </Pressable>
             );

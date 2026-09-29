@@ -1,6 +1,7 @@
 {
   "ios": {
     "CFBundleDisplayName": "Tripvisor",
-    "NSLocationWhenInUseUsageDescription": "Tripvisor, haritada nerede olduğunu göstermek ve bulunduğun yerden gezi planındaki ilk durağa bir rota çizmek için konumunu kullanır."
+    "NSLocationWhenInUseUsageDescription": "Tripvisor, haritada nerede olduğunu göstermek ve bulunduğun yerden gezi planındaki ilk durağa bir rota çizmek için konumunu kullanır.",
+    "NSPhotoLibraryUsageDescription": "Tripvisor, gezi anılarına eklemen için galerinden fotoğraf seçmene izin verir. Fotoğraflar, sen gezinle paylaşmadıkça yalnızca sana görünür."
   }
 }

@@ -8,11 +8,12 @@
  * tripToday supplies "which day is today" using the DEVICE local date.
  */
 import { dayIndexFor, type DatedTrip } from '@/lib/tripToday';
+import { formatDate, formatNumber, i18n, type AppLanguage } from '@/i18n';
 
 export interface DayChip {
   /** -1 = the Ideas bucket; otherwise the 0-based trip day index. */
   dayIndex: number;
-  /** Short visible label: "Ideas", "D1 Mon 12", or "D1" for undated trips. */
+  /** Short visible label in the app language: "Ideas", "D1 Mon 12" / "1. gün 12 Pzt", or "Day 1" undated. */
   label: string;
   /** Date part alone ("Mon 12"), or null for Ideas / undated trips. */
   dateLabel: string | null;
@@ -23,20 +24,13 @@ export interface DayChip {
   isPast: boolean;
 }
 
-const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-const MONTH_LONG = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-] as const;
-
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** Calendar parts of `start + offsetDays`, or null for a malformed start. */
 export function dayDateParts(
   startDate: string | null | undefined,
   offsetDays: number,
-): { weekday: number; day: number; month: number } | null {
+): { weekday: number; day: number; month: number; year: number } | null {
   if (!startDate) return null;
   const m = DATE_RE.exec(startDate);
   if (!m) return null;
@@ -44,7 +38,7 @@ export function dayDateParts(
   const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + offsetDays);
   if (Number.isNaN(ms)) return null;
   const d = new Date(ms);
-  return { weekday: d.getUTCDay(), day: d.getUTCDate(), month: d.getUTCMonth() };
+  return { weekday: d.getUTCDay(), day: d.getUTCDate(), month: d.getUTCMonth(), year: d.getUTCFullYear() };
 }
 
 /**
@@ -56,20 +50,28 @@ export function liveDayIndex(trip: DatedTrip, now: Date = new Date()): number | 
   return dayIndexFor(trip, now);
 }
 
-/** Build the strip's chips for the given section day indexes (Ideas = -1). */
+/**
+ * Build the strip's chips for the given section day indexes (Ideas = -1).
+ * M5 Y3.3: labels and dates are in the app language (`lng`, default the
+ * active one) — `routes:dayChip.*` keys + the shared Intl formatters, so a
+ * Turkish trip reads "1. gün 18 Per", not "D1 Thu 18". Callers re-run it
+ * when the language changes (useDayNavigation keys its memo on it).
+ */
 export function buildDayChips(
   trip: DatedTrip,
   dayIndexes: readonly number[],
   now: Date = new Date(),
+  lng?: AppLanguage,
 ): DayChip[] {
   const today = liveDayIndex(trip, now);
+  const opt = lng ? { lng } : {};
   return dayIndexes.map((dayIndex) => {
     if (dayIndex < 0) {
       return {
         dayIndex,
-        label: 'Ideas',
+        label: i18n.t('routes:dayChip.ideas', opt),
         dateLabel: null,
-        accessibilityLabel: 'Ideas, saved places not scheduled yet',
+        accessibilityLabel: i18n.t('routes:dayChip.ideasA11y', opt),
         isToday: false,
         isPast: false,
       };
@@ -78,16 +80,33 @@ export function buildDayChips(
     const isPast = today !== null && dayIndex < today;
     const parts = dayDateParts(trip.start_date, dayIndex);
     const n = dayIndex + 1;
-    const dateLabel = parts ? `${WEEKDAY_SHORT[parts.weekday]} ${parts.day}` : null;
-    const label = dateLabel ? `D${n} ${dateLabel}` : `Day ${n}`;
-    const spoken = parts
-      ? `Day ${n}, ${WEEKDAY_LONG[parts.weekday]} ${parts.day} ${MONTH_LONG[parts.month]}`
-      : `Day ${n}`;
+    // Local-midnight Date from calendar parts (never a UTC string parse).
+    const date = parts ? new Date(parts.year, parts.month, parts.day) : null;
+    const dateLabel = date
+      ? i18n.t('routes:dayChip.date', {
+          ...opt,
+          weekday: formatDate(date, 'weekdayOnly', lng),
+          day: formatNumber(date.getDate(), {}, lng),
+        })
+      : null;
+    const label = dateLabel
+      ? i18n.t('routes:dayChip.label', { ...opt, day: n, date: dateLabel })
+      : i18n.t('routes:dayChip.undated', { ...opt, day: n });
+    const spokenDate = date ? formatDate(date, 'weekdayLong', lng) : null;
+    const spoken = spokenDate
+      ? isToday
+        ? i18n.t('routes:dayChip.a11yToday', { ...opt, day: n, date: spokenDate })
+        : isPast
+          ? i18n.t('routes:dayChip.a11yPast', { ...opt, day: n, date: spokenDate })
+          : i18n.t('routes:dayChip.a11y', { ...opt, day: n, date: spokenDate })
+      : isToday
+        ? i18n.t('routes:dayChip.a11yUndatedToday', { ...opt, day: n })
+        : i18n.t('routes:dayChip.undated', { ...opt, day: n });
     return {
       dayIndex,
       label,
       dateLabel,
-      accessibilityLabel: `${spoken}${isToday ? ', today' : isPast ? ', past' : ''}`,
+      accessibilityLabel: spoken,
       isToday,
       isPast,
     };

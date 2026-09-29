@@ -45,7 +45,9 @@ export function StatusPill({ tone = 'info', label, loading }: Props) {
       ]}
     >
       {loading ? <ActivityIndicator size="small" color={textColor} /> : null}
-      <Text style={[t.typography.small, { color: textColor, fontWeight: '700' }]}>{label}</Text>
+      {/* flexShrink: long labels ("Günlük rota hızı sınırına ulaşıldı…") wrap
+          inside the pill instead of running off a 375px screen. */}
+      <Text style={[t.typography.small, { color: textColor, fontWeight: '700', flexShrink: 1 }]}>{label}</Text>
     </View>
   );
 }
@@ -56,6 +58,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     minHeight: 24,
   },
 });

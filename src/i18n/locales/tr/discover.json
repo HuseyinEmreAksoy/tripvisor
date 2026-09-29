@@ -1,1 +1,138 @@
-{}
+{
+  "title": "Keşfet",
+  "subtitle": "İlgi alanlarına göre seçilmiş, uğramaya değer yerler",
+  "interests": {
+    "history": "Tarih",
+    "food": "Yeme-içme",
+    "nature": "Doğa",
+    "museums": "Müzeler",
+    "nightlife": "Gece hayatı",
+    "shopping": "Alışveriş",
+    "kids": "Çocuklar",
+    "viewpoints": "Manzara noktaları"
+  },
+  "interestsGroupA11y": "İlgi alanları",
+  "saveDefault": "İlgi alanlarım olarak kaydet",
+  "savedDefault": "İlgi alanların kaydedildi",
+  "center": {
+    "label": "Nerede aransın",
+    "trip": "Tüm gezi",
+    "day": "{{n}}. gün",
+    "here": "Konumum",
+    "locating": "Konumun bulunuyor…",
+    "denied": "Konum izni kapalı, bu yüzden gezinin çevresinde arıyoruz.",
+    "unavailable": "Konumuna şu an ulaşılamıyor, bu yüzden gezinin çevresinde arıyoruz."
+  },
+  "view": {
+    "list": "Liste",
+    "map": "Harita"
+  },
+  "searching": "Yakındaki yerler aranıyor…",
+  "searchingSlow": "Yeni bir bölgedeki ilk arama birkaç saniye sürebilir.",
+  "loadingA11y": "Öneriler yükleniyor",
+  "results_one": "Yakında {{count}} yer",
+  "results_other": "Yakında {{count}} yer",
+  "distanceAway": "{{distance}} uzakta",
+  "card": {
+    "openA11y": "{{name}}, {{distance}} uzakta. Ayrıntıları göster",
+    "localName": "Yerel adı: {{name}}"
+  },
+  "wiki": {
+    "source": "Vikipedi · CC BY-SA",
+    "readMore": "Vikipedi'de oku",
+    "readMoreA11y": "{{name}} hakkında Vikipedi'de oku (tarayıcıda açılır)"
+  },
+  "attribution": {
+    "osmA11y": "Harita verisi {{text}} (tarayıcıda açılır)",
+    "wiki": "Özetler Vikipedi'den, CC BY-SA",
+    "wikiA11y": "Vikipedi özetleri CC BY-SA lisanslıdır (lisans tarayıcıda açılır)"
+  },
+  "degraded": {
+    "partial": "Bölgenin bir kısmı taranamadı. Sonuçlar eksik olabilir.",
+    "user_quota": "Bugünkü yeni bölge aramalarını kullandın. Zaten bildiğimiz yerleri gösteriyoruz.",
+    "global_cap": "Keşfet bugün çok yoğun. Zaten bildiğimiz yerleri gösteriyoruz.",
+    "overpass_unavailable": "Harita veri servisi şu an yavaş, bu yüzden öneriler yalnızca Vikipedi'den geliyor.",
+    "cache_only": "Keşfet şu an kayıtlı sonuçlarla çalışıyor. Bazı bölgelerde yeni bir şey çıkmayabilir."
+  },
+  "error": {
+    "quota_exceeded": "Bugünkü Keşfet aramalarının sınırına ulaştın. Sınır gece yarısı (UTC) sıfırlanır.",
+    "recommendations_disabled": "Keşfet bakım için durduruldu. Lütfen daha sonra tekrar dene.",
+    "not_authenticated": "Önerileri görmek için yeniden giriş yap.",
+    "generic": "Öneriler yüklenemedi. Bağlantını kontrol edip tekrar dene.",
+    "offline": "Çevrimdışısın. Keşfet'in yakındaki yerleri araması için bağlantı gerekiyor.",
+    "retry": "Tekrar dene"
+  },
+  "empty": {
+    "title": "Burada eşleşen bir yer yok",
+    "body": "Başka bir ilgi alanı seç ya da farklı bir günün çevresinde ara."
+  },
+  "pickInterests": {
+    "title": "Neleri seversin?",
+    "body": "Yukarıdan bir ya da birkaç ilgi alanı seç, gezinin yakınındaki yerleri bulalım."
+  },
+  "noCenter": {
+    "title": "Nerede arayalım?",
+    "body": "Bu gezide henüz yer yok. Bir yer ekle ya da şu an bulunduğun yerin çevresinde ara.",
+    "useLocation": "Konumumu kullan"
+  },
+  "detail": {
+    "sheetA11y": "Yer ayrıntıları",
+    "resolving": "Bu yer Google'da aranıyor…",
+    "rating": "{{rating}} / 5",
+    "ratingCount_one": "({{count}} yorum)",
+    "ratingCount_other": "({{count}} yorum)",
+    "ratingA11y": "Google'da 5 üzerinden {{rating}} puan",
+    "noRating": "Henüz Google puanı yok",
+    "reviewsTitle": "Google yorumları",
+    "reviewA11y": "{{name}} yorumu, 5 üzerinden {{rating}}",
+    "detailsError": "Google puanı yüklenemedi. Yeri yine de ekleyebilirsin.",
+    "openInMaps": "Google Haritalar'da aç",
+    "openInMapsA11y": "{{name}} yerini Google Haritalar'da aç (tarayıcıda açılır)",
+    "addTo": "Nereye eklensin",
+    "ideas": "Fikirler",
+    "day": "{{n}}. gün",
+    "add": "Geziye ekle",
+    "addedIdeas": "Fikirler'e eklendi",
+    "addedDay": "{{n}}. güne eklendi",
+    "movedToIdeas": "Fikirler'e eklendi. {{n}}. güne taşıyamadık, plan ekranından taşıyabilirsin.",
+    "matchedAs": "Google Haritalar'dan “{{name}}” olarak kaydedildi",
+    "viewOnly": "Bu geziyi görüntüleyebilirsin, ama yer eklemek yalnızca düzenleyicilere açık.",
+    "close": "Kapat"
+  },
+  "addError": {
+    "no_match": "Bu öneriyi haritadaki bir yerle eşleştiremedik, bu yüzden şimdilik eklenemiyor.",
+    "quota_exceeded": "Bugünkü yer aramalarını kullandın. Yarın tekrar dene.",
+    "places_unavailable": "Yer arama şu an kullanılamıyor. Bağlantını kontrol edip tekrar dene.",
+    "not_authenticated": "Yer eklemek için yeniden giriş yap.",
+    "already_in_trip": "Bu yer zaten gezinde.",
+    "create_failed": "Yer eklenemedi. Lütfen tekrar dene.",
+    "invalid_input": "Bu önerinin konumu eksik, bu yüzden eklenemiyor."
+  },
+  "quickAdd": {
+    "label": "Yakındakileri keşfet",
+    "hint": "İlgi alanına göre gezinin çevresinden fikirler"
+  },
+  "onboarding": {
+    "kicker": "İlgi alanların",
+    "title": "Gezide en çok neyi seversin?",
+    "body": "Birkaç tane seç. Keşfet, gezinin çevresinde bunlara uyan yerler önerir; seçimini Profil'den istediğin zaman değiştirebilirsin.",
+    "selected_one": "{{count}} seçildi",
+    "selected_other": "{{count}} seçildi"
+  },
+  "prefs": {
+    "section": "Seyahat tercihleri",
+    "interestsTitle": "İlgi alanları",
+    "interestsHint": "Keşfet bunlar seçili olarak açılır.",
+    "currencyTitle": "Varsayılan ana para birimi",
+    "currencyHint": "Yeni geziler bu para birimiyle başlar. Her gezi yine kendi para birimini kullanabilir.",
+    "currencyNone": "Seçilmedi",
+    "currencyGroupA11y": "Varsayılan ana para birimi",
+    "currencyMore": "Diğer…",
+    "currencySearch": "Para birimi kodu ara",
+    "currencySearchA11y": "Para birimi kodu ara, örneğin CHF",
+    "currencyNoMatch": "“{{query}}” ile eşleşen para birimi yok",
+    "languageSynced": "Dil seçimin hesabına da kaydedilir, böylece yeni bir telefon da bu dilde açılır.",
+    "saveError": "Tercihlerin kaydedilemedi. Bağlantını kontrol edip tekrar dene.",
+    "loading": "Tercihlerin yükleniyor"
+  }
+}

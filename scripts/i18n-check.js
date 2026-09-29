@@ -67,6 +67,34 @@ const MIGRATED = [
   'src/components/trip-detail/TripHeader.tsx',
   'src/components/trip-detail/TripHero.tsx',
   'src/components/trip-detail/TripHubCards.tsx',
+  // M5 Y3.1 (memories)
+  'app/(app)/trip/[id]/memories.tsx',
+  'src/components/memories',
+  // M5 Y3.5 (sharing controls + public page)
+  'app/share',
+  'src/components/share',
+  'src/components/ShareLinkCard.tsx',
+  // M5 Y3.4 (Discover + interests)
+  'app/(app)/trip/[id]/discover.tsx',
+  'src/components/discover',
+  // M5 Y3.2 (multi-currency UI)
+  'src/components/budget/AmountKeypad.tsx',
+  'src/components/budget/BudgetCard.tsx',
+  'src/components/budget/CategoryBreakdown.tsx',
+  'src/components/budget/CurrencyPicker.tsx',
+  'src/components/budget/ExpenseEditSheet.tsx',
+  'src/components/budget/ExpenseList.tsx',
+  'src/components/budget/FxPreviewLine.tsx',
+  'src/components/budget/HomeCurrencySection.tsx',
+  'src/components/budget/MoneyBreakdown.tsx',
+  // M5 Y3.3 (per-leg modes UI)
+  'src/components/trip-detail/itinerary/DayJumpStrip.tsx',
+  'src/components/trip-detail/itinerary/DayModeControl.tsx',
+  'src/components/trip-detail/itinerary/DaySectionHeader.tsx',
+  'src/components/trip-detail/itinerary/LegModeSheet.tsx',
+  'src/components/trip-detail/itinerary/MapLegend.tsx',
+  'src/components/trip-detail/itinerary/TravelConnector.tsx',
+  'src/components/trip-detail/itinerary/useItineraryLegs.tsx',
 ];
 
 /** Scanned by `--strict` with no path arguments (Y4.3 makes this the default). */

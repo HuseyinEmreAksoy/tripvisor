@@ -154,11 +154,14 @@ function Polylines({ polylines }: { polylines: MapPolyline[] }) {
 
       // Dashed (Step 23.9 straight fallback OR P1.2 WALK connector steps):
       // the `icons` array with a dash symbol provides the stroke pattern.
-      if (line.isDashed) {
+      // M5 Y3.3: dotted (walking legs) = circles; dashed = short strokes.
+      if (line.isDashed || line.dotted) {
         const dashSymbol = {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          path: (globalThis as any).google?.maps?.SymbolPath?.CIRCLE ?? 'M 0,-1 0,1',
-          scale: 3,
+          path: line.dotted
+            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              ((globalThis as any).google?.maps?.SymbolPath?.CIRCLE ?? 'M 0,-1 0,1')
+            : 'M 0,-1 0,1',
+          scale: line.dotted ? 2 : 3,
           strokeColor: color,
           strokeOpacity: 1,
           fillColor: color,

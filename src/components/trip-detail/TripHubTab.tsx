@@ -47,6 +47,7 @@ import { AccommodationList } from '@/components/accommodation/AccommodationList'
 import { AccommodationEditSheet } from '@/components/accommodation/AccommodationEditSheet';
 import { DocumentsSection } from './DocumentsSection';
 import { HubCard, ProgressBar, ReactionCatalogSection } from './TripHubCards';
+import { DiscoverHubCard, MemoriesHubCard } from '@/components/memories/MemoriesHubCard';
 
 export type HubSection = 'budget' | 'stays' | 'docs' | 'share';
 
@@ -226,6 +227,10 @@ export function TripHubTab({
           }}
         />
       </HubCard>
+
+      {/* M5 Y3.1: memories (photos, journal, reviews) + discover (Y3.4 route) */}
+      <MemoriesHubCard tripId={tripId} />
+      <DiscoverHubCard tripId={tripId} />
 
       <HubCard
         icon="luggage"

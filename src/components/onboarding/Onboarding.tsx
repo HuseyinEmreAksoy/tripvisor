@@ -7,6 +7,11 @@
  * the intro can never trap anyone.
  *
  * Art reuses the bundled brand illustrations (assets/images/empty-*.png).
+ *
+ * M5 Y3.4: a 4th card lets the visitor pick interests (Discover's starting
+ * chips). Picks wait in local storage until the account exists
+ * (src/components/discover/pendingInterests.ts). Its copy lives in
+ * `discover:onboarding.*`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -25,17 +30,21 @@ import { Screen } from '@/components/Screen';
 import { useTheme } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useT } from '@/i18n';
+import { InterestChips } from '@/components/discover/InterestChips';
+import { savePendingInterests } from '@/components/discover/pendingInterests';
+import type { Interest } from '@/components/discover/discoverModel';
 
 export interface OnboardingCard {
-  key: 'ai' | 'route' | 'offline';
+  key: 'ai' | 'route' | 'offline' | 'interests';
   art: number;
 }
 
-/** Copy lives in `onboarding:cards.<key>.{kicker,title,body}` (en + tr). */
+/** Copy lives in `onboarding:cards.<key>.{kicker,title,body}` (en + tr); the interests card uses `discover:onboarding.*`. */
 export const ONBOARDING_CARDS: readonly OnboardingCard[] = [
   { key: 'ai', art: require('../../../assets/images/empty-search.png') },
   { key: 'route', art: require('../../../assets/images/empty-places.png') },
   { key: 'offline', art: require('../../../assets/images/empty-trips.png') },
+  { key: 'interests', art: require('../../../assets/images/onboarding-interests.png') },
 ];
 
 export type OnboardingExit = 'signup' | 'login';
@@ -46,9 +55,19 @@ export interface OnboardingProps {
 
 export function Onboarding({ onFinish }: OnboardingProps) {
   const t = useTheme();
-  const { t: tx } = useT(['onboarding', 'common']);
+  const { t: tx } = useT(['onboarding', 'common', 'discover']);
   const total = ONBOARDING_CARDS.length;
-  const kicker = (card: OnboardingCard) => tx(`cards.${card.key}.kicker`);
+  const kicker = (card: OnboardingCard) =>
+    card.key === 'interests' ? tx('discover:onboarding.kicker') : tx(`cards.${card.key}.kicker`);
+  const title = (card: OnboardingCard) =>
+    card.key === 'interests' ? tx('discover:onboarding.title') : tx(`cards.${card.key}.title`);
+  const body = (card: OnboardingCard) =>
+    card.key === 'interests' ? tx('discover:onboarding.body') : tx(`cards.${card.key}.body`);
+  const [interests, setInterests] = useState<Interest[]>([]);
+  const onInterests = (next: Interest[]) => {
+    setInterests(next);
+    void savePendingInterests(next);
+  };
   const reducedMotion = useReducedMotion();
   const scrollRef = useRef<ScrollView | null>(null);
   const [width, setWidth] = useState(0);
@@ -156,7 +175,7 @@ export function Onboarding({ onFinish }: OnboardingProps) {
                 <View style={[styles.inner, { gap: t.spacing.md }]}>
                   <Image
                     source={card.art}
-                    style={styles.art}
+                    style={card.key === 'interests' ? styles.artSmall : styles.art}
                     contentFit="contain"
                     accessibilityElementsHidden
                     importantForAccessibility="no"
@@ -170,11 +189,21 @@ export function Onboarding({ onFinish }: OnboardingProps) {
                     accessibilityRole="header"
                     aria-level={1}
                   >
-                    {tx(`cards.${card.key}.title`)}
+                    {title(card)}
                   </Text>
                   <Text style={[t.typography.body, styles.center, { color: t.colors.textMuted }]}>
-                    {tx(`cards.${card.key}.body`)}
+                    {body(card)}
                   </Text>
+                  {card.key === 'interests' ? (
+                    <View style={{ gap: t.spacing.sm, alignItems: 'center' }}>
+                      <InterestChips value={interests} onChange={onInterests} centered />
+                      {interests.length > 0 ? (
+                        <Text style={[t.typography.small, { color: t.colors.textMuted }]} accessibilityLiveRegion="polite">
+                          {tx('discover:onboarding.selected', { count: interests.length })}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               </View>
             ))}
@@ -237,6 +266,7 @@ const styles = StyleSheet.create({
   page: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   inner: { width: '100%', maxWidth: 480, alignItems: 'center' },
   art: { width: '100%', maxWidth: 360, aspectRatio: 4 / 3 },
+  artSmall: { width: '100%', maxWidth: 220, aspectRatio: 4 / 3 },
   center: { textAlign: 'center' },
   footer: { width: '100%', maxWidth: 520, alignSelf: 'center' },
   dots: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },

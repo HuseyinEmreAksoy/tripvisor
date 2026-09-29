@@ -11,10 +11,10 @@
  * The DB currency CHECK constraint (migration 0005) limits choices to
  * USD, EUR, GBP, TRY, JPY — all five are offered (Y3.2 widens the list).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
-import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Controller, useForm } from 'react-hook-form';
@@ -30,17 +30,20 @@ import {
 } from '@/components';
 import { DateField } from '@/components/DateField';
 import { TransportModeRadio } from '@/components/ai-plan/TransportModeRadio';
-import { useCreateTrip, useUpdateTrip } from '@/api';
+import { useCreateTrip } from '@/api';
+import { useUserPreferences } from '@/api/preferences';
 import type { TripCurrency } from '@/api/types';
 import { surfaceStyle, useTheme } from '@/theme';
 import { useT } from '@/i18n';
 import { haptics } from '@/lib/haptics';
+import { normalizeCurrency } from '@/lib/money';
+import { CurrencyPicker, useCurrencyName } from '@/components/budget/CurrencyPicker';
+import { suggestedCurrencies } from '@/components/budget/currencies';
 
 const BANNER_ART = require('../../../assets/images/cover-7.jpg');
 
-// DB currency CHECK constraint limits choices to exactly these five values.
-// If the constraint widens in a future migration, update this list + TripCurrency
-// union in lockstep. Phase 25 Step 25.11.
+// M5 Y3.2: any ISO 4217 code (DB CHECK ^[A-Z]{3}$). These are always offered
+// as chips next to the preferred / detected one; "More…" searches the rest.
 const CURRENCY_OPTIONS = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'] as const satisfies readonly TripCurrency[];
 
 const CURRENCY_NAME_KEYS = {
@@ -94,8 +97,8 @@ const Schema = z
     daily_hours_budget: z.number().positive('hoursRange').max(24, 'hoursRange'),
     // Phase 23: bicycling added to match trips_transport_mode_check constraint.
     transport_mode: z.enum(['driving', 'walking', 'bicycling', 'transit']),
-    // Phase 25 Step 25.11: currency picker.
-    currency: z.enum(['USD', 'EUR', 'GBP', 'TRY', 'JPY']),
+    // M5 Y3.2: any ISO 4217 code (was a 5-code enum).
+    currency: z.string().regex(/^[A-Z]{3}$/),
   })
   .refine(
     (v) => !v.start_date || !v.end_date || v.start_date <= v.end_date,
@@ -119,17 +122,20 @@ export default function NewTrip() {
   const router = useRouter();
   const goBack = useSafeBack('/trips');
   const createTrip = useCreateTrip();
-  // Phase 25 Step 25.11: after creation, patch currency if not the DB default.
-  // useUpdateTrip must be called unconditionally at the top level; we use 'noop'
-  // as the placeholder id and only call .mutateAsync when we have a real id.
-  const [pendingCurrencyPatch, setPendingCurrencyPatch] = useState<{ tripId: string; currency: TripCurrency } | null>(null);
-  const updateCurrency = useUpdateTrip(pendingCurrencyPatch?.tripId ?? 'noop');
+  // M5 Y3.2: the home currency defaults to the Profile preference
+  // (user_preferences.home_currency), else a device-locale guess.
+  const prefs = useUserPreferences();
+  const preferredCurrency = normalizeCurrency(prefs.data?.home_currency);
+  const detectedCurrency = useMemo(() => detectDefaultCurrency(), []);
+  const currencyTouched = useRef(false);
+  const currencyName = useCurrencyName();
 
   const {
     control,
     handleSubmit,
     formState: { errors },
     setError,
+    setValue,
     watch,
   } = useForm<FormValues>({
     defaultValues: {
@@ -138,7 +144,7 @@ export default function NewTrip() {
       end_date: null,
       daily_hours_budget: 8,
       transport_mode: 'driving' as const,
-      currency: detectDefaultCurrency(),
+      currency: preferredCurrency ?? detectedCurrency,
     },
     mode: 'onBlur',
   });
@@ -154,25 +160,26 @@ export default function NewTrip() {
     return key ? tx(key) : message;
   };
 
-  // Phase 25 Step 25.11: fire currency patch once we have a real trip id.
-  // This useEffect runs after the state update that sets pendingCurrencyPatch,
-  // at which point updateCurrency is now bound to the correct tripId.
-  //
-  // F3 fix: navigation happens HERE, after the patch is dispatched. Calling
-  // router.replace in onSubmit unmounted this screen in the same commit as
-  // the state update, so this effect never ran and the trip stayed USD. The
-  // mutation itself outlives the unmount (TanStack runs mutationFn to the
-  // end). Interim until createTripSchema accepts `currency` (backend).
+  // Preferences can load after the first render: adopt the preferred home
+  // currency unless the user already picked one.
   useEffect(() => {
-    if (!pendingCurrencyPatch) return;
-    updateCurrency.mutate({ currency: pendingCurrencyPatch.currency });
-    setPendingCurrencyPatch(null);
-    router.replace(`/trip/${pendingCurrencyPatch.tripId}`);
-    // updateCurrency reference changes each render — intentionally omitted from
-    // deps to avoid infinite loop. The effect only fires when pendingCurrencyPatch
-    // becomes non-null, which only happens once after trip creation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingCurrencyPatch]);
+    if (preferredCurrency && !currencyTouched.current) setValue('currency', preferredCurrency);
+  }, [preferredCurrency, setValue]);
+
+  const currencySuggestions = useMemo(
+    () =>
+      suggestedCurrencies({
+        home: preferredCurrency ?? detectedCurrency,
+        recent: [detectedCurrency],
+        extra: CURRENCY_OPTIONS,
+        selected: currentCurrency,
+        max: 6,
+      }),
+    [preferredCurrency, detectedCurrency, currentCurrency],
+  );
+  // The five legacy codes keep their trip-namespace names; others use money:currencyNames.
+  const nameOf = (code: string): string =>
+    code in CURRENCY_NAME_KEYS ? tx(CURRENCY_NAME_KEYS[code as keyof typeof CURRENCY_NAME_KEYS]) : currencyName(code);
 
   const onSubmit = async (values: FormValues) => {
     const parsed = Schema.safeParse(values);
@@ -190,15 +197,9 @@ export default function NewTrip() {
         daily_hours_budget: parsed.data.daily_hours_budget,
         transport_mode: parsed.data.transport_mode,
         timezone: detectedTz,
+        // M5 Y3.2: created with its home currency in one write (was a follow-up patch).
+        currency: parsed.data.currency,
       });
-      // Patch currency if it differs from the DB default ('USD').
-      if (parsed.data.currency !== 'USD') {
-        // The hook is bound to `pendingCurrencyPatch?.tripId ?? 'noop'`, which
-        // hasn't updated yet — the effect above fires the patch and THEN
-        // navigates (navigating here would unmount before the effect runs).
-        setPendingCurrencyPatch({ tripId: trip.id, currency: parsed.data.currency });
-        return;
-      }
       router.replace(`/trip/${trip.id}`);
     } catch {
       haptics.error();
@@ -343,60 +344,19 @@ export default function NewTrip() {
             <Controller
               control={control}
               name="currency"
-              render={({ field: { onChange } }) => (
-                <View style={{ gap: t.spacing.sm }}>
-                  <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>
-                    {tx('new.fields.currency')}
-                  </Text>
-                  <View
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={tx('new.fields.currency')}
-                    style={{ flexDirection: 'row', flexWrap: 'wrap', gap: t.spacing.sm }}
-                  >
-                    {CURRENCY_OPTIONS.map((code) => {
-                      const active = code === currentCurrency;
-                      return (
-                        <Pressable
-                          key={code}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected: active, checked: active }}
-                          accessibilityLabel={tx('new.currencyA11y', { code, name: tx(CURRENCY_NAME_KEYS[code]) })}
-                          onPress={() => {
-                            haptics.select();
-                            onChange(code);
-                          }}
-                          style={({ pressed }) => [
-                            styles.currencyChip,
-                            {
-                              paddingHorizontal: t.spacing.md,
-                              borderWidth: active ? 2 : StyleSheet.hairlineWidth * 2,
-                              borderColor: active ? t.colors.primary : t.colors.border,
-                              borderRadius: t.radius.pill,
-                              backgroundColor: active ? t.colors.gradientSubtle : t.colors.cardBgSolid,
-                            },
-                            pressed && { backgroundColor: t.colors.bgMuted },
-                            Platform.OS === 'web' && ({
-                              transition: 'background-color 0.15s ease, border-color 0.15s ease',
-                              cursor: 'pointer',
-                            } as ViewStyle),
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              t.typography.caption,
-                              {
-                                color: active ? t.colors.primaryInk : t.colors.text,
-                                fontWeight: active ? '700' : '500',
-                              },
-                            ]}
-                          >
-                            {code}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
+              render={({ field: { onChange, value } }) => (
+                <CurrencyPicker
+                  label={tx('new.fields.currency')}
+                  showLabel
+                  value={value}
+                  suggestions={currencySuggestions}
+                  nameOf={nameOf}
+                  optionA11y={(code, name) => tx('new.currencyA11y', { code, name })}
+                  onChange={(code) => {
+                    currencyTouched.current = true;
+                    onChange(code);
+                  }}
+                />
               )}
             />
 
@@ -430,5 +390,4 @@ const styles = StyleSheet.create({
   // Start/end side by side once the column is wide enough (≥ ~520 px).
   dateRow: { flexDirection: 'row', flexWrap: 'wrap' },
   dateCell: { flexGrow: 1, flexBasis: 240 },
-  currencyChip: { minHeight: 40, justifyContent: 'center' },
 });

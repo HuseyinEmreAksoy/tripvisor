@@ -71,6 +71,11 @@
  *    get the next stop's coordinates for the transit directions link.
  *  - The drag / manual_rank commit path below is unchanged; haptics fire in
  *    DraggableItinerary on pickup and drop.
+ *
+ * M5 Y3.3 (per-leg modes): leg chips between stops, the day default-mode
+ * chip, the kept-order note and the leg-mode sheet come from
+ * itinerary/useItineraryLegs; this tab only mounts them. Writes touch only
+ * arrival_mode/arrival_minutes (Tier-1) and trip_days.transport_mode.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
@@ -143,6 +148,9 @@ import {
   useDayNavigation,
   type ActiveDayStore,
 } from './itinerary/useDayNavigation';
+import { KeptOrderNote } from './itinerary/DayModeControl';
+import { useItineraryLegs } from './itinerary/useItineraryLegs';
+import { useT } from '@/i18n';
 
 // v2 N4 4.2: a day advertises gap-fill only when ≥1h of budget is left —
 // below that, suggestions would mostly be unusable (server floor is 30m).
@@ -311,6 +319,18 @@ export function ItineraryTab({
   );
   // v2 N4 4.2: the Ideas bucket feeds GapFillSheet's "Ideas first" list.
   const ideas = useMemo(() => places.filter((p) => p.day_index === null), [places]);
+
+  // M5 Y3.3: per-leg modes — leg chips, day default mode, kept-order note
+  // and the leg-mode sheet (all logic in itinerary/useItineraryLegs).
+  const { t: tx } = useT(['trip', 'routes']);
+  const itineraryLegs = useItineraryLegs({
+    trip,
+    places,
+    dayRecords: dayNotesIndex,
+    canEdit,
+    online,
+    untitled: tx('trip:row.untitled'),
+  });
 
   const legIndex = useMemo(() => {
     const m = new Map<string, TripLeg>();
@@ -556,6 +576,7 @@ export function ItineraryTab({
           paddingBottom: (compact ? t.spacing.md : t.spacing.lg) + bottomInset,
         }}
       >
+        {itineraryLegs.banner}
         {byDay.map((section) => {
           // v2 N4 4.2: spare time vs the daily budget (scheduled days only).
           const slack = canEdit ? slackForDay(section) : null;
@@ -572,7 +593,7 @@ export function ItineraryTab({
           >
             <DaySectionHeader
               dayIndex={section.dayIndex}
-              title={section.dayIndex < 0 ? '💡 Ideas' : `Day ${section.dayIndex + 1}`}
+              title={section.dayIndex < 0 ? '💡 Ideas' : tx('trip:dayLabel', { day: section.dayIndex + 1 })}
               dateLabel={chip?.dateLabel ?? null}
               isToday={chip?.isToday ?? false}
               collapsed={collapsed}
@@ -628,10 +649,16 @@ export function ItineraryTab({
                   canEdit={canEdit}
                 />
               ) : null}
+              {/* M5 Y3.3: the day's default leg mode */}
+              {itineraryLegs.dayModeControl(section.dayIndex)}
             </DaySectionHeader>
 
             {collapsed ? null : (
             <>
+            {/* M5 Y3.3: optimizer kept this day's order (flight/ferry leg) */}
+            {itineraryLegs.keptReason(section.dayIndex) ? (
+              <KeptOrderNote reason={itineraryLegs.keptReason(section.dayIndex)!} />
+            ) : null}
             {/* ── Per-day summary strip (Step 8.4) — only for scheduled days */}
             {section.dayIndex >= 0 ? (
               <DaySummaryCard
@@ -672,6 +699,8 @@ export function ItineraryTab({
                           legAfter={leg}
                           hasNext={Boolean(next)}
                           transportMode={trip.transport_mode}
+                          // M5 Y3.3: leg chip → leg-mode sheet (null on Ideas).
+                          legChip={itineraryLegs.legChipFor(section.dayIndex, place, next, leg)}
                           onOpenDetails={() => openPlace(place)}
                           // v2 M4 X2.3: the full-card target carries the
                           // drag long-press (see DraggableRowGesture).
@@ -881,6 +910,8 @@ export function ItineraryTab({
         tripId={tripId}
         tripOwnerId={trip.user_id}
       />
+      {/* M5 Y3.3: one leg-mode sheet for the whole list (editors only) */}
+      {itineraryLegs.sheet}
       </>
 
       {/* v2 N4: AI edit / import / gap-fill sheets (editors only) — slot 1,

@@ -114,13 +114,15 @@ function NativeMap(props: MapViewProps) {
 
           // Dashed: transit straight-line fallback (Step 23.9) or WALK
           // connector steps of a multi-leg transit route (P1.2).
+          // M5 Y3.3: dotted = walking legs (round caps turn [1, 8] into dots).
           return (
             <Polyline
               key={line.id}
               coordinates={coordinates}
               strokeColor={polylineColor(line)}
-              strokeWidth={line.isDashed ? 3 : 4}
-              lineDashPattern={line.isDashed ? [6, 6] : undefined}
+              strokeWidth={line.dotted ? 4 : line.isDashed ? 3 : 4}
+              lineCap={line.dotted ? 'round' : undefined}
+              lineDashPattern={line.dotted ? [1, 8] : line.isDashed ? [6, 6] : undefined}
               geodesic={isStraight}
             />
           );

@@ -6,6 +6,7 @@
  *   Paste a list    → ImportPlacesSheet (pasted list / Takeout CSV → Ideas)
  *   Ask AI          → AiEditSheet (instruction → reviewable diff → apply)
  *   Add expense     → ExpenseEditSheet (new expense)
+ *   Discover nearby → /trip/[id]/discover (M5 Y3.4)
  *
  * Only mounted for editors (the route gates it on `canEditTrip`).
  *
@@ -14,12 +15,14 @@
  * animation there; Android and web switch immediately.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomSheet, Heading, Icon, type IconName } from '@/components';
 import { AiEditSheet, ImportPlacesSheet } from '@/components/ai-edit';
 import { ExpenseEditSheet } from '@/components/budget/ExpenseEditSheet';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
+import { useT } from '@/i18n';
 import type { RouteRenderMode, TripCurrency, TripPlace } from '@/api';
 import { IOS_MODAL_HANDOFF_MS } from './modalHandoff';
 
@@ -50,6 +53,8 @@ export function QuickAddSheet({
   onSearch,
 }: QuickAddSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT(['discover']);
+  const router = useRouter();
   const [sub, setSub] = useState<SubSheet | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -102,6 +107,17 @@ export function QuickAddSheet({
       label: 'Add expense',
       hint: 'Log what you spent, by category',
       run: () => openSub('expense'),
+    },
+    {
+      key: 'discover',
+      icon: 'compass',
+      label: tx('quickAdd.label'),
+      hint: tx('quickAdd.hint'),
+      run: () => {
+        haptics.tap();
+        onClose();
+        router.push(`/trip/${tripId}/discover`);
+      },
     },
   ];
 

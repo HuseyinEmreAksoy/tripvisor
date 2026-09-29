@@ -7,23 +7,29 @@
  * Layout
  *   Phone/tablet: top bar (brand · Share) → hero (title, dates, stats) →
  *   day tabs (Overview / Day 1…) → map for the selected day → timeline →
- *   "Powered by Google" → "Plan your own trip" CTA.
- *   Desktop (≥1024): scrolling itinerary column on the left, full-height map
- *   on the right.
+ *   "Powered by Google" → memories → expense summary → "Plan your own trip".
+ *   Desktop (≥1024): scrolling column on the left, full-height map on the
+ *   right (a single centred column when the itinerary is hidden).
+ *
+ * Sections (share-trip contract v3+, M5 Y3.5): each renders ONLY when its
+ * key is in the payload. `sections.itinerary === false` → "hidden by the
+ * owner" instead of the plan; `expenses` / `memories` appear only when the
+ * owner turned them on. A v2 payload (no `sections`) shows the itinerary.
+ * A rate-limited read (`rate_limited` / `rate_limit_unavailable`) gets a
+ * "try again later" state, never an automatic retry.
  *
  * Google ToS: `useSharedTrip` returns only Tier-1 trip fields (user titles,
- * lat/lng, day assignment, durations, user notes, cached legs). No reviews,
- * photos, ratings or hours are fetched, nothing is persisted, and
- * `google_place_id` is never rendered. "Powered by Google" is shown whenever
- * place data renders.
+ * lat/lng, day assignment, durations, cached legs) plus user content (the
+ * owner's memories). No Google reviews, photos, ratings or hours are
+ * fetched, nothing is persisted, and `google_place_id` is never rendered.
+ * "Powered by Google" is shown whenever place data renders.
  *
  * OG/Twitter meta: <SharedTripHead> (web only), mounted once data loads.
  */
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Button } from '@/components/Button';
-import { EmptyState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { Screen } from '@/components/Screen';
@@ -33,6 +39,10 @@ import { buildAppUrl, useShareAction } from '@/components/share';
 import { SharedDayTabs } from '@/components/share/SharedDayTabs';
 import { SharedTimeline } from '@/components/share/SharedTimeline';
 import { SharedTripHead } from '@/components/share/SharedTripHead';
+import { SharedExpensesSection } from '@/components/share/SharedExpensesSection';
+import { SharedMemoriesSection } from '@/components/share/SharedMemoriesSection';
+import { isShareBusyError } from '@/components/share/SharedPhotoLightbox';
+import { ItineraryHiddenCard, SharedTripSkeleton, SharedTripStatus } from '@/components/share/SharedPageStates';
 import {
   buildDayTabs,
   formatTripRange,
@@ -41,65 +51,34 @@ import {
   tripDayCount,
   type DayKey,
 } from '@/components/share/sharedTripModel';
+import { transportKey } from '@/components/transportModes';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTheme } from '@/theme';
-import { useSharedTrip } from '@/api/share';
-import type { SharedTrip } from '@/api/types';
+import { formatDuration, useAppLocale, useT } from '@/i18n';
+import { useSharedTrip, type SharedTripPayload } from '@/api/share';
 
 const COLUMN_MAX_WIDTH = 720;
 const DESKTOP_LIST_WIDTH = 520;
 
 export default function SharedTripView() {
   const { token } = useLocalSearchParams<{ token: string }>();
-  const t = useTheme();
   const router = useRouter();
   // The only way forward from a public page is into the app. /login bounces
   // already-signed-in visitors on to /trips via the (auth) layout.
   const goPlan = () => router.push('/login');
-  const { data: shared, isLoading, isError, refetch } = useSharedTrip(token ?? '');
+  const { data: shared, isLoading, isError, error, refetch } = useSharedTrip(token ?? '');
 
-  if (isLoading) {
-    return (
-      <Screen>
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={t.colors.primary} accessibilityLabel="Loading trip" />
-          <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.md }]}>Loading trip…</Text>
-        </View>
-      </Screen>
-    );
-  }
+  if (isLoading) return <SharedTripSkeleton />;
 
   // No <SharedTripHead> in error states — fall back to the baseline tags
   // rather than advertising a deleted or invalid trip.
   if (isError) {
     return (
-      <Screen>
-        <View style={styles.centered}>
-          <EmptyState
-            title="Couldn't load this trip"
-            body="Check your connection and try again."
-            ctaLabel="Try again"
-            onPress={() => void refetch()}
-          />
-        </View>
-      </Screen>
+      <SharedTripStatus kind={isShareBusyError(error) ? 'busy' : 'error'} onRetry={() => void refetch()} onPlanOwn={goPlan} />
     );
   }
 
-  if (!shared) {
-    return (
-      <Screen>
-        <View style={styles.centered}>
-          <EmptyState
-            title="Link not found"
-            body="This trip has been deleted or the share link was revoked."
-            ctaLabel="Plan your own trip"
-            onPress={goPlan}
-          />
-        </View>
-      </Screen>
-    );
-  }
+  if (!shared) return <SharedTripStatus kind="notFound" onRetry={() => void refetch()} onPlanOwn={goPlan} />;
 
   const shareUrl = buildAppUrl(`share/${token ?? ''}`);
   return (
@@ -109,31 +88,39 @@ export default function SharedTripView() {
         places={shared.places}
         url={shareUrl.usingDeepLink ? undefined : shareUrl.url}
       />
-      <SharedTripContent shared={shared} shareUrl={shareUrl.url} onPlanOwn={goPlan} />
+      <SharedTripContent shared={shared} token={token ?? ''} shareUrl={shareUrl.url} onPlanOwn={goPlan} />
     </>
   );
 }
 
 function SharedTripContent({
   shared,
+  token,
   shareUrl,
   onPlanOwn,
 }: {
-  shared: SharedTrip;
+  shared: SharedTripPayload;
+  token: string;
   shareUrl: string;
   onPlanOwn: () => void;
 }) {
   const t = useTheme();
-  const isDesktop = useBreakpoint() === 'desktop';
+  const { t: tx } = useT(['share', 'trip']);
+  const { language } = useAppLocale();
   const { trip, places, legs } = shared;
+  // v2 payloads have no `sections`: the itinerary is always on there.
+  const itineraryHidden = shared.sections ? !shared.sections.itinerary : false;
+  const isDesktop = useBreakpoint() === 'desktop';
+  const splitLayout = isDesktop && !itineraryHidden;
   const [selected, setSelected] = useState<DayKey>('all');
   const { share, feedback } = useShareAction();
 
   const sections = useMemo(() => groupByDay(places), [places]);
-  const tabs = useMemo(() => buildDayTabs(trip.start_date, sections), [trip.start_date, sections]);
+  const tabs = useMemo(() => buildDayTabs(trip.start_date, sections, language), [trip.start_date, sections, language]);
   const legIndex = useMemo(() => indexLegs(legs), [legs]);
   const visibleSections = selected === 'all' ? sections : sections.filter((s) => s.dayIndex === selected);
   const dayCount = tripDayCount(trip, sections);
+  const placeFallback = tx('share:timeline.place');
 
   const markers: MapMarker[] = useMemo(
     () =>
@@ -143,11 +130,11 @@ function SharedTripContent({
           id: p.id,
           lat: p.lat,
           lng: p.lng,
-          title: p.user_title ?? 'Place',
+          title: p.user_title ?? placeFallback,
           dayIndex: p.day_index,
           orderInDay: p.order_in_day,
         })),
-    [places, selected],
+    [places, selected, placeFallback],
   );
   const polylines: MapPolyline[] = useMemo(() => {
     // Defense in depth (the server already drops them): never draw a leg to
@@ -159,36 +146,43 @@ function SharedTripContent({
       .map((l) => ({ id: l.id, dayIndex: l.day_index, points: decodePolyline(l.polyline!) }));
   }, [legs, places, selected]);
 
-  const title = trip.title || 'Untitled trip';
+  const title = trip.title || tx('share:page.untitled');
   const onShare = () =>
-    void share({ url: shareUrl, title: `${title} · Tripvisor`, message: `Take a look at ${title} on Tripvisor.` });
+    void share({
+      url: shareUrl,
+      title: tx('share:link.shareTitle', { title }),
+      message: tx('share:page.shareMessage', { title }),
+    });
 
   // Keyed by the selected tab so the map re-fits to that day's stops.
   const map = (
     <View
       style={[
-        isDesktop ? styles.desktopMap : styles.phoneMap,
-        !isDesktop && { marginHorizontal: t.spacing.lg, borderRadius: t.radius.xl, overflow: 'hidden' },
+        splitLayout ? styles.desktopMap : styles.phoneMap,
+        !splitLayout && { marginHorizontal: t.spacing.lg, borderRadius: t.radius.xl, overflow: 'hidden' },
       ]}
-      accessibilityLabel={selected === 'all' ? 'Map of the whole trip' : `Map of day ${Number(selected) + 1}`}
+      accessibilityLabel={selected === 'all' ? tx('share:page.mapAll') : tx('share:page.mapDay', { day: Number(selected) + 1 })}
     >
       <TripMap key={String(selected)} markers={markers} polylines={polylines} />
       {places.length === 0 ? (
-        <MapEmptyOverlay
-          title="No stops on this trip yet"
-          body="The route will appear here once places are added."
-        />
+        <MapEmptyOverlay title={tx('share:page.mapEmptyTitle')} body={tx('share:page.mapEmptyBody')} />
       ) : null}
     </View>
   );
 
+  const stats = [
+    dayCount > 0 ? tx('share:page.days', { count: dayCount }) : null,
+    itineraryHidden ? null : tx('share:page.stops', { count: places.length }),
+    trip.daily_hours_budget > 0
+      ? tx('share:page.hoursPerDay', { hours: formatDuration(trip.daily_hours_budget * 60, language) })
+      : null,
+    tx(`trip:${transportKey(trip.transport_mode)}`),
+  ].filter((s): s is string => Boolean(s));
+
   const list = (
     <ScrollView
       style={{ flex: 1, backgroundColor: t.colors.bg }}
-      contentContainerStyle={[
-        { paddingBottom: t.spacing.huge, gap: t.spacing.lg },
-        !isDesktop && styles.column,
-      ]}
+      contentContainerStyle={[{ paddingBottom: t.spacing.huge, gap: t.spacing.lg }, !splitLayout && styles.column]}
     >
       <TopBar onShare={onShare} onPlanOwn={onPlanOwn} showPlan={isDesktop} />
       {feedback ? (
@@ -202,28 +196,44 @@ function SharedTripContent({
 
       {/* Hero */}
       <View style={{ paddingHorizontal: t.spacing.lg, gap: t.spacing.sm }}>
-        <Text style={[t.typography.overline, { color: t.colors.primary }]}>Shared itinerary · read-only</Text>
+        <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>{tx('share:page.overline')}</Text>
         <Text style={[t.typography.display, { color: t.colors.text }]} accessibilityRole="header" aria-level={1}>
           {title}
         </Text>
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{formatTripRange(trip.start_date, trip.end_date)}</Text>
+        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+          {formatTripRange(trip.start_date, trip.end_date, language)}
+        </Text>
         <View style={[styles.statRow, { gap: t.spacing.sm }]}>
-          <Stat label={`${dayCount} day${dayCount === 1 ? '' : 's'}`} />
-          <Stat label={`${places.length} stop${places.length === 1 ? '' : 's'}`} />
-          <Stat label={`${trip.daily_hours_budget}h / day`} />
-          <Stat label={capitalize(trip.transport_mode)} />
+          {stats.map((label) => (
+            <Stat key={label} label={label} />
+          ))}
         </View>
       </View>
 
-      {sections.length > 0 ? <SharedDayTabs tabs={tabs} selected={selected} onSelect={setSelected} /> : null}
+      {itineraryHidden ? (
+        <ItineraryHiddenCard />
+      ) : (
+        <>
+          {sections.length > 0 ? <SharedDayTabs tabs={tabs} selected={selected} onSelect={setSelected} /> : null}
+          {!splitLayout && places.length > 0 ? map : null}
+          <View style={{ paddingHorizontal: t.spacing.lg }}>
+            <SharedTimeline sections={visibleSections} startDate={trip.start_date} legIndex={legIndex} />
+          </View>
+          {places.length > 0 ? <PoweredByGoogle /> : null}
+        </>
+      )}
 
-      {!isDesktop && places.length > 0 ? map : null}
+      {shared.memories ? (
+        <View style={{ paddingHorizontal: t.spacing.lg }}>
+          <SharedMemoriesSection token={token} memories={shared.memories} startDate={trip.start_date} />
+        </View>
+      ) : null}
 
-      <View style={{ paddingHorizontal: t.spacing.lg }}>
-        <SharedTimeline sections={visibleSections} startDate={trip.start_date} legIndex={legIndex} />
-      </View>
-
-      {places.length > 0 ? <PoweredByGoogle /> : null}
+      {shared.expenses ? (
+        <View style={{ paddingHorizontal: t.spacing.lg }}>
+          <SharedExpensesSection summary={shared.expenses} />
+        </View>
+      ) : null}
 
       {/* CTA — public viewers otherwise have nowhere to go */}
       <View
@@ -236,17 +246,13 @@ function SharedTripContent({
           alignItems: 'center',
         }}
       >
-        <Text style={[t.typography.subtitle, { color: t.colors.text, textAlign: 'center' }]}>
-          Like this itinerary?
-        </Text>
-        <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-          Build your own day-by-day route in minutes with Tripvisor.
-        </Text>
+        <Text style={[t.typography.subtitle, { color: t.colors.text, textAlign: 'center' }]}>{tx('share:page.ctaTitle')}</Text>
+        <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>{tx('share:page.ctaBody')}</Text>
         <Button
-          label="Plan your own trip"
+          label={tx('share:page.planOwn')}
           fullWidth={false}
           onPress={onPlanOwn}
-          accessibilityLabel="Plan your own trip with Tripvisor. Opens sign in."
+          accessibilityLabel={tx('share:page.planOwnA11y')}
         />
       </View>
     </ScrollView>
@@ -254,7 +260,7 @@ function SharedTripContent({
 
   return (
     <Screen padded={false}>
-      {isDesktop ? (
+      {splitLayout ? (
         <View style={styles.desktopRow}>
           <View style={[styles.desktopList, { borderRightColor: t.colors.border }]}>{list}</View>
           {map}
@@ -268,18 +274,25 @@ function SharedTripContent({
 
 function TopBar({ onShare, onPlanOwn, showPlan }: { onShare: () => void; onPlanOwn: () => void; showPlan: boolean }) {
   const t = useTheme();
+  const { t: tx } = useT('share');
   return (
     <View style={[styles.topBar, { paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.md, gap: t.spacing.sm }]}>
-      <Text style={[t.typography.bodyStrong, { color: t.colors.primary, flex: 1 }]} accessibilityRole="header">
+      <Text style={[t.typography.bodyStrong, { color: t.colors.primaryInk, flex: 1 }]} accessibilityRole="header">
         Tripvisor
       </Text>
       {showPlan ? (
-        <Button label="Plan your own" variant="ghost" fullWidth={false} onPress={onPlanOwn} accessibilityLabel="Plan your own trip with Tripvisor" />
+        <Button
+          label={tx('page.planOwnShort')}
+          variant="ghost"
+          fullWidth={false}
+          onPress={onPlanOwn}
+          accessibilityLabel={tx('page.planOwnA11y')}
+        />
       ) : null}
       <Pressable
         onPress={onShare}
         accessibilityRole="button"
-        accessibilityLabel="Share this trip"
+        accessibilityLabel={tx('page.shareA11y')}
         hitSlop={8}
         style={({ pressed }) => [
           styles.iconBtn,
@@ -301,12 +314,7 @@ function Stat({ label }: { label: string }) {
   );
 }
 
-function capitalize(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
-
 const styles = StyleSheet.create({
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   column: { maxWidth: COLUMN_MAX_WIDTH, width: '100%', alignSelf: 'center' },
   topBar: { flexDirection: 'row', alignItems: 'center' },
   iconBtn: { width: 44, height: 44, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },

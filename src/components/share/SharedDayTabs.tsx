@@ -4,8 +4,8 @@
  * Each pill carries its day color so tabs, map pins and timeline dots match.
  */
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useTheme } from '@/theme';
-import { dayColor } from '@/components/Map';
+import { dayColor, useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import type { DayKey, DayTab } from './sharedTripModel';
 
 interface Props {
@@ -16,13 +16,14 @@ interface Props {
 
 export function SharedDayTabs({ tabs, selected, onSelect }: Props) {
   const t = useTheme();
+  const { t: tx } = useT('share');
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ gap: t.spacing.sm, paddingHorizontal: t.spacing.lg, paddingVertical: t.spacing.xs }}
       accessibilityRole="tablist"
-      accessibilityLabel="Trip days"
+      accessibilityLabel={tx('timeline.tabsA11y')}
     >
       {tabs.map((tab) => {
         const isSelected = tab.key === selected;

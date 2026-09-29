@@ -6,6 +6,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { useState, type ReactElement } from 'react';
 import { ThemeProvider } from '@/theme';
+import { i18n } from '@/i18n';
 import type { TripPlace } from '@/api';
 import { QuickAddFab, QuickAddSheet } from '../QuickAddSheet';
 
@@ -28,6 +29,8 @@ jest.mock('@/components/ai-edit', () => ({
   AiEditSheet: mockSheet('ai'),
   ImportPlacesSheet: mockSheet('import'),
 }));
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock('@/components/budget/ExpenseEditSheet', () => ({ ExpenseEditSheet: mockSheet('expense') }));
 
 function wrap(node: ReactElement) {
@@ -63,6 +66,16 @@ describe('QuickAddSheet', () => {
     fireEvent.press(getByRole('button', { name: 'Search a place' }));
     expect(onSearch).toHaveBeenCalledTimes(1);
     expect(queryByRole('button', { name: 'Search a place' })).toBeNull();
+  });
+
+  it('Discover nearby closes the menu and opens the discover route (M5 Y3.4)', () => {
+    mockPush.mockClear();
+    const label = i18n.t('discover:quickAdd.label');
+    const { getByRole, queryByRole } = wrap(<Harness onSearch={jest.fn()} />);
+    fireEvent.press(getByRole('button', { name: 'Quick add' }));
+    fireEvent.press(getByRole('button', { name: label }));
+    expect(mockPush).toHaveBeenCalledWith('/trip/trip-1/discover');
+    expect(queryByRole('button', { name: label })).toBeNull();
   });
 
   it.each([

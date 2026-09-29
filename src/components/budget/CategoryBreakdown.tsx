@@ -5,31 +5,35 @@
  * Each row has a small progress bar showing actual vs. estimated spend.
  *
  * Data comes from the `rollup.byCategory` map from `useTripExpenseRollup`.
+ * M5 Y3.2: every amount is in the trip's HOME currency (converted; rate-pending
+ * rows are excluded and shown by the BudgetCard's pending chip).
  */
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme';
-import { formatCurrency } from '@/lib/formatCurrency';
+import { formatMoney, useT } from '@/i18n';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
 import type { TripExpenseCategory } from '@/api/types';
 
-const CATEGORIES: Array<{ key: TripExpenseCategory; label: string; icon: string }> = [
-  { key: 'accommodation', label: 'Accommodation', icon: '🏨' },
-  { key: 'food', label: 'Food & Drink', icon: '🍽️' },
-  { key: 'transport', label: 'Transport', icon: '🚆' },
-  { key: 'shopping', label: 'Shopping', icon: '🛍️' },
-  { key: 'activities', label: 'Activities', icon: '🎭' },
-  { key: 'other', label: 'Other', icon: '📦' },
+const CATEGORIES: Array<{ key: TripExpenseCategory; icon: string }> = [
+  { key: 'accommodation', icon: '🏨' },
+  { key: 'food', icon: '🍽️' },
+  { key: 'transport', icon: '🚆' },
+  { key: 'shopping', icon: '🛍️' },
+  { key: 'activities', icon: '🎭' },
+  { key: 'other', icon: '📦' },
 ];
 
 export interface CategoryBreakdownProps {
   rollup: TripExpenseRollup;
-  /** Trip's currency code; null/undefined falls back to USD. */
+  /** Trip's HOME currency code; null/undefined falls back to the rollup's, then USD. */
   currency?: string | null;
 }
 
 export function CategoryBreakdown({ rollup, currency }: CategoryBreakdownProps) {
   const t = useTheme();
+  const { t: tx } = useT('money');
+  const home = (currency ?? rollup.currency ?? 'USD').toUpperCase();
 
   return (
     <View
@@ -50,16 +54,16 @@ export function CategoryBreakdown({ rollup, currency }: CategoryBreakdownProps) 
         accessibilityRole="header"
         aria-level={4}
       >
-        By category
+        {tx('categoryBreakdown.title')}
       </Text>
 
-      {CATEGORIES.map(({ key, label, icon }) => (
+      {CATEGORIES.map(({ key, icon }) => (
         <CategoryRow
           key={key}
           icon={icon}
-          label={label}
+          label={tx(`categories.${key}`)}
           slot={rollup.byCategory[key]}
-          currency={currency}
+          currency={home}
         />
       ))}
     </View>
@@ -75,9 +79,10 @@ function CategoryRow({
   icon: string;
   label: string;
   slot: TripExpenseRollup['byCategory'][TripExpenseCategory];
-  currency?: string | null;
+  currency: string;
 }) {
   const t = useTheme();
+  const { t: tx } = useT('money');
 
   const isEmpty = slot.estimated === 0 && slot.actual === 0;
 
@@ -94,7 +99,7 @@ function CategoryRow({
         ? t.colors.budgetWarn
         : t.colors.budgetOk;
 
-  const fmt = (n: number) => formatCurrency(n, currency);
+  const fmt = (n: number) => formatMoney(n, currency);
 
   return (
     <View
@@ -105,8 +110,8 @@ function CategoryRow({
       accessible
       accessibilityLabel={
         isEmpty
-          ? `${label}: no expenses recorded`
-          : `${label}: estimated ${fmt(slot.estimated)}, actual ${fmt(slot.actual)}`
+          ? tx('categoryBreakdown.emptyA11y', { category: label })
+          : tx('categoryBreakdown.rowA11y', { category: label, estimated: fmt(slot.estimated), actual: fmt(slot.actual) })
       }
     >
       {/* Icon + label */}
@@ -126,7 +131,7 @@ function CategoryRow({
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
             {isEmpty
               ? '—'
-              : `${fmt(slot.actual)} / ${fmt(slot.estimated)}`}
+              : tx('categoryBreakdown.actualOfEstimate', { actual: fmt(slot.actual), estimated: fmt(slot.estimated) })}
           </Text>
         </View>
         {!isEmpty && slot.estimated > 0 ? (
@@ -157,11 +162,11 @@ function CategoryRow({
             ]}
           >
             {slot.actual > slot.estimated
-              ? `${fmt(slot.actual - slot.estimated)} over estimate`
-              : `${fmt(slot.estimated - slot.actual)} left of estimate`}
+              ? tx('categoryBreakdown.overEstimate', { amount: fmt(slot.actual - slot.estimated) })
+              : tx('categoryBreakdown.leftOfEstimate', { amount: fmt(slot.estimated - slot.actual) })}
           </Text>
         ) : !isEmpty ? (
-          <Text style={[t.typography.small, { color: t.colors.textMuted }]}>No estimate set</Text>
+          <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{tx('categoryBreakdown.noEstimate')}</Text>
         ) : null}
       </View>
     </View>

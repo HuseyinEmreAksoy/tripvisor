@@ -46,6 +46,13 @@ jest.mock('@/api/trip-documents', () => ({ useTripDocuments: () => ({ data: [{ i
 jest.mock('@/api/trip-collaborators', () => ({ useTripCollaborators: () => ({ data: [] }) }));
 jest.mock('@/api/trip-place-reactions', () => ({ useTripReactions: () => ({ data: [] }) }));
 jest.mock('@/api/auth', () => ({ useSession: () => ({ data: null }) }));
+// M5 Y3.1: the Memories card reads counts + the latest thumbnail.
+jest.mock('@/api/memories', () => ({
+  useTripMemories: () => ({
+    data: { counts: { photos: 3, journal: 1, reviews: 0, uploading: 0, failed: 0 }, latestPhoto: null },
+  }),
+  useMemoryPhotoUrl: () => ({ url: null, isLoading: false }),
+}));
 
 // Child sections → labelled stubs.
 function mockStub(name: string) {
@@ -109,6 +116,14 @@ describe('TripHubTab', () => {
     expect(queryByText('stub:BudgetCard')).toBeNull();
     fireEvent.press(budget);
     expect(getByText('stub:BudgetCard')).toBeTruthy();
+  });
+
+  it('summarizes memories and links to the memories + discover routes (M5 Y3.1)', () => {
+    const { getByRole } = renderHub({ canEdit: false, isOwner: false });
+    fireEvent.press(getByRole('button', { name: /^Open memories, 3 photos · 1 journal entry$/ }));
+    expect(mockPush).toHaveBeenCalledWith('/trip/trip-1/memories');
+    fireEvent.press(getByRole('button', { name: /^Discover, / }));
+    expect(mockPush).toHaveBeenCalledWith('/trip/trip-1/discover');
   });
 
   it('opens People on the collaborators route', () => {

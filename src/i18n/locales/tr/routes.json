@@ -1,1 +1,84 @@
-{}
+{
+  "mode": {
+    "driving": "Araba",
+    "walking": "Yürüyerek",
+    "bicycling": "Bisiklet",
+    "transit": "Toplu taşıma",
+    "flight": "Uçak",
+    "ferry": "Vapur"
+  },
+  "leg": {
+    "approx": "≈ {{duration}}",
+    "nextStop": "sonraki durak",
+    "a11y": "Ulaşım: {{mode}}, sonraki durağa {{duration}}",
+    "a11yEstimated": "Ulaşım: {{mode}}, sonraki durağa yaklaşık {{duration}} (tahmini)",
+    "a11yUserTimed": "Ulaşım: {{mode}}, sonraki durağa {{duration}} (senin girdiğin süre)",
+    "a11yUnknown": "Ulaşım: {{mode}}, sonraki durağa yol süresi henüz hesaplanmadı",
+    "editHint": "{{place}} için ulaşım şeklini değiştir",
+    "transitLinesA11y": "Toplu taşıma hatları: {{lines}}",
+    "planTransit": "· Toplu taşıma planla ↗",
+    "planTransitA11y": "{{place}} için toplu taşıma planını harita uygulamasında aç, uygulama dışına çıkar"
+  },
+  "sheet": {
+    "title": "{{place}} için nasıl gideceksin?",
+    "from": "Çıkış: {{place}}",
+    "inherit": "Günle aynı ({{mode}})",
+    "flightNeedsDay": "Uçak ve vapur için iki durağın da bir güne eklenmiş olması gerekir.",
+    "minutesLabel": "Yol süresi, dakika (isteğe bağlı)",
+    "minutesPlaceholder": "ör. 90",
+    "minutesHint": "Boş bırakırsan mesafeye göre tahmin ederiz.",
+    "minutesHintTransit": "Boş bırakırsan güncel toplu taşıma süreleri kullanılır.",
+    "minutesInvalid": "1 ile 1440 arasında bir tam sayı gir.",
+    "save": "Kaydet"
+  },
+  "day": {
+    "a11y": "{{day}}. gün ulaşım: {{mode}}",
+    "hint": "Bu günün varsayılan ulaşım şeklini değiştir",
+    "title": "{{day}}. gün nasıl gezeceksin?",
+    "subtitle": "Ayrıca değiştirmediğin sürece bu günün tüm yolları bununla hesaplanır.",
+    "inherit": "Seyahatle aynı ({{mode}})"
+  },
+  "keptOrder": {
+    "flight": "Bu günde uçuş olduğu için senin sıralamanı koruduk.",
+    "ferry": "Bu günde vapur yolculuğu olduğu için senin sıralamanı koruduk."
+  },
+  "errors": {
+    "saveFailed": "Kaydedilemedi. Bağlantını kontrol edip tekrar dene.",
+    "dayOffline": "Çevrimdışısın. Günün ulaşım şeklini tekrar bağlandığında değiştirebilirsin.",
+    "recomputeFailed": "Kaydedildi ama yol süreleri henüz güncellenemedi. Bir sonraki rota güncellemesinde yenilenecek."
+  },
+  "legend": {
+    "label": "Harita çizgi stilleri",
+    "item": "{{mode}}: {{style}}",
+    "solid": "düz çizgi",
+    "dotted": "noktalı çizgi",
+    "dashed": "kesikli çizgi",
+    "arc": "kesikli yay"
+  },
+  "dayChip": {
+    "ideas": "Fikirler",
+    "ideasA11y": "Fikirler, henüz bir güne eklenmemiş kayıtlı yerler",
+    "date": "{{day}} {{weekday}}",
+    "label": "{{day}}. gün · {{date}}",
+    "undated": "{{day}}. gün",
+    "a11y": "{{day}}. gün, {{date}}",
+    "a11yToday": "{{day}}. gün, {{date}}, bugün",
+    "a11yPast": "{{day}}. gün, {{date}}, geçti",
+    "a11yUndatedToday": "{{day}}. gün, bugün"
+  },
+  "strip": {
+    "label": "Bir güne atla",
+    "jump": "{{label}} bölümüne atla",
+    "today": "{{label}} · Bugün"
+  },
+  "header": {
+    "places_one": "{{count}} yer",
+    "places_other": "{{count}} yer",
+    "titleWithDate": "{{title}}, {{date}}",
+    "today": "Bugün",
+    "a11yShow": "{{title}}, {{places}}. Bu günün yerlerini göster.",
+    "a11yShowToday": "{{title}}, bugün, {{places}}. Bu günün yerlerini göster.",
+    "a11yHide": "{{title}}, {{places}}. Bu günün yerlerini gizle.",
+    "a11yHideToday": "{{title}}, bugün, {{places}}. Bu günün yerlerini gizle."
+  }
+}

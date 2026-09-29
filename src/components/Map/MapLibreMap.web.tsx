@@ -139,7 +139,7 @@ function computeBounds(
 const SOLID_LAYER: LayerProps = {
   id: 'trip-legs-solid',
   type: 'line',
-  filter: ['==', ['get', 'dashed'], false],
+  filter: ['==', ['get', 'stroke'], 'solid'],
   layout: { 'line-cap': 'round', 'line-join': 'round' },
   paint: { 'line-color': ['get', 'color'], 'line-width': 4 },
 };
@@ -150,9 +150,19 @@ const SOLID_LAYER: LayerProps = {
 const DASHED_LAYER: LayerProps = {
   id: 'trip-legs-dashed',
   type: 'line',
-  filter: ['==', ['get', 'dashed'], true],
+  filter: ['==', ['get', 'stroke'], 'dash'],
   layout: { 'line-cap': 'round', 'line-join': 'round' },
   paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-dasharray': [2, 2] },
+};
+
+// M5 Y3.3: dotted walking legs — zero-length dashes with round caps render
+// as dots; [0, 2] ≈ 8px spacing at width 4 (native [1, 8]).
+const DOTTED_LAYER: LayerProps = {
+  id: 'trip-legs-dotted',
+  type: 'line',
+  filter: ['==', ['get', 'stroke'], 'dot'],
+  layout: { 'line-cap': 'round', 'line-join': 'round' },
+  paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-dasharray': [0, 2] },
 };
 
 const FIT_OPTIONS = { padding: 48, maxZoom: 15 } as const;
@@ -197,7 +207,10 @@ export function MapLibreMap(props: MapViewProps) {
         return {
           type: 'Feature' as const,
           geometry: { type: 'LineString' as const, coordinates },
-          properties: { color: polylineColor(line), dashed: line.isDashed === true },
+          properties: {
+            color: polylineColor(line),
+            stroke: line.dotted ? 'dot' : line.isDashed ? 'dash' : 'solid',
+          },
         };
       })
       .filter((f): f is NonNullable<typeof f> => f !== null);
@@ -222,6 +235,7 @@ export function MapLibreMap(props: MapViewProps) {
         <Source id="trip-legs" type="geojson" data={legsCollection}>
           <Layer {...SOLID_LAYER} />
           <Layer {...DASHED_LAYER} />
+          <Layer {...DOTTED_LAYER} />
         </Source>
 
         {markers.map((m) => {

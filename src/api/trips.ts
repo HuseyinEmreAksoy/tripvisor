@@ -49,6 +49,14 @@ const createTripSchema = z.object({
   daily_hours_budget: z.number().positive().max(24).default(8),
   transport_mode: z.enum(['driving', 'walking', 'transit', 'bicycling']).default('driving'),
   timezone: z.string().nullish(),
+  // M5 Y3.2: home currency at creation (any ISO 4217 code; DB CHECK ^[A-Z]{3}$).
+  // Omitted → the DB / sync default ('USD').
+  currency: z
+    .string()
+    .trim()
+    .transform((v) => v.toUpperCase())
+    .pipe(z.string().regex(/^[A-Z]{3}$/, 'invalid_currency'))
+    .optional(),
 });
 
 // ============================================================
@@ -414,6 +422,7 @@ export function useCreateTrip() {
           daily_hours_budget: parsed.daily_hours_budget,
           transport_mode: parsed.transport_mode,
           timezone: parsed.timezone ?? null,
+          ...(parsed.currency ? { currency: parsed.currency } : {}),
         });
         const row = tier1Store$.trips[id]?.peek() as Trip; // just written — present
         // The placeholders below exist ONLY in this RETURN value so it

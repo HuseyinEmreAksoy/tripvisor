@@ -22,17 +22,33 @@
  * `tripDayCount` / `tripStartDate` are optional — without them the strip
  * spans the pinned days and labels them "D1…". Delete confirm goes through
  * the platform-split `confirmDestructive` (no `window` in shared code).
+ *
+ * M5 Y3.2: each row shows the amount in its OWN currency plus "≈ home" (or a
+ * "rate pending" tag); the empty state uses the empty-expenses art.
  */
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { useTheme } from '@/theme';
-import { formatCurrency } from '@/lib/formatCurrency';
 import { confirmDestructive } from '@/lib/confirm';
 import type { TripExpense } from '@/api/types';
 import { useTripMoneySummary } from '@/api/trip-expenses';
 import type { RowMoney } from '@/lib/money/types';
-import { useT } from '@/i18n';
-import { categoryMeta, dailySpend, shortDayLabel, todayDayIndex } from './expenseMath';
+import { formatDate, formatMoney, useT } from '@/i18n';
+import { categoryMeta, dailySpend, parseLocalDate, todayDayIndex } from './expenseMath';
+
+const EMPTY_ART = require('../../../assets/images/empty-expenses.png');
+
+function fmtMoney(amount: number, code: string | null | undefined): string {
+  return formatMoney(amount, (code ?? 'USD').toUpperCase());
+}
+
+/** Trip day `index` as "Tue 29 Sep" in the app language, or null without a start date. */
+function datedDay(tripStartDate: string | null | undefined, index: number): string | null {
+  const start = parseLocalDate(tripStartDate);
+  if (!start) return null;
+  return formatDate(new Date(start.getFullYear(), start.getMonth(), start.getDate() + index), 'weekday');
+}
 import { DailySpendStrip, type SpendFilter } from './DailySpendStrip';
 
 export interface ExpenseListProps {
@@ -62,6 +78,7 @@ export function ExpenseList({
   tripStartDate,
 }: ExpenseListProps) {
   const t = useTheme();
+  const { t: tx } = useT('money');
   const [filter, setFilter] = useState<SpendFilter>(null);
 
   // Per-row home-currency outcome (converted / rate pending). The strip sums
@@ -102,12 +119,12 @@ export function ExpenseList({
           accessibilityRole="header"
           aria-level={4}
         >
-          Expenses
+          {tx('list.title')}
         </Text>
         {canEdit ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Add expense"
+            accessibilityLabel={tx('list.addA11y')}
             onPress={onAdd}
             style={({ pressed }) => [
               styles.addBtn,
@@ -120,7 +137,7 @@ export function ExpenseList({
             ]}
           >
             <Text style={[t.typography.caption, { color: t.colors.primaryText, fontWeight: '600' }]}>
-              + Add
+              {tx('list.add')}
             </Text>
           </Pressable>
         ) : null}
@@ -138,11 +155,22 @@ export function ExpenseList({
       ) : null}
 
       {sorted.length === 0 ? (
-        <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-          {filter === null
-            ? 'No expenses recorded yet.'
-            : `Nothing recorded for ${filter === 'trip' ? 'the whole trip' : shortDayLabel(tripStartDate, filter)}.`}
-        </Text>
+        filter === null ? (
+          <View style={[styles.empty, { gap: t.spacing.sm, paddingVertical: t.spacing.md }]}>
+            <Image source={EMPTY_ART} style={styles.emptyArt} contentFit="contain" accessibilityIgnoresInvertColors />
+            <Text style={[t.typography.bodyStrong, { color: t.colors.text, textAlign: 'center' }]}>{tx('list.emptyTitle')}</Text>
+            <Text style={[t.typography.caption, { color: t.colors.textMuted, textAlign: 'center' }]}>{tx('list.emptyBody')}</Text>
+          </View>
+        ) : (
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
+            {tx('list.emptyFiltered', {
+              day:
+                filter === 'trip'
+                  ? tx('list.wholeTrip')
+                  : (datedDay(tripStartDate, filter) ?? tx('list.dayN', { n: filter + 1 })),
+            })}
+          </Text>
+        )
       ) : (
         <ScrollView
           scrollEnabled={false}
@@ -158,7 +186,18 @@ export function ExpenseList({
               money={moneyRows?.[expense.id]}
               canEdit={canEdit}
               onEdit={() => onEdit(expense)}
-              onDelete={() => void confirmDelete(expense, currency, onDelete)}
+              onDelete={() => {
+                const amount = fmtMoney(expense.amount, expense.currency ?? currency);
+                const category = tx(`categories.${expense.category}`);
+                void confirmDestructive({
+                  title: tx('list.deleteTitle'),
+                  message: tx('list.deleteMessage', { category, amount }),
+                  confirmLabel: tx('list.delete'),
+                  cancelLabel: tx('list.cancel'),
+                }).then((ok) => {
+                  if (ok) onDelete(expense);
+                });
+              }}
             />
           ))}
         </ScrollView>
@@ -187,14 +226,15 @@ function ExpenseRow({
   const meta = categoryMeta(expense.category);
   const isActual = expense.kind === 'actual';
   const { t: tx } = useT('money');
+  const categoryLabel = tx(`categories.${meta.key}`);
   // `amount` is in the ROW's currency (NULL = legacy home row), never the home.
   const rowCurrency = expense.currency ?? currency;
-  const fmt = (n: number) => formatCurrency(n, rowCurrency);
+  const fmt = (n: number) => fmtMoney(n, rowCurrency);
   const isForeign =
     !!expense.currency && !!currency && expense.currency.toUpperCase() !== currency.toUpperCase();
   const converted =
     isForeign && money?.status === 'converted'
-      ? `≈ ${formatCurrency(money.home.value, money.home.currency)}`
+      ? tx('preview.converted', { amount: formatMoney(money.home.value, money.home.currency) })
       : isForeign && money?.status === 'pending'
         ? tx('expenses.ratePending')
         : null;
@@ -217,7 +257,15 @@ function ExpenseRow({
       <View
         style={[styles.row, { justifyContent: 'space-between' }]}
         accessible
-        accessibilityLabel={`${meta.label}, ${expense.kind}, ${fmt(expense.amount)}${converted ? `, ${converted}` : ''}${expense.label ? `, ${expense.label}` : ''}`}
+        accessibilityLabel={[
+          categoryLabel,
+          isActual ? tx('list.kindActual') : tx('list.kindEstimated'),
+          fmt(expense.amount),
+          converted,
+          expense.label,
+        ]
+          .filter(Boolean)
+          .join(', ')}
       >
         <View style={[styles.row, { gap: t.spacing.sm, flex: 1 }]}>
           {/* Category icon */}
@@ -234,7 +282,7 @@ function ExpenseRow({
             {/* Label row: category + chips */}
             <View style={[styles.row, { gap: t.spacing.xs, flexWrap: 'wrap' }]}>
               <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}>
-                {meta.label}
+                {categoryLabel}
               </Text>
 
               {/* Kind chip */}
@@ -258,7 +306,7 @@ function ExpenseRow({
                     },
                   ]}
                 >
-                  {isActual ? 'actual' : 'estimated'}
+                  {isActual ? tx('list.kindActual') : tx('list.kindEstimated')}
                 </Text>
               </View>
 
@@ -276,7 +324,7 @@ function ExpenseRow({
                   ]}
                 >
                   <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                    Day {expense.day_index + 1}
+                    {tx('list.dayN', { n: expense.day_index + 1 })}
                   </Text>
                 </View>
               ) : null}
@@ -298,7 +346,14 @@ function ExpenseRow({
         <View style={{ alignItems: 'flex-end', marginLeft: t.spacing.sm }}>
           <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{fmt(expense.amount)}</Text>
           {converted ? (
-            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{converted}</Text>
+            <Text
+              style={[
+                t.typography.small,
+                { color: money?.status === 'pending' ? t.colors.warningText : t.colors.textMuted },
+              ]}
+            >
+              {converted}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -308,7 +363,7 @@ function ExpenseRow({
         <View style={[styles.row, { gap: t.spacing.sm, justifyContent: 'flex-end' }]}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Edit expense: ${meta.label}`}
+            accessibilityLabel={tx('list.editA11y', { category: categoryLabel })}
             onPress={onEdit}
             style={({ pressed }) => [
               styles.actionBtn,
@@ -320,11 +375,11 @@ function ExpenseRow({
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>Edit</Text>
+            <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>{tx('list.edit')}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Delete expense: ${meta.label}`}
+            accessibilityLabel={tx('list.deleteA11y', { category: categoryLabel })}
             onPress={onDelete}
             style={({ pressed }) => [
               styles.actionBtn,
@@ -336,26 +391,12 @@ function ExpenseRow({
               },
             ]}
           >
-            <Text style={[t.typography.caption, { color: t.colors.danger }]}>Delete</Text>
+            <Text style={[t.typography.caption, { color: t.colors.danger }]}>{tx('list.delete')}</Text>
           </Pressable>
         </View>
       ) : null}
     </View>
   );
-}
-
-async function confirmDelete(
-  expense: TripExpense,
-  currency: string | null | undefined,
-  onDelete: (e: TripExpense) => void,
-) {
-  const meta = categoryMeta(expense.category);
-  const confirmed = await confirmDestructive({
-    title: 'Delete expense?',
-    message: `Remove this ${meta.label} expense of ${formatCurrency(expense.amount, expense.currency ?? currency)}?`,
-    confirmLabel: 'Delete',
-  });
-  if (confirmed) onDelete(expense);
 }
 
 const styles = StyleSheet.create({
@@ -364,5 +405,7 @@ const styles = StyleSheet.create({
   addBtn: {},
   chip: {},
   expenseRow: { borderWidth: 1 },
-  actionBtn: {},
+  actionBtn: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  empty: { alignItems: 'center' },
+  emptyArt: { width: 140, height: 105 },
 });

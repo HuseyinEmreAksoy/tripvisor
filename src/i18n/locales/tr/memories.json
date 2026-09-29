@@ -1,1 +1,152 @@
-{}
+{
+  "title": "Anılar",
+  "subtitle": "Fotoğrafların, günlüğün ve değerlendirmelerin",
+  "back": "Gezi",
+  "loading": "Anılar yükleniyor",
+  "dayLabel": "{{day}}. gün",
+  "undated": "Bir güne ait değil",
+  "offline": "Çevrimdışısın. Bu cihazda kayıtlı olanlar gösteriliyor; yeni fotoğraflar bağlantı gelince yüklenecek.",
+  "sharedLoadError": "Gezi arkadaşlarının paylaştıkları yüklenemedi.",
+  "leftTrip": "Artık bu gezide değilsin. Kendi anılarını yine de gizli yapabilir ya da silebilirsin.",
+  "actions": {
+    "addPhotos": "Fotoğraf ekle",
+    "addPhotosToDay": "{{day}}. güne fotoğraf ekle",
+    "shareDay": "Günü paylaş",
+    "privateDay": "Günü gizle",
+    "shareDayA11y": "{{day}} içindeki tüm anılarını geziyle paylaş",
+    "privateDayA11y": "{{day}} içindeki tüm anılarını gizli yap",
+    "shareAll": "Tümünü geziyle paylaş",
+    "privateAll": "Tümünü gizle",
+    "retry": "Yüklemeyi yeniden dene",
+    "retryAll": "Tümünü yeniden dene",
+    "cancelUpload": "Yüklemeyi iptal et",
+    "delete": "Sil",
+    "deletePhoto": "Fotoğrafı sil",
+    "removeFromTrip": "Geziden kaldır",
+    "save": "Kaydet",
+    "close": "Kapat",
+    "previous": "Önceki fotoğraf",
+    "next": "Sonraki fotoğraf",
+    "openPhoto": "Fotoğrafı aç ({{index}}/{{total}})",
+    "reload": "Yeniden dene",
+    "dismiss": "Kapat"
+  },
+  "visibility": {
+    "label": "Geziyle paylaş",
+    "onlyMe": "Bunu yalnızca sen görebilirsin",
+    "trip": "Gezideki herkes bunu görebilir",
+    "badgeShared": "Paylaşıldı",
+    "badgePrivate": "Gizli",
+    "a11y": "Bu {{item}} geziyle paylaş"
+  },
+  "items": {
+    "photo": "fotoğrafı",
+    "journal": "günlük yazısını",
+    "review": "değerlendirmeyi"
+  },
+  "counts": {
+    "photos_one": "{{count}} fotoğraf",
+    "photos_other": "{{count}} fotoğraf",
+    "journal_one": "{{count}} günlük yazısı",
+    "journal_other": "{{count}} günlük yazısı",
+    "reviews_one": "{{count}} değerlendirme",
+    "reviews_other": "{{count}} değerlendirme"
+  },
+  "by": {
+    "tripmate": "Bir gezi arkadaşın paylaştı"
+  },
+  "journal": {
+    "heading": "Günlük",
+    "label": "{{day}}. günün günlüğü",
+    "placeholder": "Bugün neler oldu? Nerede yedin, seni ne şaşırttı?",
+    "saving": "Kaydediliyor…",
+    "saved": "Kaydedildi",
+    "unsaved": "Kaydedilmemiş değişiklikler",
+    "deleteTitle": "Bu günlük yazısı silinsin mi?",
+    "deleteBody": "Birkaç saniye içinde geri alabilirsin."
+  },
+  "photo": {
+    "deleteTitle": "Bu fotoğraf silinsin mi?",
+    "deleteBody": "Paylaştığın herkes için kaldırılır. Birkaç saniye içinde geri alabilirsin."
+  },
+  "moderation": {
+    "title": "Bu, geziden kaldırılsın mı?",
+    "body": "Gezideki herkes için kaybolur. Yalnızca ekleyen kişi yeniden paylaşabilir."
+  },
+  "review": {
+    "heading": "Puanın ve değerlendirmen",
+    "subheading": "Geziyle paylaşmadıkça gizlidir. Google değerlendirmelerinden ayrıdır.",
+    "loading": "Değerlendirmen yükleniyor…",
+    "ratingGroup": "Puanın",
+    "starLabel_one": "{{count}} yıldız",
+    "starLabel_other": "{{count}} yıldız",
+    "valueOfFive": "5 üzerinden {{value}}",
+    "noRating": "Henüz puan yok",
+    "bodyLabel": "Değerlendirmen",
+    "placeholder": "Seni en çok ne etkiledi? Yine gider miydin?",
+    "others": "Gezi arkadaşlarının değerlendirmeleri",
+    "listHeading": "Puan verdiğin yerler",
+    "openPlace": "{{name}} yerini aç",
+    "removedPlace": "Artık gezide olmayan bir yer",
+    "deleteTitle": "Değerlendirmen silinsin mi?",
+    "deleteBody": "Puanın ve yazın kaldırılır. Birkaç saniye içinde geri alabilirsin.",
+    "googleHeading": "Google değerlendirmeleri"
+  },
+  "upload": {
+    "uploading_one": "{{count}} fotoğraf yükleniyor",
+    "uploading_other": "{{count}} fotoğraf yükleniyor",
+    "progress": "{{percent}} yüklendi",
+    "queued": "Yükleme sırasında",
+    "waitingNetwork": "Bağlantı bekleniyor",
+    "waitingSlot": "Diğer yüklemelerin bitmesi bekleniyor",
+    "failed": "Yüklenemedi",
+    "failedCount_one": "{{count}} fotoğraf yüklenemedi",
+    "failedCount_other": "{{count}} fotoğraf yüklenemedi",
+    "partial_one": "{{count}} fotoğraf eklenemedi",
+    "partial_other": "{{count}} fotoğraf eklenemedi",
+    "notDurable": "Yüklemeler bitene kadar uygulamayı açık tut. Bu cihazda yeniden başlatmadan sonra devam edemezler."
+  },
+  "quota": {
+    "summary": "{{used}}/{{cap}} fotoğraf · {{mbUsed}}/{{mbCap}} MB",
+    "trip": "Bu gezi: {{used}}/{{cap}} fotoğraf"
+  },
+  "errors": {
+    "quota_user": "Fotoğraf sınırına ulaştın. Yenilerini eklemek için bazılarını sil.",
+    "quota_user_bytes": "Fotoğraf alanın doldu. Yenilerini eklemek için bazılarını sil.",
+    "quota_pending": "Çok sayıda fotoğraf yükleniyor. Kalanlar birazdan gelecek.",
+    "quota_trip": "Bu gezi fotoğraf sınırına ulaştı.",
+    "storage_full": "Fotoğraf depolama alanı şu an dolu. Daha sonra yeniden dene.",
+    "unsupported_image": "Bu görsel türü desteklenmiyor. JPEG ya da PNG dene.",
+    "image_too_large": "Bu fotoğraf yüklenemeyecek kadar büyük.",
+    "exif_strip_failed": "Bu fotoğraftaki konum bilgisi kaldırılamadığı için yüklenmedi.",
+    "not_authenticated": "Lütfen yeniden giriş yap.",
+    "forbidden": "Bunu değiştiremezsin.",
+    "network": "Bağlantı yok. Tekrar çevrimiçi olunca yeniden deneyeceğiz.",
+    "not_found": "Bu anı artık yok.",
+    "generic": "Bir şeyler ters gitti. Lütfen yeniden dene."
+  },
+  "lightbox": {
+    "label": "Fotoğraf görüntüleyici",
+    "position": "{{index}}/{{total}}",
+    "photoAlt": "Anı fotoğrafı {{index}}",
+    "loading": "Fotoğraf yükleniyor",
+    "failed": "Bu fotoğraf yüklenemedi",
+    "takenAt": "Çekildiği tarih: {{date}}"
+  },
+  "hub": {
+    "empty": "Fotoğraflar, günlük ve kendi değerlendirmelerin. Paylaşana kadar gizli.",
+    "a11y": "Anıları aç, {{summary}}",
+    "discoverTitle": "Keşfet",
+    "discoverSummary": "Yakındaki, ilgi alanlarına uyan yerler"
+  },
+  "today": {
+    "heading": "Bugünü kaydet",
+    "addPhoto": "Fotoğraf ekle",
+    "adding": "Ekleniyor…",
+    "writeJournal": "Bugünün günlüğünü yaz"
+  },
+  "empty": {
+    "title": "Henüz anı yok",
+    "body": "Fotoğraf ekle, her gün birkaç satır yaz ve gezdiğin yerlere puan ver. Geziyle paylaşana kadar her şey gizli kalır."
+  }
+}

@@ -2,7 +2,158 @@
   "link": {
     "ownerOnly": "Only the trip owner can create a share link. Ask them to send you one.",
     "createFailed": "Couldn’t create the link. Try again.",
-    "revokeFailed": "Couldn’t revoke the link. Try again."
+    "revokeFailed": "Couldn’t revoke the link. Try again.",
+    "updateFailed": "Couldn’t save that setting. Try again.",
+    "noActiveLink": "This link was turned off, maybe on another device. Create a new one to share again.",
+    "title": "Public link",
+    "subtitle": "Anyone with the link can view",
+    "sectionA11y": "Public link sharing",
+    "statusOn": "On",
+    "statusOff": "Off",
+    "statusA11y": "Public link is {{status}}",
+    "offBody": "Turn on a read-only link anyone can open, no sign-in needed. Choose below what it shows.",
+    "checking": "Checking for an existing link…",
+    "create": "Create share link",
+    "createA11y": "Create a read-only share link for this trip",
+    "urlA11y": "Share URL: {{url}}",
+    "share": "Share link",
+    "shareA11y": "Share the public trip link",
+    "copy": "Copy link",
+    "copied": "Copied!",
+    "copyA11y": "Copy share link to clipboard",
+    "copiedA11y": "Link copied to clipboard",
+    "revoke": "Turn off",
+    "revokeA11y": "Revoke share link — anyone with the link will lose access",
+    "revokeConfirm": {
+      "title": "Turn off the public link?",
+      "message": "Anyone who has this link will lose access right away. You can create a new link later.",
+      "confirm": "Turn off"
+    },
+    "untitledTrip": "my trip",
+    "shareTitle": "{{title}} · Tripvisor",
+    "shareMessage": "Take a look at {{title}} on Tripvisor — read-only, no sign-in needed."
   },
-  "hubSummary": "Read-only public link or invite by email"
+  "toggles": {
+    "heading": "What the link shows",
+    "liveNote": "Changes apply to the live link right away.",
+    "draftNote": "You can change these at any time after creating the link.",
+    "itinerary": {
+      "label": "Itinerary",
+      "hint": "Days, stops and the route map."
+    },
+    "expenses": {
+      "label": "Expense summary",
+      "hint": "Totals by category and currency. Individual expenses are never shown."
+    },
+    "memories": {
+      "label": "Your memories",
+      "hint": "Publishes only YOUR memories that you shared with the trip: photos, journal and reviews. Other members’ memories and “Only me” items are never public."
+    }
+  },
+  "invite": {
+    "title": "Invite collaborator",
+    "subtitle": "Invite a specific person by email",
+    "sectionA11y": "Invite a specific collaborator by email",
+    "body": "Collaborators sign in to access the trip. Give them viewer or editor access.",
+    "manage": "Manage collaborators",
+    "manageA11y": "Go to manage collaborators screen to invite someone by email"
+  },
+  "feedback": {
+    "copied": "Link copied to clipboard",
+    "failed": "Couldn’t open sharing — copy the link instead."
+  },
+  "page": {
+    "loading": "Loading trip…",
+    "errorTitle": "Couldn’t load this trip",
+    "errorBody": "Check your connection and try again.",
+    "retry": "Try again",
+    "busyTitle": "This link is busy right now",
+    "busyBody": "It’s had a lot of visits recently. Please try again later.",
+    "notFoundTitle": "Link not found",
+    "notFoundBody": "This trip has been deleted or the share link was turned off.",
+    "planOwn": "Plan your own trip",
+    "planOwnShort": "Plan your own",
+    "planOwnA11y": "Plan your own trip with Tripvisor. Opens sign in.",
+    "overline": "Shared trip · read-only",
+    "untitled": "Untitled trip",
+    "datesNotSet": "Dates not set",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days",
+    "stops_one": "{{count}} stop",
+    "stops_other": "{{count}} stops",
+    "hoursPerDay": "{{hours}} / day",
+    "shareA11y": "Share this trip",
+    "shareMessage": "Take a look at {{title}} on Tripvisor.",
+    "mapAll": "Map of the whole trip",
+    "mapDay": "Map of day {{day}}",
+    "mapEmptyTitle": "No stops on this trip yet",
+    "mapEmptyBody": "The route will appear here once places are added.",
+    "hiddenTitle": "Itinerary hidden by the owner",
+    "hiddenBody": "The owner chose not to share the day-by-day plan on this link.",
+    "ctaTitle": "Like this trip?",
+    "ctaBody": "Build your own day-by-day route in minutes with Tripvisor."
+  },
+  "timeline": {
+    "tabsA11y": "Trip days",
+    "overview": "Overview",
+    "day": "Day {{day}}",
+    "unscheduled": "Unscheduled",
+    "empty": "No stops planned yet.",
+    "place": "Place",
+    "stopA11y": "Stop {{n}}: {{name}}",
+    "travel": "{{duration}} · {{distance}}",
+    "estimated": "≈ {{travel}}",
+    "estimatedA11y": "About {{travel}}, estimated",
+    "notCalculated": "Travel time not calculated"
+  },
+  "expenses": {
+    "title": "Expenses",
+    "summary_one": "{{count}} expense · totals in {{currency}}",
+    "summary_other": "{{count}} expenses · totals in {{currency}}",
+    "spent": "Spent",
+    "planned": "Planned",
+    "byCategory": "By category",
+    "byCurrency": "Paid in",
+    "currencyCount_one": "{{count}} expense",
+    "currencyCount_other": "{{count}} expenses",
+    "pending_one": "{{count}} expense is waiting for an exchange rate and isn’t in the totals yet.",
+    "pending_other": "{{count}} expenses are waiting for an exchange rate and aren’t in the totals yet.",
+    "empty": "No expenses logged yet.",
+    "category": {
+      "accommodation": "Accommodation",
+      "food": "Food & drink",
+      "transport": "Transport",
+      "shopping": "Shopping",
+      "activities": "Activities",
+      "other": "Other"
+    }
+  },
+  "memories": {
+    "title": "Memories",
+    "photos": "Photos",
+    "journal": "Journal",
+    "reviews": "Reviews",
+    "empty": "No memories shared yet.",
+    "truncated": "Showing the most recent memories.",
+    "day": "Day {{day}}",
+    "openPhoto": "Open photo {{n}} of {{total}}",
+    "openPhotoCaption": "Open photo {{n}} of {{total}}: {{caption}}",
+    "rating": "Rated {{rating}} out of 5",
+    "unnamedPlace": "A place on this trip",
+    "lightbox": {
+      "a11y": "Photo {{n}} of {{total}}",
+      "close": "Close photo",
+      "prev": "Previous photo",
+      "next": "Next photo",
+      "loading": "Loading full size…",
+      "busy": "Showing a preview — full size is busy. Try again later.",
+      "failed": "Couldn’t load the full-size photo. Showing a preview."
+    }
+  },
+  "hubSummary": "Read-only public link or invite by email",
+  "a11y": {
+    "pair": "{{label}}: {{value}}",
+    "list": "{{first}}, {{second}}",
+    "sentence": "{{title}}. {{body}}"
+  }
 }

@@ -53,6 +53,7 @@ import { PlaceThumb } from './PlaceThumb';
 import { useCategoryLabel } from './placeCategory';
 import { formatClockTime, parseTimeOfDay } from './computeDayTimeline';
 import { TravelConnector } from './itinerary/TravelConnector';
+import { legChipFromLeg, type LegChipModel } from './itinerary/legModes';
 
 export interface PlaceRowProps {
   place: TripPlace;
@@ -108,6 +109,13 @@ export interface PlaceRowProps {
    * URL). Wins over the Google photo in the thumbnail slot. Wave 3 wires it.
    */
   memoryThumbUri?: string | null;
+  /**
+   * M5 Y3.3: the leg chip under this card (the leg ARRIVING at the next
+   * stop). `model` comes from buildLegChipModel; `onEdit` (editors) opens
+   * the leg-mode sheet. `null` hides the connector (Ideas rows have no
+   * legs); absent → a read-only chip derived from `legAfter`/`transportMode`.
+   */
+  legChip?: { model: LegChipModel; onEdit?: () => void } | null;
 }
 
 export function PlaceRow({
@@ -128,6 +136,7 @@ export function PlaceRow({
   nextStop,
   onLongPress,
   memoryThumbUri,
+  legChip,
 }: PlaceRowProps) {
   const t = useTheme();
   const { t: tx } = useT('trip');
@@ -312,11 +321,16 @@ export function PlaceRow({
       {!dragging ? <PlaceNotesEditor place={place} canEdit={canEdit} /> : null}
 
       {/* Step 23.8: Travel connector — two distinct labeled time values */}
-      {hasNext ? (
+      {/* M5 Y3.3: leg chip (mode + duration, ≈ when estimated). */}
+      {hasNext && legChip !== null ? (
         <View style={[styles.travelConnector, { paddingHorizontal: 12 }]}>
           <TravelConnector
             legAfter={legAfter}
-            transportMode={transportMode}
+            model={
+              legChip?.model ??
+              legChipFromLeg(legAfter, transportMode)
+            }
+            onEditMode={legChip?.onEdit}
             from={{ lat: place.lat, lng: place.lng, placeId: place.google_place_id, label: place.user_title }}
             to={nextStop}
           />

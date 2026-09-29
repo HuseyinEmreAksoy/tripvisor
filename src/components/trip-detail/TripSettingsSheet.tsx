@@ -4,7 +4,8 @@
  * not rewritten (parity risk mitigation), so behavior matches v1.
  *
  * Sections: cover photo · dates (read-only, see note) · daily plan time ·
- * transport mode · currency (owner-only) · calendar (.ics) export · danger
+ * transport mode · home currency (owner-only; M5 Y3.2 HomeCurrencySection:
+ * searchable picker + re-derivation confirm + FX warm) · calendar (.ics) export · danger
  * zone (owner-only delete).
  *
  * The trip-content surfaces (budget, stays, packing, docs, people, share,
@@ -21,8 +22,8 @@ import { useT } from '@/i18n';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
-import { fetchFxRate } from '@/api/fx';
 import { DeleteTripError, useUpdateTrip, type TransportMode, type TripCurrency } from '@/api';
+import { HomeCurrencySection } from '@/components/budget/HomeCurrencySection';
 import { CoverPhotoSection } from './CoverPhotoSection';
 import { CoverPickerModal } from './CoverPickerModal';
 import { SectionHeading } from './TripHubCards';
@@ -46,8 +47,6 @@ export function deleteTripErrorKey(err: unknown): DeleteTripErrorKey {
   }
   return 'delete.errors.generic';
 }
-
-const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
 
 export interface TripSettingsSheetProps {
   visible: boolean;
@@ -79,13 +78,9 @@ export interface TripSettingsSheetProps {
 
 /**
  * Budget converted into the new home currency, rounded to its minor units
- * (JPY has none). Exported for tests.
+ * (JPY has none). Lives with the home-currency flow; re-exported for tests.
  */
-export function convertBudget(amount: number, rate: number, to: TripCurrency): number {
-  const digits = to === 'JPY' ? 0 : 2;
-  const f = 10 ** digits;
-  return Math.round(amount * rate * f) / f;
-}
+export { convertBudget } from '@/components/budget/currencies';
 
 export function TripSettingsSheet(props: TripSettingsSheetProps) {
   const { visible, onClose } = props;
@@ -146,28 +141,6 @@ function TripSettingsBody({
   // money is tracked via the category-based budget, not km × rate.
   const updateTrip = useUpdateTrip(tripId);
 
-  const [currencyBusy, setCurrencyBusy] = useState(false);
-  const [currencyError, setCurrencyError] = useState(false);
-
-  async function handleCurrencyChange(value: TripCurrency) {
-    if (value === currency || currencyBusy) return;
-    setCurrencyError(false);
-    if (totalBudget == null || !(totalBudget > 0)) {
-      updateTrip.mutate({ currency: value });
-      return;
-    }
-    // F3 fix: convert the budget with the home change, in one write. No rate
-    // reachable → keep the old currency (never leave a mis-denominated budget).
-    setCurrencyBusy(true);
-    try {
-      const { rate } = await fetchFxRate(currency, value, 'latest');
-      updateTrip.mutate({ currency: value, total_budget: convertBudget(totalBudget, rate, value) });
-    } catch {
-      setCurrencyError(true);
-    } finally {
-      setCurrencyBusy(false);
-    }
-  }
 
   // Web Slider's <input type="range"> fires onChange per-tick during drag, so
   // debounce 500ms to avoid spamming the API. Native Slider is a stepper
@@ -273,24 +246,9 @@ function TripSettingsBody({
         <ReadOnlyValue label="Daily plan time · transport" value={`${budget}h/day · ${mode}`} />
       )}
 
-      {/* Phase 25 Step 25.11: currency is owner-only — editors cannot change it.
-          The enforce_trips_column_restrictions trigger denies currency updates
-          from non-owners. We gate the control in the UI to match. */}
-      {isOwner ? (
-        <SegmentedControl<TripCurrency>
-          label="Currency"
-          value={currency}
-          onChange={(v) => void handleCurrencyChange(v)}
-          options={CURRENCIES.map((c) => ({ value: c, label: c }))}
-        />
-      ) : (
-        <ReadOnlyValue label="Currency" value={currency} />
-      )}
-      {isOwner && currencyError ? (
-        <Text accessibilityRole="alert" style={[t.typography.caption, { color: t.colors.danger }]}>
-          {tx('settingsSheet.currencyFxFailed')}
-        </Text>
-      ) : null}
+      {/* Home currency (owner-only; the enforce_trips_column_restrictions
+          trigger denies currency updates from non-owners). M5 Y3.2. */}
+      <HomeCurrencySection tripId={tripId} currency={currency} totalBudget={totalBudget} isOwner={isOwner} />
 
       {/* ── Calendar export ─────────────────────────────────────────────── */}
       <SectionHeading label="Export" />

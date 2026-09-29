@@ -1,1 +1,84 @@
-{}
+{
+  "mode": {
+    "driving": "Drive",
+    "walking": "Walk",
+    "bicycling": "Bike",
+    "transit": "Transit",
+    "flight": "Flight",
+    "ferry": "Ferry"
+  },
+  "leg": {
+    "approx": "≈ {{duration}}",
+    "nextStop": "the next stop",
+    "a11y": "{{mode}} to the next stop, {{duration}}",
+    "a11yEstimated": "{{mode}} to the next stop, about {{duration}} (estimated)",
+    "a11yUserTimed": "{{mode}} to the next stop, {{duration}} (your time)",
+    "a11yUnknown": "{{mode}} to the next stop, travel time not calculated yet",
+    "editHint": "Change how you get to {{place}}",
+    "transitLinesA11y": "Transit lines: {{lines}}",
+    "planTransit": "· Plan transit ↗",
+    "planTransitA11y": "Plan transit to {{place}} in your maps app, opens external"
+  },
+  "sheet": {
+    "title": "How do you get to {{place}}?",
+    "from": "From {{place}}",
+    "inherit": "Same as the day ({{mode}})",
+    "flightNeedsDay": "Flights and ferries need both stops on a day.",
+    "minutesLabel": "Travel time in minutes (optional)",
+    "minutesPlaceholder": "e.g. 90",
+    "minutesHint": "Leave empty and we’ll estimate it from the distance.",
+    "minutesHintTransit": "Leave empty to use live transit times.",
+    "minutesInvalid": "Enter a whole number from 1 to 1440.",
+    "save": "Save"
+  },
+  "day": {
+    "a11y": "Day {{day}} travels by {{mode}}",
+    "hint": "Change the default way to travel on this day",
+    "title": "How do you travel on Day {{day}}?",
+    "subtitle": "Every leg of this day uses it unless you change a leg.",
+    "inherit": "Same as the trip ({{mode}})"
+  },
+  "keptOrder": {
+    "flight": "Kept your order because this day has a flight.",
+    "ferry": "Kept your order because this day has a ferry."
+  },
+  "errors": {
+    "saveFailed": "Couldn’t save that. Check your connection and try again.",
+    "dayOffline": "You’re offline. The day’s travel mode can be changed once you’re back online.",
+    "recomputeFailed": "Saved, but travel times couldn’t be updated yet. They’ll refresh on the next route update."
+  },
+  "legend": {
+    "label": "Map line styles",
+    "item": "{{mode}}: {{style}}",
+    "solid": "solid line",
+    "dotted": "dotted line",
+    "dashed": "dashed line",
+    "arc": "dashed arc"
+  },
+  "dayChip": {
+    "ideas": "Ideas",
+    "ideasA11y": "Ideas, saved places not scheduled yet",
+    "date": "{{weekday}} {{day}}",
+    "label": "D{{day}} {{date}}",
+    "undated": "Day {{day}}",
+    "a11y": "Day {{day}}, {{date}}",
+    "a11yToday": "Day {{day}}, {{date}}, today",
+    "a11yPast": "Day {{day}}, {{date}}, past",
+    "a11yUndatedToday": "Day {{day}}, today"
+  },
+  "strip": {
+    "label": "Jump to a day",
+    "jump": "Jump to {{label}}",
+    "today": "{{label}} · Today"
+  },
+  "header": {
+    "places_one": "{{count}} place",
+    "places_other": "{{count}} places",
+    "titleWithDate": "{{title}}, {{date}}",
+    "today": "Today",
+    "a11yShow": "{{title}}, {{places}}. Show this day’s places.",
+    "a11yShowToday": "{{title}}, today, {{places}}. Show this day’s places.",
+    "a11yHide": "{{title}}, {{places}}. Hide this day’s places.",
+    "a11yHideToday": "{{title}}, today, {{places}}. Hide this day’s places."
+  }
+}

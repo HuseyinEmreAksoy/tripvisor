@@ -9,13 +9,36 @@
  * The component is purely presentational; no hooks or network calls. The rollup
  * shape is built inline.
  */
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { BudgetCard } from '../BudgetCard';
 import { ThemeProvider } from '@/theme';
 import type { TripExpenseRollup } from '@/api/trip-expenses';
 import type { TripExpenseCategory } from '@/api/types';
 import React from 'react';
+import { act } from '@testing-library/react-native';
+import { i18n, setLanguagePreference } from '@/i18n';
+import { summarizeTripMoney } from '@/lib/money';
+import type { RateMode, TripMoneySummary } from '@/lib/money/types';
+
+// Y3.2: the card reads the multi-currency summary itself when a trip id is known.
+jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
+let mockSummary: TripMoneySummary | undefined;
+const mockSummaryCalls: Array<{ tripId: string | undefined; rateMode?: RateMode }> = [];
+jest.mock('@/api/trip-expenses', () => ({
+  useTripMoneySummary: (tripId: string | undefined, opts: { rateMode?: RateMode } = {}) => {
+    mockSummaryCalls.push({ tripId, rateMode: opts.rateMode });
+    return {
+      data: tripId ? mockSummary : undefined,
+      home: mockSummary?.home ?? null,
+      isLoading: false,
+      error: null,
+      isFetchingRates: false,
+      ratesError: null,
+      todayRatesUnavailable: false,
+    };
+  },
+}));
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -137,5 +160,61 @@ describe('BudgetCard', () => {
       </ThemeProvider>,
     );
     expect(() => getByRole('button', { name: 'Add expense' })).toThrow();
+  });
+});
+
+describe('BudgetCard — multi-currency (Y3.2)', () => {
+  const rows = [
+    // 100 TRY in the home currency.
+    { id: 'a', amount: 100, kind: 'actual', category: 'food', currency: 'TRY', fx_rate: 1, fx_date: '2026-09-01', fx_home_currency: 'TRY' },
+    // 20 EUR frozen at 40 TRY/EUR → 800 TRY.
+    { id: 'b', amount: 20, kind: 'actual', category: 'food', currency: 'EUR', fx_rate: 40, fx_date: '2026-09-01', fx_home_currency: 'TRY' },
+    // 15 USD, rate still pending → NOT in the totals.
+    { id: 'c', amount: 15, kind: 'actual', category: 'transport', currency: 'USD', fx_rate: null, fx_date: '2026-09-02', fx_home_currency: 'TRY' },
+  ];
+
+  afterEach(async () => {
+    await act(async () => {
+      await setLanguagePreference('system');
+    });
+  });
+
+  it('totals in the home currency, excludes pending rows and lists them per original currency', () => {
+    mockSummary = summarizeTripMoney(rows, { home: 'TRY', budget: 2000 });
+    const { getByText, getByLabelText, getAllByText } = wrap(
+      <BudgetCard rollup={makeRollup()} currency="TRY" tripId="t1" onSetBudget={jest.fn()} canEdit />,
+    );
+    expect(getByText(i18n.t('money:budget.inHome', { code: 'TRY' }))).toBeTruthy();
+    // 100 + 800 = 900 spent of 2000; the 15 USD are pending, never 1:1.
+    expect(getByLabelText(/900.*2,000.*45%/)).toBeTruthy();
+    expect(getByText(i18n.t('money:pending.chip', { count: 1 }))).toBeTruthy();
+    // The pending USD amount is listed in USD (its original currency).
+    expect(getAllByText(/15\.00/).length).toBeGreaterThan(0);
+    // Per-currency breakdown: EUR row shows the original and the converted amount.
+    expect(getByText(i18n.t('money:breakdown.title'))).toBeTruthy();
+    expect(getByLabelText(/^EUR: €20\.00, about .*800\.00/)).toBeTruthy();
+  });
+
+  it('switches the summary to today’s rate from the toggle', () => {
+    mockSummary = summarizeTripMoney(rows, { home: 'TRY' });
+    mockSummaryCalls.length = 0;
+    const { getByRole } = wrap(
+      <BudgetCard rollup={makeRollup()} currency="TRY" tripId="t1" onSetBudget={jest.fn()} canEdit />,
+    );
+    fireEvent.press(getByRole('radio', { name: i18n.t('money:rates.today') }));
+    expect(mockSummaryCalls.at(-1)).toEqual({ tripId: 't1', rateMode: 'today' });
+  });
+
+  it('shows no toggle or breakdown for a single-currency trip, and translates to Turkish', async () => {
+    mockSummary = summarizeTripMoney([rows[0]!], { home: 'TRY' });
+    const { queryByText, getByText } = wrap(
+      <BudgetCard rollup={makeRollup()} currency="TRY" tripId="t1" onSetBudget={jest.fn()} canEdit />,
+    );
+    expect(queryByText(i18n.t('money:breakdown.title'))).toBeNull();
+    expect(queryByText(i18n.t('money:rates.today'))).toBeNull();
+    await act(async () => {
+      await setLanguagePreference('tr');
+    });
+    expect(getByText('Tüm toplamlar TRY cinsinden')).toBeTruthy();
   });
 });

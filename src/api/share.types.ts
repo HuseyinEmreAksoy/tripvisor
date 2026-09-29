@@ -106,7 +106,12 @@ export interface SharedMemoryPhoto {
   height: number | null;
   /** 1 h signed URL of the thumbnail (see `SharedMemories.photoUrlExpiresAt`). */
   thumbUrl: string;
-  /** 1 h signed URL of the full image. */
+  /**
+   * Contract v4: ALSO the thumbnail (=== `thumbUrl`); the read never signs
+   * full images. Fetch the full size on demand with
+   * `useSharedPhotoUrl(token, photo.id)` (rate-limited `photo_url` op).
+   * Kept for v3 clients.
+   */
   url: string;
 }
 

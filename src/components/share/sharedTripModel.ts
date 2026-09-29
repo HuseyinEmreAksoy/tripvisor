@@ -3,12 +3,17 @@
  * (`app/share/[token].tsx`). No React, no platform code.
  *
  * Only Tier-1 trip fields are used (titles, coordinates, durations, day
- * assignment, user notes). `google_place_id` is never rendered.
+ * assignment, user notes). `google_place_id` is never rendered. Labels and
+ * dates go through the app i18n (`share` namespace + shared formatters);
+ * pass the render language (`useAppLocale().language`) as `lng`.
  */
-import type { SharedTrip } from '@/api/types';
+import type { SharedTrip, TripLeg } from '@/api/types';
+import { isEstimatedLeg } from '@/api/routes.types';
+import { formatDate, formatDateRange, formatDistance, formatDuration, i18n, type AppLanguage } from '@/i18n';
 
 export type SharedTripPlace = SharedTrip['places'][number];
-export type SharedTripLeg = SharedTrip['legs'][number];
+/** Contract v4 legs also carry `source` (ors | google | estimate | user). */
+export type SharedTripLeg = SharedTrip['legs'][number] & Partial<Pick<TripLeg, 'source'>>;
 
 /** Day key: 'all' for the overview tab, else the day index (-1 = unscheduled). */
 export type DayKey = 'all' | number;
@@ -17,9 +22,6 @@ export interface DaySection {
   dayIndex: number;
   places: SharedTripPlace[];
 }
-
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function groupByDay(places: readonly SharedTripPlace[]): DaySection[] {
   const map = new globalThis.Map<number, SharedTripPlace[]>();
@@ -38,49 +40,41 @@ export function groupByDay(places: readonly SharedTripPlace[]): DaySection[] {
     .map(([dayIndex, ps]) => ({ dayIndex, places: ps }));
 }
 
-function parseIsoDate(iso: string | null | undefined): number | null {
+function isoParts(iso: string | null | undefined): [number, number, number] | null {
   if (!iso) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return null;
-  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return m ? [Number(m[1]), Number(m[2]) - 1, Number(m[3])] : null;
 }
 
-/** "Mon 3 Nov" for trip day `dayIndex`, or null when the trip has no start date. */
-export function dayDateLabel(startDate: string | null | undefined, dayIndex: number): string | null {
-  const start = parseIsoDate(startDate);
-  if (start == null || dayIndex < 0) return null;
-  const d = new Date(start + dayIndex * 86_400_000);
-  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+/** A LOCAL-midnight Date for a `YYYY-MM-DD` (+ offset days), so formatting never shifts the day. */
+function localDate(iso: string | null | undefined, plusDays = 0): Date | null {
+  const p = isoParts(iso);
+  return p ? new Date(p[0], p[1], p[2] + plusDays) : null;
 }
 
-/** "3–7 Nov 2026" / "30 Oct – 2 Nov 2026" / "Dates not set". */
-export function formatTripRange(start: string | null, end: string | null): string {
-  const s = parseIsoDate(start);
-  const e = parseIsoDate(end);
-  const fmt = (ms: number, withYear: boolean, withMonth = true) => {
-    const d = new Date(ms);
-    return [d.getUTCDate(), withMonth ? MONTHS[d.getUTCMonth()] : null, withYear ? d.getUTCFullYear() : null]
-      .filter((x) => x != null)
-      .join(' ');
-  };
-  if (s != null && e != null) {
-    const ds = new Date(s);
-    const de = new Date(e);
-    if (s === e) return fmt(s, true);
-    if (ds.getUTCFullYear() !== de.getUTCFullYear()) return `${fmt(s, true)} – ${fmt(e, true)}`;
-    if (ds.getUTCMonth() === de.getUTCMonth()) return `${ds.getUTCDate()}–${fmt(e, true)}`;
-    return `${fmt(s, false)} – ${fmt(e, true)}`;
-  }
-  if (s != null) return `From ${fmt(s, true)}`;
-  if (e != null) return `Until ${fmt(e, true)}`;
-  return 'Dates not set';
+/** Day number since the epoch (UTC, so DST never skews a difference). */
+function isoDayNumber(iso: string | null | undefined): number | null {
+  const p = isoParts(iso);
+  return p ? Date.UTC(p[0], p[1], p[2]) / 86_400_000 : null;
+}
+
+/** "Mon, 3 Nov" / "3 Kas Pzt" for trip day `dayIndex`, or null when the trip has no start date. */
+export function dayDateLabel(startDate: string | null | undefined, dayIndex: number, lng?: AppLanguage): string | null {
+  if (dayIndex < 0) return null;
+  const d = localDate(startDate, dayIndex);
+  return d ? formatDate(d, 'weekday', lng) : null;
+}
+
+/** The trip's date span in the app language, or "Dates not set". */
+export function formatTripRange(start: string | null, end: string | null, lng?: AppLanguage): string {
+  return formatDateRange(localDate(start), localDate(end), lng) ?? i18n.t('share:page.datesNotSet', { lng });
 }
 
 /** Inclusive day count from dates, falling back to the highest scheduled day. */
 export function tripDayCount(trip: Pick<SharedTrip['trip'], 'start_date' | 'end_date'>, sections: readonly DaySection[]): number {
-  const s = parseIsoDate(trip.start_date);
-  const e = parseIsoDate(trip.end_date);
-  const fromDates = s != null && e != null && e >= s ? Math.round((e - s) / 86_400_000) + 1 : 0;
+  const s = isoDayNumber(trip.start_date);
+  const e = isoDayNumber(trip.end_date);
+  const fromDates = s != null && e != null && e >= s ? Math.round(e - s) + 1 : 0;
   const fromPlaces = sections.reduce((max, sec) => Math.max(max, sec.dayIndex + 1), 0);
   return Math.max(fromDates, fromPlaces);
 }
@@ -91,13 +85,17 @@ export interface DayTab {
   sublabel: string | null;
 }
 
-export function buildDayTabs(startDate: string | null, sections: readonly DaySection[]): DayTab[] {
-  const tabs: DayTab[] = [{ key: 'all', label: 'Overview', sublabel: null }];
+export function buildDayTabs(startDate: string | null, sections: readonly DaySection[], lng?: AppLanguage): DayTab[] {
+  const tabs: DayTab[] = [{ key: 'all', label: i18n.t('share:timeline.overview', { lng }), sublabel: null }];
   for (const s of sections) {
     tabs.push(
       s.dayIndex < 0
-        ? { key: s.dayIndex, label: 'Unscheduled', sublabel: null }
-        : { key: s.dayIndex, label: `Day ${s.dayIndex + 1}`, sublabel: dayDateLabel(startDate, s.dayIndex) },
+        ? { key: s.dayIndex, label: i18n.t('share:timeline.unscheduled', { lng }), sublabel: null }
+        : {
+            key: s.dayIndex,
+            label: i18n.t('share:timeline.day', { lng, day: s.dayIndex + 1 }),
+            sublabel: dayDateLabel(startDate, s.dayIndex, lng),
+          },
     );
   }
   return tabs;
@@ -115,18 +113,20 @@ export function indexLegs(legs: readonly SharedTripLeg[]): globalThis.Map<string
   return m;
 }
 
-export function formatTravel(seconds: number | null, meters: number | null): string | null {
-  if (seconds == null || meters == null) return null;
-  const mins = Math.max(1, Math.round(seconds / 60));
-  const time = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60 ? `${mins % 60} min` : ''}`.trim() : `${mins} min`;
-  const km = meters / 1000;
-  return `${time} · ${km.toFixed(km < 10 ? 1 : 0)} km`;
+/** "10m · 2.5 km" (the duration alone when the distance is unknown), or null without a duration. */
+export function formatTravel(seconds: number | null, meters: number | null, lng?: AppLanguage): string | null {
+  if (seconds == null) return null;
+  const duration = formatDuration(Math.max(1, Math.round(seconds / 60)), lng);
+  if (meters == null) return duration;
+  return i18n.t('share:timeline.travel', { lng, duration, distance: formatDistance(meters, lng) });
 }
 
-export function formatVisit(minutes: number | null | undefined): string | null {
+/** True when the leg's time is an estimate (rendered with "≈"). */
+export function isEstimatedSharedLeg(leg: SharedTripLeg): boolean {
+  return leg.source != null && isEstimatedLeg({ source: leg.source });
+}
+
+export function formatVisit(minutes: number | null | undefined, lng?: AppLanguage): string | null {
   if (!minutes || minutes <= 0) return null;
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
+  return formatDuration(minutes, lng);
 }

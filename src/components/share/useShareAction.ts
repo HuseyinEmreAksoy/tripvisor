@@ -5,6 +5,7 @@
  * polite error when nothing worked. Pure UI state; no data fetching.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { i18n } from '@/i18n';
 import { shareLink, type ShareLinkInput, type ShareOutcome } from './shareSheet';
 
 const FEEDBACK_MS = 2500;
@@ -12,9 +13,9 @@ const FEEDBACK_MS = 2500;
 export function shareFeedbackMessage(outcome: ShareOutcome | null): string | null {
   switch (outcome) {
     case 'copied':
-      return 'Link copied to clipboard';
+      return i18n.t('share:feedback.copied');
     case 'failed':
-      return "Couldn't open sharing — copy the link instead.";
+      return i18n.t('share:feedback.failed');
     default:
       return null;
   }

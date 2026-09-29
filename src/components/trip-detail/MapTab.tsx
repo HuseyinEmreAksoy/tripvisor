@@ -33,6 +33,8 @@ import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
 import { getLocationPermissionState } from './locationPermission';
 import { useLocationExplainer } from '@/components/permissions';
 import { MapEmptyOverlay } from '@/components/Map/MapEmptyOverlay';
+import { legPolyline } from '@/components/Map/legGeometry';
+import { MapLegend, legendModesFor } from './itinerary/MapLegend';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 // v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
@@ -164,6 +166,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
     () => new Map(places.map((p) => [p.id, p])),
     [places],
   );
+  const ferryColor = t.colors.info;
 
   const allPolylinesFull = useMemo(() => {
     const result: MapPolyline[] = [];
@@ -180,30 +183,24 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
         result.push(...stepLines);
         continue;
       }
-      if (l.polyline) {
-        result.push({
-          id: l.id,
-          dayIndex: l.day_index,
-          points: decodePolyline(l.polyline),
-        });
-      } else {
-        // Transit fallback: straight dashed line.
-        const fromPlace = byPlaceId.get(l.from_place_id);
-        const toPlace = byPlaceId.get(l.to_place_id);
-        if (fromPlace && toPlace) {
-          result.push({
-            id: l.id,
-            dayIndex: l.day_index,
-            isDashed: true,
-            points: [],
-            from: { lat: fromPlace.lat, lng: fromPlace.lng },
-            to: { lat: toPlace.lat, lng: toPlace.lng },
-          });
-        }
-      }
+      // M5 Y3.3: per-mode styles — walk dotted, transit dashed, flight a
+      // dashed arc, ferry dashed in the info blue; legs without a polyline
+      // (estimate / user-timed) draw straight dashed (legGeometry).
+      const line = legPolyline(
+        l,
+        { from: byPlaceId.get(l.from_place_id), to: byPlaceId.get(l.to_place_id) },
+        ferryColor,
+      );
+      if (line) result.push(line);
     }
     return result;
-  }, [legs, byPlaceId]);
+  }, [legs, byPlaceId, ferryColor]);
+
+  // M5 Y3.3: legend chips for the leg modes actually drawn.
+  const legendModes = useMemo(
+    () => legendModesFor(legs.filter((l) => l.day_index >= 0 && byPlaceId.has(l.to_place_id))),
+    [legs, byPlaceId],
+  );
 
   const filteredPolylinesFull = useMemo(() => {
     if (effectiveSelectedDay === 'all') return allPolylinesFull;
@@ -558,6 +555,12 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
           }}
         />
         {places.length === 0 ? <MapEmptyOverlay placement={isDesktop ? 'bottom' : 'center'} /> : null}
+        {/* M5 Y3.3: per-mode line legend (only when styles are mixed) */}
+        {places.length > 0 && legendModes.length > 0 ? (
+          <View style={[styles.legend, { pointerEvents: 'box-none' }]}>
+            <MapLegend modes={legendModes} />
+          </View>
+        ) : null}
       </View>
       {locationExplainer.sheet}
     </View>
@@ -651,6 +654,8 @@ function RouteRenderModeControl({
 }
 
 const styles = StyleSheet.create({
+  // M5 Y3.3: legend floats bottom-left, above the provider's logo row.
+  legend: { position: 'absolute', left: 12, right: 12, bottom: 36, zIndex: 1, alignItems: 'flex-start' },
   // Desktop: floating controls card over the map (top-left).
   overlayPanel: {
     position: 'absolute',

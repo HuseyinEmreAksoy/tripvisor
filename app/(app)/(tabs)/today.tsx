@@ -33,7 +33,8 @@ import { TripSwitcher } from '@/components/today/TripSwitcher';
 import { UpcomingTripCard } from '@/components/today/UpcomingTripCard';
 import { useNow } from '@/components/today/useNow';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { activeTripsOn, nextUpcomingTrip } from '@/lib/tripToday';
+import { activeTripsOn, dayIndexFor, nextUpcomingTrip } from '@/lib/tripToday';
+import { MemoryQuickActions } from '@/components/memories/MemoryQuickActions';
 import { useTheme } from '@/theme';
 
 function todayLabel(now: Date): string {
@@ -68,6 +69,8 @@ export default function TodayScreen() {
 
   const active = activeTripsOn(trips ?? [], now);
   const selected = active.find((trip) => trip.id === selectedId) ?? active[0] ?? null;
+  // M5 Y3.1: today's trip day for the memory quick actions.
+  const todayDayIndex = selected ? dayIndexFor(selected, now) : null;
   const upcoming = active.length === 0 ? nextUpcomingTrip(trips ?? [], now) : null;
 
   let body: ReactNode;
@@ -96,6 +99,7 @@ export default function TodayScreen() {
           {selected.title}
         </Text>
         <LiveTripView key={selected.id} trip={selected} now={now} isDesktop={isDesktop} />
+        {todayDayIndex !== null ? <MemoryQuickActions tripId={selected.id} dayIndex={todayDayIndex} /> : null}
       </>
     );
   } else if (upcoming) {

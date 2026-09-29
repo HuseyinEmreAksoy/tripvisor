@@ -21,6 +21,12 @@ export interface MapPolyline {
    */
   isDashed?: boolean;
   /**
+   * M5 Y3.3: dotted stroke (walking legs). Wins over `isDashed`. Per-mode
+   * styles: walk dotted, transit dashed, flight dashed arc (MapTab builds
+   * the arc into `points`), ferry dashed in the info blue.
+   */
+  dotted?: boolean;
+  /**
    * v2 P1.2: explicit stroke color override (e.g. muted gray for WALK
    * connectors inside a transit route). When absent, providers fall back
    * to `dayColor(dayIndex)` — see {@link polylineColor}.

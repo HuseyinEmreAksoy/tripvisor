@@ -72,19 +72,12 @@ export type CurrencyCode = string;
  * and of every converted expense total. Owner-only on the server (editors
  * get 42501 from enforce_trips_column_restrictions_fn).
  *
- * M5 transition (deliberate, Y1.1): migration 0034 widened the DB CHECK from
- * these 5 codes to any ISO code (`^[A-Z]{3}$`), but this union stays the set
- * the CURRENT pickers offer (`trip/new.tsx` zod enum, TripSettingsSheet), so
- * in practice no client writes anything else yet. The step that ships the
- * widened home-currency picker (Y3.2) flips this line to
- * `export type TripCurrency = CurrencyCode;` in the same change as those
- * pickers (widening it earlier breaks `trip/new.tsx`'s zod-enum form type).
- * Code that only READS a trip currency should already take
- * {@link CurrencyCode} (money lib, formatters), and must not assume the value
- * is one of these 5 at runtime (another client or the dashboard may have
- * stored any ISO code).
+ * M5 Y3.2: widened to any ISO 4217 code (migration 0034 CHECK `^[A-Z]{3}$`),
+ * together with the widened pickers (`trip/new.tsx`, TripSettingsSheet's
+ * HomeCurrencySection) and `createTripSchema.currency`. Validate user input
+ * with the money lib's `normalizeCurrency` before writing.
  */
-export type TripCurrency = 'USD' | 'EUR' | 'GBP' | 'TRY' | 'JPY';
+export type TripCurrency = CurrencyCode;
 
 export interface Trip {
   id: Uuid;
@@ -558,6 +551,8 @@ export type CreateTripInput = {
   daily_hours_budget?: number;
   transport_mode?: TransportMode;
   timezone?: string | null;
+  /** M5 Y3.2: home currency (ISO 4217). Omitted = DB default (USD). */
+  currency?: TripCurrency;
 };
 
 export type CreateTripPlaceInput = {

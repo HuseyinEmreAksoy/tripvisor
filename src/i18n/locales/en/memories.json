@@ -1,1 +1,152 @@
-{}
+{
+  "title": "Memories",
+  "subtitle": "Your photos, journal and reviews",
+  "back": "Trip",
+  "loading": "Loading memories",
+  "dayLabel": "Day {{day}}",
+  "undated": "Not on a day",
+  "offline": "Offline. Showing what's saved on this device; new photos upload when you're back online.",
+  "sharedLoadError": "Couldn't load what your trip-mates shared.",
+  "leftTrip": "You're no longer on this trip. You can still make your own memories private or delete them.",
+  "actions": {
+    "addPhotos": "Add photos",
+    "addPhotosToDay": "Add photos to day {{day}}",
+    "shareDay": "Share day",
+    "privateDay": "Make day private",
+    "shareDayA11y": "Share all your memories from {{day}} with the trip",
+    "privateDayA11y": "Make all your memories from {{day}} private",
+    "shareAll": "Share all with trip",
+    "privateAll": "Make all private",
+    "retry": "Retry upload",
+    "retryAll": "Retry all",
+    "cancelUpload": "Cancel upload",
+    "delete": "Delete",
+    "deletePhoto": "Delete photo",
+    "removeFromTrip": "Remove from trip",
+    "save": "Save",
+    "close": "Close",
+    "previous": "Previous photo",
+    "next": "Next photo",
+    "openPhoto": "Open photo {{index}} of {{total}}",
+    "reload": "Try again",
+    "dismiss": "Dismiss"
+  },
+  "visibility": {
+    "label": "Share with trip",
+    "onlyMe": "Only you can see this",
+    "trip": "Everyone on the trip can see this",
+    "badgeShared": "Shared",
+    "badgePrivate": "Private",
+    "a11y": "Share this {{item}} with the trip"
+  },
+  "items": {
+    "photo": "photo",
+    "journal": "journal entry",
+    "review": "review"
+  },
+  "counts": {
+    "photos_one": "{{count}} photo",
+    "photos_other": "{{count}} photos",
+    "journal_one": "{{count}} journal entry",
+    "journal_other": "{{count}} journal entries",
+    "reviews_one": "{{count}} review",
+    "reviews_other": "{{count}} reviews"
+  },
+  "by": {
+    "tripmate": "Shared by a trip-mate"
+  },
+  "journal": {
+    "heading": "Journal",
+    "label": "Journal for day {{day}}",
+    "placeholder": "What happened today? Where did you eat, what surprised you?",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "unsaved": "Unsaved changes",
+    "deleteTitle": "Delete this journal entry?",
+    "deleteBody": "You can undo this for a few seconds."
+  },
+  "photo": {
+    "deleteTitle": "Delete this photo?",
+    "deleteBody": "It's removed for everyone it was shared with. You can undo this for a few seconds."
+  },
+  "moderation": {
+    "title": "Remove this from the trip?",
+    "body": "It disappears for everyone on the trip. Only the person who added it can share it again."
+  },
+  "review": {
+    "heading": "Your rating & review",
+    "subheading": "Private unless you share it with the trip. Separate from Google reviews.",
+    "loading": "Loading your review…",
+    "ratingGroup": "Your rating",
+    "starLabel_one": "{{count}} star",
+    "starLabel_other": "{{count}} stars",
+    "valueOfFive": "{{value}} of 5",
+    "noRating": "No stars yet",
+    "bodyLabel": "Your review",
+    "placeholder": "What stood out? Would you go back?",
+    "others": "Trip-mates' reviews",
+    "listHeading": "Places you rated",
+    "openPlace": "Open {{name}}",
+    "removedPlace": "A place no longer on the trip",
+    "deleteTitle": "Delete your review?",
+    "deleteBody": "Your stars and text are removed. You can undo this for a few seconds.",
+    "googleHeading": "Reviews from Google"
+  },
+  "upload": {
+    "uploading_one": "Uploading {{count}} photo",
+    "uploading_other": "Uploading {{count}} photos",
+    "progress": "{{percent}} uploaded",
+    "queued": "Waiting to upload",
+    "waitingNetwork": "Waiting for a connection",
+    "waitingSlot": "Waiting for other uploads to finish",
+    "failed": "Upload failed",
+    "failedCount_one": "{{count}} photo didn't upload",
+    "failedCount_other": "{{count}} photos didn't upload",
+    "partial_one": "{{count}} photo couldn't be added",
+    "partial_other": "{{count}} photos couldn't be added",
+    "notDurable": "Keep the app open until the uploads finish. They can't resume after a restart on this device."
+  },
+  "quota": {
+    "summary": "{{used}} of {{cap}} photos · {{mbUsed}} of {{mbCap}} MB",
+    "trip": "This trip: {{used}} of {{cap}} photos"
+  },
+  "errors": {
+    "quota_user": "You've reached your photo limit. Delete some photos to add more.",
+    "quota_user_bytes": "Your photo storage is full. Delete some photos to add more.",
+    "quota_pending": "Lots of photos are uploading. The rest will follow shortly.",
+    "quota_trip": "This trip has reached its photo limit.",
+    "storage_full": "Photo storage is full right now. Try again later.",
+    "unsupported_image": "This image type isn't supported. Try a JPEG or PNG.",
+    "image_too_large": "This photo is too large to upload.",
+    "exif_strip_failed": "We couldn't remove the location data from this photo, so it wasn't uploaded.",
+    "not_authenticated": "Please sign in again.",
+    "forbidden": "You can't change this.",
+    "network": "No connection. We'll try again when you're back online.",
+    "not_found": "This memory no longer exists.",
+    "generic": "Something went wrong. Please try again."
+  },
+  "lightbox": {
+    "label": "Photo viewer",
+    "position": "{{index}} of {{total}}",
+    "photoAlt": "Memory photo {{index}}",
+    "loading": "Loading photo",
+    "failed": "Couldn't load this photo",
+    "takenAt": "Taken {{date}}"
+  },
+  "hub": {
+    "empty": "Photos, journal and your own reviews. Private until you share.",
+    "a11y": "Open memories, {{summary}}",
+    "discoverTitle": "Discover",
+    "discoverSummary": "Places nearby that match your interests"
+  },
+  "today": {
+    "heading": "Capture today",
+    "addPhoto": "Add photo",
+    "adding": "Adding…",
+    "writeJournal": "Write today's journal"
+  },
+  "empty": {
+    "title": "No memories yet",
+    "body": "Add photos, write a few lines each day and rate the places you visit. Everything stays private until you share it with the trip."
+  }
+}

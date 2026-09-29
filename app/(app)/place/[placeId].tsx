@@ -21,6 +21,9 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTripPlaceReaction, useSetTripPlaceReaction } from '@/api/trip-place-reactions';
 import { useSession } from '@/api/auth';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
+import { useTripRole } from '@/hooks/useTripRole';
+import { PlaceReviewBlock } from '@/components/memories/PlaceReviewBlock';
 import type { PlacePhoto, PlaceReview } from '@/api';
 
 // Minimum character count beyond which the "Show more / Show less" toggle
@@ -79,6 +82,9 @@ export default function PlaceDetailsScreen() {
   const setReaction = useSetTripPlaceReaction();
 
   const hasTripContext = Boolean(tripPlaceId && tripId);
+  // M5 Y3.1: the user's own rating & review (any trip member may write one).
+  const { t: tx } = useT('memories');
+  const { role: tripRole, isLoading: roleLoading } = useTripRole(hasTripContext ? tripId : undefined);
 
   if (isLoading) {
     return (
@@ -160,6 +166,15 @@ export default function PlaceDetailsScreen() {
           </View>
         ) : null}
 
+        {hasTripContext && tripId && tripPlaceId ? (
+          <PlaceReviewBlock
+            tripId={tripId}
+            tripPlaceId={tripPlaceId}
+            canWrite={tripRole !== null || roleLoading}
+            isOwner={tripRole === 'owner'}
+          />
+        ) : null}
+
         {place.rating != null ? (
           <View style={styles.ratingRow}>
             <Icon name="star" size={18} color={t.colors.warning} />
@@ -207,7 +222,7 @@ export default function PlaceDetailsScreen() {
         {/* ── Reviews — with per-card Show more / Show less (Step 23.5 + 23.6) */}
         {renderedReviews.length > 0 ? (
           <View style={{ gap: t.spacing.sm }}>
-            <Heading level={3}>Reviews</Heading>
+            <Heading level={3}>{tx('review.googleHeading')}</Heading>
             {renderedReviews.map((r) => (
               <ReviewCard key={r.name} review={r} />
             ))}

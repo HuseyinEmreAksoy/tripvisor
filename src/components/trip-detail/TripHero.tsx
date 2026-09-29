@@ -281,7 +281,9 @@ export function RouteChipRow({
   return (
     <View style={{ gap: t.spacing.xs }}>
       {row}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{statusPill}</View>
+      {/* Column, not a row: the pill may wrap its text to the screen width
+          (a row child would overflow and clip — "Rota hızn…"). */}
+      <View style={{ alignItems: 'flex-start', maxWidth: '100%' }}>{statusPill}</View>
     </View>
   );
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ScrollView } from 'react-native';
 import { ThemeProvider } from '@/theme';
@@ -7,6 +7,7 @@ import { i18n, setLanguagePreference } from '@/i18n';
 import { PENDING_REDIRECT_KEY, PENDING_REDIRECT_TTL_MS } from '@/lib/pendingRedirect';
 import { Onboarding } from '../Onboarding';
 import { ONBOARDING_SEEN_KEY, markOnboardingSeen, shouldShowOnboarding } from '../onboardingFlag';
+import { readPendingInterests } from '@/components/discover/pendingInterests';
 
 function setup() {
   const onFinish = jest.fn();
@@ -24,16 +25,18 @@ function setup() {
 
 // Jest pins the device to English; expected copy comes from the same keys.
 const t = i18n.t.bind(i18n);
-const dot = (n: number) =>
-  t('onboarding:goToCard', { current: n, total: 3, kicker: t(`onboarding:cards.${(['ai', 'route', 'offline'] as const)[n - 1]!}.kicker`) });
+const kickerOf = (n: number) =>
+  n === 4 ? t('discover:onboarding.kicker') : t(`onboarding:cards.${(['ai', 'route', 'offline'] as const)[n - 1]!}.kicker`);
+const dot = (n: number) => t('onboarding:goToCard', { current: n, total: 4, kicker: kickerOf(n) });
 
 describe('Onboarding', () => {
-  it('walks through the three cards and exits to signup', () => {
+  it('walks through the four cards and exits to signup', () => {
     const { getByRole, getByText, onFinish, queryByRole } = setup();
     expect(getByText(t('onboarding:cards.ai.title'))).toBeTruthy();
     expect(queryByRole('button', { name: t('common:actions.back') })).toBeNull();
     fireEvent.press(getByRole('button', { name: t('common:actions.next') }));
     expect(getByRole('button', { name: t('common:actions.back') })).toBeTruthy();
+    fireEvent.press(getByRole('button', { name: t('common:actions.next') }));
     fireEvent.press(getByRole('button', { name: t('common:actions.next') }));
     expect(queryByRole('button', { name: t('common:actions.next') })).toBeNull();
     fireEvent.press(getByRole('button', { name: t('onboarding:createAccount') }));
@@ -48,9 +51,31 @@ describe('Onboarding', () => {
 
   it('dots jump straight to a card', () => {
     const { getByRole, onFinish } = setup();
-    fireEvent.press(getByRole('button', { name: dot(3) }));
+    fireEvent.press(getByRole('button', { name: dot(4) }));
     fireEvent.press(getByRole('button', { name: t('onboarding:haveAccount') }));
     expect(onFinish).toHaveBeenCalledWith('login');
+  });
+});
+
+describe('Onboarding interests card (M5 Y3.4)', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('remembers the picked interests for after sign-up', async () => {
+    const { getByRole, findByText } = setup();
+    fireEvent.press(getByRole('button', { name: dot(4) }));
+    expect(await findByText(t('discover:onboarding.title'))).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(getByRole('checkbox', { name: t('discover:interests.food') }));
+    });
+    await act(async () => {
+      fireEvent.press(getByRole('checkbox', { name: t('discover:interests.history') }));
+    });
+    expect(await findByText(t('discover:onboarding.selected', { count: 2 }))).toBeTruthy();
+    await waitFor(async () =>
+      expect(await readPendingInterests()).toEqual(['history', 'food']),
+    );
   });
 });
 
@@ -68,7 +93,7 @@ describe('Onboarding in Turkish', () => {
       await setLanguagePreference('tr');
     });
     expect(await findByText('Saniyeler içinde ilk taslak')).toBeTruthy();
-    expect(getByText('Yapay zekâyla planla · 1/3')).toBeTruthy();
+    expect(getByText('Yapay zekâyla planla · 1/4')).toBeTruthy();
     expect(getByRole('button', { name: 'Tanıtımı geç' })).toBeTruthy();
     expect(getByRole('button', { name: 'İleri' })).toBeTruthy();
   });

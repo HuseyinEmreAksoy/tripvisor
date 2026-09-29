@@ -18,7 +18,7 @@ describe('DayJumpStrip', () => {
       </ThemeProvider>,
     );
     expect(getByText('D2 Tue 13 · Today')).toBeTruthy();
-    const today = getByRole('tab', { name: /Jump to Day 2, Tuesday 13 October, today/ });
+    const today = getByRole('tab', { name: /Jump to Day 2, .*Tuesday.*, today/ });
     expect(today.props.accessibilityState).toMatchObject({ selected: true });
     fireEvent.press(getByRole('tab', { name: /Jump to Day 3/ }));
     expect(onJump).toHaveBeenCalledWith(2);

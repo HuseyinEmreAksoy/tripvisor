@@ -45,18 +45,34 @@ export const MAX_AMOUNT_LENGTH = 10;
  * Input that isn't a plain decimal (e.g. typed "12,5" on web) is normalized
  * to "." first so the keypad and the keyboard agree.
  */
-export function applyAmountKey(text: string, key: AmountKey): string {
-  const current = text.replace(',', '.');
+export function applyAmountKey(
+  text: string,
+  key: AmountKey,
+  options: { decimalSeparator?: '.' | ','; maxDecimals?: number } = {},
+): string {
+  // M5 Y3.2: the keypad writes the APP LANGUAGE's separator ('12,50' in tr);
+  // the '.' key means "decimal separator". Default '.' keeps the X2.4 behavior.
+  const sep = options.decimalSeparator ?? '.';
+  const other = sep === '.' ? ',' : '.';
+  const maxDecimals = options.maxDecimals ?? 2;
+  const current = text.split(other).join(sep);
   if (key === 'back') return current.slice(0, -1);
   if (current.length >= MAX_AMOUNT_LENGTH) return current;
   if (key === '.') {
-    if (current.includes('.')) return current;
-    return current.length === 0 ? '0.' : `${current}.`;
+    if (maxDecimals === 0 || current.includes(sep)) return current;
+    return current.length === 0 ? `0${sep}` : `${current}${sep}`;
   }
-  const dot = current.indexOf('.');
-  if (dot >= 0 && current.length - dot > 2) return current; // 2 decimals max
+  const dot = current.indexOf(sep);
+  if (dot >= 0 && current.length - dot > maxDecimals) return current; // currency's minor units max
   if (current === '0') return key; // replace a lone leading zero
   return current + key;
+}
+
+/** An amount as editable text in the app language ('12.5' → '12,5' for ','). */
+export function amountToInputText(amount: number | null | undefined, decimalSeparator: '.' | ',' = '.'): string {
+  if (amount == null || !Number.isFinite(amount)) return '';
+  const text = String(amount);
+  return decimalSeparator === ',' ? text.replace('.', ',') : text;
 }
 
 /**

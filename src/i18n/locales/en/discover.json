@@ -1,1 +1,138 @@
-{}
+{
+  "title": "Discover",
+  "subtitle": "Places worth a detour, picked by what you love",
+  "interests": {
+    "history": "History",
+    "food": "Food",
+    "nature": "Nature",
+    "museums": "Museums",
+    "nightlife": "Nightlife",
+    "shopping": "Shopping",
+    "kids": "Kids",
+    "viewpoints": "Viewpoints"
+  },
+  "interestsGroupA11y": "Interests",
+  "saveDefault": "Save as my interests",
+  "savedDefault": "Saved as your interests",
+  "center": {
+    "label": "Search around",
+    "trip": "Whole trip",
+    "day": "Day {{n}}",
+    "here": "My location",
+    "locating": "Finding you…",
+    "denied": "Location access is off, so we're searching around your trip instead.",
+    "unavailable": "Your location isn't available right now, so we're searching around your trip instead."
+  },
+  "view": {
+    "list": "List",
+    "map": "Map"
+  },
+  "searching": "Searching nearby…",
+  "searchingSlow": "The first search in a new area can take a few seconds.",
+  "loadingA11y": "Loading recommendations",
+  "results_one": "{{count}} place nearby",
+  "results_other": "{{count}} places nearby",
+  "distanceAway": "{{distance}} away",
+  "card": {
+    "openA11y": "{{name}}, {{distance}} away. Show details",
+    "localName": "Local name: {{name}}"
+  },
+  "wiki": {
+    "source": "Wikipedia · CC BY-SA",
+    "readMore": "Read on Wikipedia",
+    "readMoreA11y": "Read about {{name}} on Wikipedia (opens in your browser)"
+  },
+  "attribution": {
+    "osmA11y": "Map data {{text}} (opens in your browser)",
+    "wiki": "Summaries from Wikipedia, CC BY-SA",
+    "wikiA11y": "Wikipedia summaries are licensed CC BY-SA (opens the licence in your browser)"
+  },
+  "degraded": {
+    "partial": "Some of the area couldn't be searched. Results may be incomplete.",
+    "user_quota": "You've used today's new-area searches. Showing places we already know about.",
+    "global_cap": "Discover is very busy today. Showing places we already know about.",
+    "overpass_unavailable": "The map data service is slow right now, so these picks come from Wikipedia only.",
+    "cache_only": "Discover is running in saved-results mode. Some areas may show nothing new."
+  },
+  "error": {
+    "quota_exceeded": "You've reached today's Discover searches. They reset at midnight UTC.",
+    "recommendations_disabled": "Discover is paused for maintenance. Please try again later.",
+    "not_authenticated": "Sign in again to see recommendations.",
+    "generic": "We couldn't load recommendations. Check your connection and try again.",
+    "offline": "You're offline. Discover needs a connection to search nearby.",
+    "retry": "Try again"
+  },
+  "empty": {
+    "title": "Nothing matched here",
+    "body": "Try another interest, or search around a different day."
+  },
+  "pickInterests": {
+    "title": "What are you into?",
+    "body": "Pick one or more interests above and we'll find places near your trip."
+  },
+  "noCenter": {
+    "title": "Where should we look?",
+    "body": "This trip has no places yet. Add a place, or search around where you are now.",
+    "useLocation": "Use my location"
+  },
+  "detail": {
+    "sheetA11y": "Place details",
+    "resolving": "Looking this place up on Google…",
+    "rating": "{{rating}} / 5",
+    "ratingCount_one": "({{count}} review)",
+    "ratingCount_other": "({{count}} reviews)",
+    "ratingA11y": "Rated {{rating}} out of 5 on Google",
+    "noRating": "No Google rating yet",
+    "reviewsTitle": "Reviews from Google",
+    "reviewA11y": "Review by {{name}}, {{rating}} out of 5",
+    "detailsError": "Couldn't load the Google rating. You can still add the place.",
+    "openInMaps": "Open in Google Maps",
+    "openInMapsA11y": "Open {{name}} in Google Maps (opens in your browser)",
+    "addTo": "Add to",
+    "ideas": "Ideas",
+    "day": "Day {{n}}",
+    "add": "Add to trip",
+    "addedIdeas": "Added to Ideas",
+    "addedDay": "Added to Day {{n}}",
+    "movedToIdeas": "Added to Ideas. We couldn't put it on Day {{n}}, so move it from the itinerary.",
+    "matchedAs": "Saved as “{{name}}” from Google Maps",
+    "viewOnly": "You can view this trip, but only editors can add places.",
+    "close": "Close"
+  },
+  "addError": {
+    "no_match": "We couldn't match this to a map place, so it can't be added yet.",
+    "quota_exceeded": "You've used today's place searches. Try again tomorrow.",
+    "places_unavailable": "Place search is unavailable right now. Check your connection and try again.",
+    "not_authenticated": "Sign in again to add places.",
+    "already_in_trip": "This place is already in your trip.",
+    "create_failed": "We couldn't add the place. Please try again.",
+    "invalid_input": "This suggestion is missing a location, so it can't be added."
+  },
+  "quickAdd": {
+    "label": "Discover nearby",
+    "hint": "Ideas around your trip, picked by interest"
+  },
+  "onboarding": {
+    "kicker": "Your interests",
+    "title": "What do you love on a trip?",
+    "body": "Pick a few. Discover suggests places around your trip that match, and you can change them anytime in Profile.",
+    "selected_one": "{{count}} picked",
+    "selected_other": "{{count}} picked"
+  },
+  "prefs": {
+    "section": "Travel preferences",
+    "interestsTitle": "Interests",
+    "interestsHint": "Discover starts with these selected.",
+    "currencyTitle": "Default home currency",
+    "currencyHint": "New trips start in this currency. Each trip can still use its own.",
+    "currencyNone": "Not set",
+    "currencyGroupA11y": "Default home currency",
+    "currencyMore": "More…",
+    "currencySearch": "Search a currency code",
+    "currencySearchA11y": "Search a currency code, for example CHF",
+    "currencyNoMatch": "No currency matches “{{query}}”",
+    "languageSynced": "Your language is saved to your account too, so a new phone opens in it.",
+    "saveError": "Couldn't save your preferences. Check your connection and try again.",
+    "loading": "Loading your preferences"
+  }
+}

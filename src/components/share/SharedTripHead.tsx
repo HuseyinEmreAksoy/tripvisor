@@ -40,6 +40,7 @@ export function SharedTripHead({ trip, places, url }: Props) {
 
   return (
     <Head>
+      {/* i18n-ignore — brand suffix; OG/title tags unchanged (Y3.5) */}
       <title>{`${tripTitle} · Tripvisor`}</title>
       <meta name="description" content={summary} />
       <meta property="og:title" content={`${tripTitle} · Tripvisor`} />

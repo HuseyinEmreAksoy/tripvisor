@@ -30,6 +30,8 @@ export interface HubCardProps {
   accessory?: ReactNode;
   /** Revealed below the card while `expanded`. */
   children?: ReactNode;
+  /** Replaces the 40 px icon tile (e.g. the latest memory photo, M5 Y3.1). */
+  media?: ReactNode;
 }
 
 export function HubCard({
@@ -41,6 +43,7 @@ export function HubCard({
   expanded,
   accessory,
   children,
+  media,
 }: HubCardProps) {
   const t = useTheme();
   const isAccordion = expanded !== undefined;
@@ -70,14 +73,16 @@ export function HubCard({
           },
         ]}
       >
-        <View
-          style={[
-            styles.iconWrap,
-            { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md },
-          ]}
-        >
-          <Icon name={icon} size={20} color={t.colors.primary} />
-        </View>
+        {media ?? (
+          <View
+            style={[
+              styles.iconWrap,
+              { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.md },
+            ]}
+          >
+            <Icon name={icon} size={20} color={t.colors.primary} />
+          </View>
+        )}
         <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
           <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{title}</Text>
           <Text numberOfLines={2} style={[t.typography.caption, { color: t.colors.textMuted }]}>
