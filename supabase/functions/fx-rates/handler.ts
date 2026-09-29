@@ -40,22 +40,36 @@
 //   quota_exceeded 429 · quota_unavailable 503 · rates_unavailable 503 ·
 //   auth_unavailable 503 · internal_error 500
 //
-// Caching (fx_rates, 0034): one EUR table per REQUESTED date. Upstream is
-// hit at most once per date in normal operation:
-//   - a date whose reference set was published for that day, or that was
-//     fetched after the day ended (UTC), is final and never refetched;
-//   - today's table is refetched after 6 h (ADR-0012), and once more after
-//     midnight so it settles on the day's real publication;
-//   - a requested code missing from a cached table triggers at most one
-//     refetch per hour (a partially failed fill heals, garbage codes stay cheap);
-//   - concurrent requests for the same date inside one isolate share one fill.
+// Caching (fx_rates, 0034): one EUR table per REQUESTED date.
+//   - TODAY ('latest') is stored whole (~166 codes; the currencies picker
+//     lists it). It is refetched after 6 h (ADR-0012) and once more after
+//     midnight so it settles on the day's real publication. A code missing
+//     from it is re-asked at most once an hour (garbage codes stay cheap).
+//   - A PAST day stores only the ECB reference set (~29 codes) plus the codes
+//     callers asked for (Wave-1 review #8: storing the whole blend for every
+//     expense date added ~166 rows per date). Its first fill calls only the
+//     ECB endpoint when every requested code is an ECB code, else ECB + blend.
+//     A later request for a code not stored yet runs a TOP-UP (blend only,
+//     one call) that appends just that code. A code the blend turned out not
+//     to have is not re-asked for an hour (per isolate, planFill).
+//     So a past day's whole-table / `currencies` answer from cache lists the
+//     ECB set plus the codes asked for so far, not all 166. Ask for the codes
+//     you need (the client always does: pair mode).
+//   - A day whose reference set was published for that day, or that was
+//     fetched after the day ended (UTC), is final and never refetched.
+//   - Concurrent requests for one date inside one isolate share one fill; a
+//     request that rode a fill planned for other codes tops up on its own.
 //   Rows stored under a date other than their publication date carry it in
 //   `source` as '<provider>@YYYY-MM-DD' (rates.ts encodeSource).
 //
 // Quotas (fail closed): a signed-in user is required (requireUser: the public
-// anon key gets 401). Only FILLS spend anything upstream, so only fills are
-// metered: FX_USER_DAILY_FILLS per user per UTC day, and the global
-// service_usage caps 'frankfurter' / 'currency_api' (0037). Cache hits are free.
+// anon key gets 401). Only FILLS (top-ups included) spend anything upstream,
+// so only fills are metered: FX_USER_DAILY_FILLS per user per UTC day, and
+// the global service_usage caps 'frankfurter' (per call) / 'currency_api'
+// (0037). Cache hits are free. When a requested rate is missing because a
+// fill was refused or upstream failed, the answer is that quota error or
+// 503 rates_unavailable, never 422 unsupported_currency: the client treats
+// 422 as permanent, the others as "rate pending, retry later".
 //
 // Pure w.r.t. I/O: every side effect goes through FxDeps (deps.ts wires
 // supabase-js), so index.test.ts drives the whole flow with fakes.
@@ -75,8 +89,10 @@ import { type FetchFn, fetchJson, userAgent } from '../_shared/upstream.ts';
 import {
   addDays,
   crossRate,
+  ECB_CODES,
   effectiveDate,
   eurRate,
+  type FillMode,
   FX_BASE,
   FX_CONTRACT_VERSION,
   type FxSource,
@@ -86,6 +102,8 @@ import {
   needsRefresh,
   parseCurrencyApi,
   parseFrankfurterV2,
+  pastDayRowsToKeep,
+  planFill,
   type RateRow,
   referenceDate,
   resolveRequestDate,
@@ -106,15 +124,22 @@ const MAX_UPSTREAM_BYTES = 512 * 1024;
 const STALE_WINDOW_DAYS = 7;
 
 /**
- * Daily caps. A fill costs 2 Frankfurter calls (ECB + blend), plus 1
- * currency-api call only when both fail. Normal use is "about one fill per
- * distinct date across all users" (ADR-0012): these caps only bound abuse
- * and runaway loops, far below anything Frankfurter's abuse limiter cares
- * about (it has no quotas; responses are Cloudflare-cached).
+ * Daily caps. A fill costs 1–2 Frankfurter calls (ECB and/or blend; a
+ * top-up is 1), plus 1 currency-api call only when Frankfurter could not
+ * answer. Normal use is "about one fill per distinct date across all users"
+ * (ADR-0012) plus a top-up per non-ECB currency and past date: these caps
+ * only bound abuse and runaway loops, far below anything Frankfurter's abuse
+ * limiter cares about (it has no quotas; responses are Cloudflare-cached).
+ * 20 fills per user per day (Wave-1 review #8; was 60) still covers entering
+ * a two-to-three-week trip's back-dated expenses in one sitting, and keeps
+ * one account from spending more than ~40 of the global 600 calls. A refused
+ * fill leaves the expense "rate pending" for the reconciler.
  */
-export const FX_USER_DAILY_FILLS = 60;
+export const FX_USER_DAILY_FILLS = 20;
 export const FRANKFURTER_DAILY_CALLS = 600;
 export const CURRENCY_API_DAILY_CALLS = 200;
+/** Bound on the per-isolate "upstream has no rate for this code" memory. */
+const ABSENT_MEMORY_MAX = 1000;
 
 export type UsageOutcome = 'ok' | 'exceeded' | 'unavailable';
 
@@ -200,59 +225,122 @@ async function readInput(req: Request, url: URL): Promise<unknown> {
 // Upstream fill
 // ---------------------------------------------------------------------------
 
+interface FillRequest {
+  date: string;
+  latest: boolean;
+  mode: FillMode;
+  /** The request's non-EUR codes (base + quotes). */
+  wanted: readonly string[];
+  /** Codes already cached for `date`: a top-up never rewrites them. */
+  stored: ReadonlySet<string>;
+}
+
 type FillResult =
-  | { ok: true; rows: Map<string, RateRow>; fetchedAt: number }
+  | {
+      ok: true;
+      /** Everything fetched (the response may use all of it; fewer rows are stored for a past day). */
+      rows: Map<string, RateRow>;
+      fetchedAt: number;
+      /**
+       * false = a source that could have held a still-missing wanted code
+       * did not answer, so "missing" means "unavailable now", not "unsupported".
+       */
+      complete: boolean;
+      /** Wanted codes the blend answered WITHOUT (upstream has no rate that day). */
+      absent: string[];
+    }
   | { ok: false; reason: string; quota?: 'exceeded' | 'unavailable' };
 
-async function fill(
-  deps: FxDeps,
-  date: string,
-  latest: boolean,
-  requestId: string,
-): Promise<FillResult> {
+type FillOk = Extract<FillResult, { ok: true }>;
+
+interface TableFetch {
+  answered: boolean;
+  rows: RateRow[];
+}
+
+const NOT_FETCHED: TableFetch = { answered: false, rows: [] };
+
+/**
+ * Fetch one day's rates (metered), store the part worth keeping, and return
+ * everything fetched. Endpoints per plan:
+ *   today ('latest', always 'full') -> ECB + blend; the whole table is stored;
+ *   past day, 'full'  -> ECB, plus the blend only when a wanted code is
+ *                        outside the ECB set (or the ECB call failed / lacked
+ *                        one); stores pastDayRowsToKeep (ECB set + wanted);
+ *   past day, 'topup' -> the blend only; stores the wanted codes not cached yet.
+ * currency-api is the last resort when Frankfurter gave nothing, or when the
+ * blend did not answer and a wanted code is still missing.
+ */
+async function fill(deps: FxDeps, req: FillRequest, requestId: string): Promise<FillResult> {
+  const { date, latest, mode } = req;
+  const wanted = new Set(req.wanted);
   const ua = userAgent(FN, deps.contact);
   const headers = { 'User-Agent': ua, Accept: 'application/json' };
   const common = { fetchFn: deps.fetch, timeoutMs: UPSTREAM_TIMEOUT_MS, retries: 1, headers, maxBytes: MAX_UPSTREAM_BYTES };
 
-  let ecbRows: RateRow[] = [];
-  let blendRows: RateRow[] = [];
-  const budget = await deps.consumeService('frankfurter', 2, FRANKFURTER_DAILY_CALLS);
-  if (budget === 'ok') {
-    const [ecb, blend] = await Promise.all([
-      fetchJson(`${FRANKFURTER_BASE_URL}/v2/providers/ecb/rates?date=${date}`, common),
-      fetchJson(`${FRANKFURTER_BASE_URL}/v2/rates?date=${date}`, common),
-    ]);
-    if (ecb.ok) ecbRows = parseFrankfurterV2(ecb.data, 'frankfurter-ecb', date);
-    if (blend.ok) blendRows = parseFrankfurterV2(blend.data, 'frankfurter', date);
+  const frankfurter = async (kind: 'ecb' | 'blend'): Promise<TableFetch> => {
+    const source: FxSource = kind === 'ecb' ? 'frankfurter-ecb' : 'frankfurter';
+    const url =
+      kind === 'ecb'
+        ? `${FRANKFURTER_BASE_URL}/v2/providers/ecb/rates?date=${date}`
+        : `${FRANKFURTER_BASE_URL}/v2/rates?date=${date}`;
+    const res = await fetchJson(url, common);
+    const rows = res.ok ? parseFrankfurterV2(res.data, source, date) : [];
     log({
       requestId,
       fn: FN,
-      level: ecb.ok && blend.ok ? 'info' : 'warn',
+      level: res.ok ? 'info' : 'warn',
       stage: 'upstream',
-      provider: 'frankfurter',
+      provider: source,
       date,
-      ecb: ecb.ok ? ecbRows.length : ecb.reason,
-      blend: blend.ok ? blendRows.length : blend.reason,
-      duration_ms: Math.max(ecb.durationMs, blend.durationMs),
+      mode,
+      rows: res.ok ? rows.length : res.reason,
+      duration_ms: res.durationMs,
     });
+    return { answered: res.ok, rows };
+  };
+  const lacks = (fetched: TableFetch) => [...wanted].some((c) => !fetched.rows.some((r) => r.quote === c));
+
+  const callEcb = mode === 'full';
+  const callBlend = latest || mode === 'topup' || [...wanted].some((c) => !ECB_CODES.has(c));
+  let ecb = NOT_FETCHED;
+  let blend = NOT_FETCHED;
+  const budget = await deps.consumeService('frankfurter', (callEcb ? 1 : 0) + (callBlend ? 1 : 0), FRANKFURTER_DAILY_CALLS);
+  if (budget === 'ok') {
+    [ecb, blend] = await Promise.all([
+      callEcb ? frankfurter('ecb') : Promise.resolve(NOT_FETCHED),
+      callBlend ? frankfurter('blend') : Promise.resolve(NOT_FETCHED),
+    ]);
+    // A past day planned as ECB-only whose ECB call failed or lacked a
+    // wanted code: the blend is the next-best source (one more call).
+    if (!callBlend && (!ecb.answered || lacks(ecb))) {
+      const more = await deps.consumeService('frankfurter', 1, FRANKFURTER_DAILY_CALLS);
+      if (more === 'ok') blend = await frankfurter('blend');
+      else log({ requestId, fn: FN, level: 'warn', stage: 'upstream', provider: 'frankfurter', skipped: more });
+    }
   } else {
     log({ requestId, fn: FN, level: 'warn', stage: 'upstream', provider: 'frankfurter', skipped: budget });
   }
 
-  let fallbackRows: RateRow[] = [];
-  if (ecbRows.length === 0 && blendRows.length === 0) {
+  let rows = mergeRows(ecb.rows, blend.rows);
+  let fallbackAnswered = false;
+  const missingWanted = () => [...wanted].some((c) => !rows.has(c));
+  if (rows.size === 0 || (!blend.answered && missingWanted())) {
     const fb = await deps.consumeService('currency_api', 1, CURRENCY_API_DAILY_CALLS);
     if (fb === 'ok') {
       const tag = latest ? 'latest' : date;
       const res = await fetchJson(`${CURRENCY_API_BASE_URL}@${tag}/v1/currencies/eur.min.json`, common);
-      if (res.ok) fallbackRows = parseCurrencyApi(res.data, date, ISO_4217);
+      const fallbackRows = res.ok ? parseCurrencyApi(res.data, date, ISO_4217) : [];
+      fallbackAnswered = res.ok && fallbackRows.length > 0;
+      rows = mergeRows(ecb.rows, blend.rows, fallbackRows);
       log({
         requestId,
         fn: FN,
-        level: res.ok && fallbackRows.length > 0 ? 'info' : 'warn',
+        level: fallbackAnswered ? 'info' : 'warn',
         stage: 'upstream',
         provider: 'currency-api',
         date,
+        mode,
         rows: res.ok ? fallbackRows.length : res.reason,
         duration_ms: res.durationMs,
       });
@@ -260,21 +348,52 @@ async function fill(
       log({ requestId, fn: FN, level: 'warn', stage: 'upstream', provider: 'currency-api', skipped: fb });
     }
   }
-
-  const rows = mergeRows(ecbRows, blendRows, fallbackRows);
   if (rows.size === 0) return { ok: false, reason: budget === 'ok' ? 'upstream_failed' : `budget_${budget}` };
 
+  // Persist: today whole; a past day only what later requests will need.
+  const toStore = latest
+    ? [...rows.values()]
+    : mode === 'topup'
+      ? [...rows.values()].filter((r) => wanted.has(r.quote) && !req.stored.has(r.quote))
+      : pastDayRowsToKeep(rows.values(), wanted);
   const fetchedAt = deps.now();
-  const saved = await deps.saveSnapshot(date, [...rows.values()], new Date(fetchedAt).toISOString());
-  if (saved.error) {
-    // Serve the fresh rows anyway; the next request simply refetches.
-    log({ requestId, fn: FN, level: 'error', stage: 'cache_write', date, err: saved.error });
+  if (toStore.length > 0) {
+    const saved = await deps.saveSnapshot(date, toStore, new Date(fetchedAt).toISOString());
+    // On error serve the fresh rows anyway; the next request simply refetches.
+    log({
+      requestId,
+      fn: FN,
+      level: saved.error ? 'error' : 'info',
+      stage: 'cache_write',
+      date,
+      mode,
+      rows: toStore.length,
+      ...(saved.error ? { err: saved.error } : {}),
+    });
   }
-  return { ok: true, rows, fetchedAt };
+  return {
+    ok: true,
+    rows,
+    fetchedAt,
+    complete: blend.answered || fallbackAnswered || !missingWanted(),
+    absent: blend.answered ? [...wanted].filter((c) => !rows.has(c)) : [],
+  };
 }
 
-/** Per-isolate single flight: concurrent requests for one date share one fill. */
-const inflight = new Map<string, Promise<FillResult>>();
+/**
+ * The day's rows after a fill. A full fill's rows win over older cached ones
+ * (they are fresher); a top-up only adds codes the cache did not have. Codes
+ * only one side has are kept either way, as in fx_rates (upserts never delete).
+ */
+function withFill(snapshot: Snapshot | null, date: string, result: FillOk, mode: FillMode): Snapshot {
+  const rows = new Map<string, RateRow>();
+  const layers = mode === 'topup' ? [snapshot?.rows, result.rows] : [result.rows, snapshot?.rows];
+  for (const layer of layers) {
+    if (!layer) continue;
+    for (const [quote, r] of layer) if (!rows.has(quote)) rows.set(quote, r);
+  }
+  return { date, rows, fetchedAt: result.fetchedAt };
+}
 
 // ---------------------------------------------------------------------------
 // Response building
@@ -292,6 +411,29 @@ function summarizeSource(rows: ReadonlyMap<string, RateRow>, codes: readonly str
 }
 
 export function createHandler(deps: FxDeps): (req: Request) => Promise<Response> {
+  // Per-isolate state (one createHandler per isolate in index.ts; tests get
+  // a fresh one per world).
+  /** Single flight: concurrent requests for one date share one fill. */
+  const inflight = new Map<string, Promise<FillResult>>();
+  /**
+   * `${date}|${code}` -> ms: codes the blend answered a past day without.
+   * Stops a code upstream lacks (or a typo) from re-running a metered top-up
+   * on every request (planFill). Best effort: a new isolate forgets, and the
+   * per-user fill cap still bounds the cost. Oldest entries evicted first.
+   */
+  const absent = new Map<string, number>();
+  const noteAbsent = (date: string, codes: readonly string[], at: number) => {
+    for (const code of codes) {
+      const key = `${date}|${code}`;
+      absent.delete(key);
+      absent.set(key, at);
+    }
+    while (absent.size > ABSENT_MEMORY_MAX) {
+      const oldest = absent.keys().next().value as string;
+      absent.delete(oldest);
+    }
+  };
+
   return async function handler(req: Request): Promise<Response> {
     const origin = req.headers.get('origin');
     const requestId = newRequestId();
@@ -339,36 +481,63 @@ export function createHandler(deps: FxDeps): (req: Request) => Promise<Response>
       let cache: 'hit' | 'miss' | 'stale' = 'hit';
 
       const now = deps.now();
-      const missing = snapshot ? wanted.filter((c) => !snapshot!.rows.has(c)) : wanted;
-      const wantFill =
-        !snapshot ||
-        needsRefresh(snapshot, now) ||
-        (missing.length > 0 && now - snapshot.fetchedAt >= MISSING_QUOTE_RETRY_MS);
+      const isAbsent = (code: string): boolean => {
+        const at = absent.get(`${date}|${code}`);
+        return at !== undefined && now - at < MISSING_QUOTE_RETRY_MS;
+      };
 
       // 2. Fill (metered) when the cache can't answer. The in-flight entry is
       //    set synchronously, before any await, so concurrent requests for the
       //    same date join one fill (and one quota charge, the initiator's).
-      if (wantFill) {
+      //    A request that joined another's fill gets one more pass of its own
+      //    when that fill (planned for the other request's codes, or refused
+      //    by the other user's quota) left its codes out.
+      let mode = planFill(snapshot, wanted, resolved.latest, now, isAbsent);
+      const plannedFill = mode;
+      /** Why a still-missing rate is unavailable rather than unsupported. */
+      let denied: 'exceeded' | 'unavailable' | null = null;
+      let upstreamFailed = false;
+      for (let pass = 0; mode !== null && pass < 2; pass++) {
+        denied = null;
+        upstreamFailed = false;
         let pending = inflight.get(date);
         const initiator = !pending;
         if (!pending) {
+          const fillReq: FillRequest = {
+            date,
+            latest: resolved.latest,
+            mode,
+            wanted,
+            stored: new Set(snapshot ? snapshot.rows.keys() : []),
+          };
           pending = (async (): Promise<FillResult> => {
             const quota = await deps.consumeUserFills(userId, FX_USER_DAILY_FILLS);
             if (quota !== 'ok') return { ok: false, reason: `user_quota_${quota}`, quota };
-            return await fill(deps, date, resolved.latest, requestId);
+            const r = await fill(deps, fillReq, requestId);
+            if (r.ok && r.absent.length > 0) noteAbsent(date, r.absent, deps.now());
+            return r;
           })().finally(() => inflight.delete(date));
           inflight.set(date, pending);
         }
         const result = await pending;
         if (result.ok) {
-          snapshot = { date, rows: result.rows, fetchedAt: result.fetchedAt };
+          snapshot = withFill(snapshot, date, result, mode);
           cache = 'miss';
+          upstreamFailed = !result.complete;
         } else if (result.quota && initiator) {
           log({ requestId, fn: FN, level: 'warn', stage: 'quota', userId, outcome: result.quota });
           if (!snapshot) return fxQuotaDenied(result.quota, origin, now);
+          denied = result.quota;
         } else {
           log({ requestId, fn: FN, level: 'warn', stage: 'fill', date, err: result.reason, have_cached: !!snapshot });
+          upstreamFailed = true;
         }
+        if (initiator) break;
+        const current: Snapshot | null = snapshot;
+        const stillMissing = wanted.some((c) => !current?.rows.has(c) && !isAbsent(c));
+        const again = result.ok ? !resolved.latest && stillMissing : !!result.quota;
+        if (!again) break;
+        mode = !current || needsRefresh(current, now) ? 'full' : 'topup';
       }
 
       // 3. Stale fallback: upstream down and nothing cached for this date.
@@ -407,10 +576,23 @@ export function createHandler(deps: FxDeps): (req: Request) => Promise<Response>
         );
       }
 
-      // 4. Rates relative to the requested base.
-      if (eurRate(rows, input.base) === null) {
-        return errorResponse('unsupported_currency', `No rate available for ${input.base}`, 422, origin);
-      }
+      // 4. Rates relative to the requested base. A rate missing because a
+      //    fill was refused or upstream failed is "not now", not
+      //    "unsupported": answer the quota error / 503 so the client keeps the
+      //    expense as "rate pending" (422 is a permanent error to it).
+      const unavailable = (codes: readonly string[]): Response => {
+        if (denied) return fxQuotaDenied(denied, origin, now);
+        if (upstreamFailed) {
+          return errorResponse(
+            'rates_unavailable',
+            'Exchange rates are temporarily unavailable. Please retry later.',
+            503,
+            origin,
+          );
+        }
+        return errorResponse('unsupported_currency', `No rate available for ${codes.join(', ')}`, 422, origin);
+      };
+      if (eurRate(rows, input.base) === null) return unavailable([input.base]);
       const quotes = input.quotes.length > 0 ? input.quotes : [FX_BASE, ...rows.keys()].filter((c) => c !== input.base);
       const rates: Record<string, number> = {};
       const missingQuotes: string[] = [];
@@ -419,9 +601,7 @@ export function createHandler(deps: FxDeps): (req: Request) => Promise<Response>
         if (r === null) missingQuotes.push(q);
         else rates[q] = r;
       }
-      if (Object.keys(rates).length === 0 && quotes.length > 0) {
-        return errorResponse('unsupported_currency', `No rate available for ${missingQuotes.join(', ')}`, 422, origin);
-      }
+      if (Object.keys(rates).length === 0 && quotes.length > 0) return unavailable(missingQuotes);
       const used = [input.base, ...Object.keys(rates)];
       const body: Record<string, unknown> = {
         base: input.base,
@@ -445,6 +625,7 @@ export function createHandler(deps: FxDeps): (req: Request) => Promise<Response>
         date,
         base: input.base,
         quotes: input.quotes.length,
+        fill: plannedFill,
         cache,
         stale,
         duration_ms: deps.now() - startedAt,
@@ -474,7 +655,7 @@ function fxQuotaDenied(outcome: 'exceeded' | 'unavailable', origin: string | nul
     {
       error: {
         code: 'quota_exceeded',
-        message: `Daily exchange-rate lookup limit reached (${FX_USER_DAILY_FILLS} new dates/day). It resets at 00:00 UTC.`,
+        message: `Daily exchange-rate lookup limit reached (${FX_USER_DAILY_FILLS} new rate lookups/day). It resets at 00:00 UTC.`,
         kind: 'fx_fills',
         limit: FX_USER_DAILY_FILLS,
       },

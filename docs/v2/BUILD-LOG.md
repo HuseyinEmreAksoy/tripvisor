@@ -134,7 +134,7 @@
   Risks: [Med] Hermes lacks `Intl.PluralRules`, which breaks plurals only on native. Mitigation: a guarded polyfill plus a Jest case that simulates its absence. [Med] string concatenation ("Day " + n) can't be translated. Mitigation: interpolation only; the reviewer greps `' + t(`.
 - ☐ **M5.S Security fixes (from audit)** — Agent: *TBD by the orchestrator* · Size: *TBD* · Depends: the parallel security audit
   Placeholder, filled by the orchestrator with the audit findings. Constraints: migration slot `0031` (then `0038+`). The files must be disjoint from Y1.1–Y1.4. If a fix lands in a file a Y step owns (`allowlist.ts`, `types.ts`, `delete-account`, `export-account`, `share-trip`), fold the fix into that step's brief instead of running a parallel edit. `share-trip` fixes should go to Y2.5 (Wave 2) unless they are urgent.
-- ☐ **Y1.G Wave-1 gate** — Agent: reviewer. The gate items above, plus: migrations 0031–0037 apply in order on a fresh local reset; the RLS read matrix (owner/editor/viewer/non-member × `only_me`); allowlist tests including the review-`rating` exception; `i18n:check`; the web export with new deps. **User "what to try":** switch Profile → Language to Türkçe, and the tabs, auth, onboarding and Profile are all Turkish, with dates and money formatted `1.234,50 ₺` style; set it back to System; the sign-in page on a Turkish-language phone opens in Turkish.
+- ☐ **Y1.G Wave-1 gate** — Agent: reviewer. The gate items above, plus: migrations 0031–0037 apply in order on a fresh local reset; the RLS read matrix (owner/editor/viewer/non-member × `only_me`); allowlist tests including the review-`rating` exception; `i18n:check`; the web export with new deps. **User "what to try":** switch Profile → Language to Türkçe, and the tabs, auth, onboarding and Profile are all Turkish, with dates and money formatted `₺1.234,50 (CLDR tr-TR)` style; set it back to System; the sign-in page on a Turkish-language phone opens in Turkish.
 
 ### Wave 2: Data layers, routing engine, visual foundation  *(Y2.1 ‖ Y2.2 ‖ Y2.3 ‖ Y2.4 ‖ Y2.5 in parallel; files disjoint)*
 - ☐ **Y2.1 Memories data layer + photo pipeline** — Agent: backend-specialist · Size: M · Depends: Y1.2
@@ -200,7 +200,7 @@
 - ☐ **Y3.2 Multi-currency UI** — Agent: ui-specialist · Size: M · Depends: Y2.2
   Task:
   - Owns `src/components/budget/*` (incl. `ExpenseEditSheet`), `TripSettingsSheet` (home currency picker with the widened list), `(tabs)/analytics.tsx` + `components/analytics/*`.
-  - The expense sheet has a currency chip row: home currency + recently used (e.g. EUR, TRY) + "More…" searchable. The keypad accepts the locale decimal separator, and a live "≈ 1.234,50 ₺" preview shows while typing.
+  - The expense sheet has a currency chip row: home currency + recently used (e.g. EUR, TRY) + "More…" searchable. The keypad accepts the locale decimal separator, and a live "≈ ₺1.234,50 (CLDR tr-TR)" preview shows while typing.
   - Budget card: the home-currency total, a **per-currency breakdown**, an "at entry rate / today's rate" toggle, and a "rate pending" chip.
   - Analytics shows everything in home currency.
   - Changing the home currency shows a confirm explaining the re-derivation.
@@ -275,7 +275,7 @@
 - Legal text translated by an agent. Needs a human or legal read before store submission.
 
 **Phase exit criteria (M5):**
-1. With Profile → Language set to Türkçe, every screen is Turkish. `i18n:check --strict` passes repo-wide in CI. Dates, numbers and money follow the app language (`1.234,50 ₺` vs `€1,234.50`). System mode follows the device.
+1. With Profile → Language set to Türkçe, every screen is Turkish. `i18n:check --strict` passes repo-wide in CI. Dates, numbers and money follow the app language (`₺1.234,50 (CLDR tr-TR)` vs `€1,234.50`). System mode follows the device.
 2. A trip with EUR and TRY expenses shows the home-currency total using the frozen rates, a per-currency breakdown, and a today's-rate view. An expense added offline gets its rate after reconnecting.
 3. A day with mixed modes (a drive leg, a transit leg, a flight with minutes) renders correct legs, ETAs (≈ on estimates) and per-mode map styles. Flight and ferry days keep the user's order.
 4. Photos upload at ≤ 350 KB with a thumbnail and no EXIF GPS. The journal and reviews work offline and sync. "Only me" items are invisible to other members and to the public. The quota and 900 MB guard produce clear messages.

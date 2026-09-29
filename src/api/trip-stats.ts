@@ -18,11 +18,29 @@ import type { Uuid } from './types';
 export interface TripStatsRow {
   user_id: Uuid;
   trip_id: Uuid;
+  /**
+   * In the trip's HOME currency (`trips.currency`, 0034). Pending expenses
+   * are excluded (0038); see `pending_*` below and the TripExpense JSDoc.
+   */
   total_actual_spend: number;
   total_estimated_spend: number;
   liked_count: number;
   disliked_count: number;
   place_count: number;
+  /**
+   * 0038: live expenses whose home-currency rate is not known yet (step 4 of
+   * the TripExpense conversion order). They are NOT in the totals above.
+   * Optional because backends before 0038 omit it.
+   */
+  pending_count?: number;
+  /**
+   * 0038: pending `actual` amounts summed per ORIGINAL currency,
+   * e.g. `{ EUR: 12.5 }`. `{}` when none. Show beside the total and never
+   * convert these on the client with a rate into another currency.
+   */
+  pending_actual_by_currency?: Partial<Record<string, number>>;
+  /** 0038: the same for `estimated` expenses. */
+  pending_estimated_by_currency?: Partial<Record<string, number>>;
 }
 
 export const tripStatsKeys = {

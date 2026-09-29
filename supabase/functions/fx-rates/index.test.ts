@@ -19,6 +19,7 @@ import { rowsToSnapshot } from './deps.ts';
 import {
   crossRate,
   decodeSource,
+  ECB_CODES,
   effectiveDate,
   encodeSource,
   isFinal,
@@ -26,6 +27,8 @@ import {
   needsRefresh,
   parseCurrencyApi,
   parseFrankfurterV2,
+  pastDayRowsToKeep,
+  planFill,
   type RateRow,
   resolveRequestDate,
   type Snapshot,
@@ -144,6 +147,40 @@ test('mergeRows prefers ECB > blend > currency-api; crossRate/effectiveDate', ()
   assert.equal(effectiveDate(merged, ['EUR', 'TRY', 'AED']), '2026-09-25');
 });
 
+test('pastDayRowsToKeep: ECB rows, any ECB-set code, and the requested codes only', () => {
+  const kept = pastDayRowsToKeep(
+    [
+      row('TRY', 55.7, '2026-09-25'),
+      row('BGN', 1.95, '2025-06-02'), // historical ECB row outside today's ECB set
+      row('USD', 1.14, '2026-09-25', 'frankfurter'), // ECB-set code from the blend (ECB call failed)
+      row('AED', 4.18, '2026-09-25', 'frankfurter'), // requested
+      row('VND', 29548, '2026-09-25', 'frankfurter'), // not requested
+      row('GEL', 3.1, '2026-09-25', 'currency-api'), // not requested
+    ],
+    new Set(['AED', 'TRY']),
+  );
+  assert.deepEqual(kept.map((r) => r.quote).sort(), ['AED', 'BGN', 'TRY', 'USD']);
+  assert.equal(ECB_CODES.size, 29);
+  assert.ok(!ECB_CODES.has('EUR'));
+});
+
+test('planFill: nothing cached / stale -> full; today re-asks a missing code hourly; a past day tops up unless known absent', () => {
+  const none = () => false;
+  const today = snap('2026-09-29', [row('TRY', 55.7, '2026-09-29')], NOW - 10 * 60_000);
+  const past = snap('2026-09-28', [row('TRY', 55.7, '2026-09-28')], NOW - 10 * 60_000);
+  assert.equal(planFill(null, ['TRY'], true, NOW, none), 'full');
+  assert.equal(planFill(today, ['TRY'], true, NOW, none), null);
+  assert.equal(planFill(today, ['AED'], true, NOW, none), null, 'today is stored whole: 10 min is too soon');
+  assert.equal(planFill(today, ['AED'], true, NOW + HOUR, none), 'full');
+  assert.equal(planFill(today, ['AED'], true, NOW + 7 * HOUR, none), 'full', '6 h refresh');
+  assert.equal(planFill(past, ['TRY'], false, NOW, none), null);
+  assert.equal(planFill(past, ['AED'], false, NOW, none), 'topup', 'not stored yet: top up now');
+  assert.equal(planFill(past, ['AED'], false, NOW, (c) => c === 'AED'), null, 'upstream just said no');
+  assert.equal(planFill(past, ['AED', 'GEL'], false, NOW, (c) => c === 'AED'), 'topup');
+  const satEarly = snap('2026-09-26', [row('TRY', 55.8, '2026-09-25')], Date.parse('2026-09-26T12:00:00Z'));
+  assert.equal(planFill(satEarly, ['TRY'], false, NOW, none), 'full', 'a non-final day settles');
+});
+
 test('rowsToSnapshot decodes sources, parses numeric strings, uses the NEWEST fetched_at', () => {
   const s = rowsToSnapshot('2026-09-26', [
     { quote: 'TRY', rate: '55.7975', source: 'frankfurter-ecb@2026-09-25', fetched_at: '2026-09-27T01:00:00Z' },
@@ -192,12 +229,25 @@ function blendTable(date: string) {
     { date, base: 'EUR', quote: 'AED', rate: 4.1849 },
   ];
 }
+/** A realistic blend: every ECB code + 40 others (the live one has ~166). */
+const WIDE_EXTRA = [
+  'AED', 'ALL', 'AMD', 'ARS', 'AZN', 'BAM', 'BDT', 'BHD', 'BOB', 'BYN', 'CLP', 'COP', 'CRC', 'DOP', 'DZD', 'EGP', 'GEL', 'GHS',
+  'GTQ', 'IQD', 'JOD', 'KES', 'KWD', 'KZT', 'LBP', 'LKR', 'MAD', 'MDL', 'MKD', 'NGN', 'OMR', 'PEN', 'PKR', 'QAR', 'RSD', 'SAR',
+  'TND', 'TWD', 'UAH', 'VND',
+];
+function wideBlend(date: string) {
+  return [...ECB_CODES, ...WIDE_EXTRA].map((quote, i) => ({ date, base: 'EUR', quote, rate: 1 + i / 10 }));
+}
+function wideEcb(date: string) {
+  return [...ECB_CODES].map((quote, i) => ({ date, base: 'EUR', quote, rate: 2 + i / 10 }));
+}
 
 function world(opts: WorldOpts = {}) {
   const calls: Call[] = [];
   const store = new Map<string, Snapshot>(Object.entries(opts.cached ?? {}));
   const saves: Array<{ date: string; rows: RateRow[] }> = [];
   const consumed: Array<{ service: string; units: number; cap: number }> = [];
+  const userFillCaps: number[] = [];
   let userFillCalls = 0;
   let now = opts.now ?? NOW;
   const respond = (r: { status: number; body?: unknown }) =>
@@ -211,15 +261,19 @@ function world(opts: WorldOpts = {}) {
     },
     saveSnapshot: (date: string, rows: RateRow[], fetchedAtIso: string) => {
       saves.push({ date, rows });
-      store.set(date, { date, rows: new Map(rows.map((r) => [r.quote, r])), fetchedAt: Date.parse(fetchedAtIso) });
+      // Upsert semantics (like fx_rates): merge into the day, never delete.
+      const day = new Map(store.get(date)?.rows ?? []);
+      for (const r of rows) day.set(r.quote, r);
+      store.set(date, { date, rows: day, fetchedAt: Date.parse(fetchedAtIso) });
       return Promise.resolve({ error: null });
     },
     consumeService: (service: string, units: number, cap: number) => {
       consumed.push({ service, units, cap });
       return Promise.resolve(opts.service?.[service] ?? 'ok');
     },
-    consumeUserFills: () => {
+    consumeUserFills: (_userId: string, cap: number) => {
       userFillCalls++;
+      userFillCaps.push(cap);
       return Promise.resolve(opts.userFills ?? 'ok');
     },
     fetch: (input: string, init?: RequestInit) => {
@@ -243,6 +297,7 @@ function world(opts: WorldOpts = {}) {
     saves,
     consumed,
     store,
+    userFillCaps,
     get userFillCalls() {
       return userFillCalls;
     },
@@ -312,6 +367,7 @@ test('cache miss: fills ECB + blend once, stores the day, answers the pair with 
   assert.deepEqual(w.saves[0]!.rows.map((r) => r.quote).sort(), ['AED', 'GBP', 'TRY', 'USD']);
   assert.deepEqual(w.consumed, [{ service: 'frankfurter', units: 2, cap: 600 }]);
   assert.equal(w.userFillCalls, 1);
+  assert.deepEqual(w.userFillCaps, [20], 'per-user fill cap is 20/day (Wave-1 review #8)');
 
   // Same day again: served from cache, no upstream, no quota.
   const again = await w.handler(post({ from: 'EUR', to: 'TRY' }));
@@ -359,19 +415,123 @@ test('unknown base / all quotes unknown -> 422 unsupported_currency', async () =
   assert.equal(b.status, 422);
 });
 
-test('a code missing from a cached day refetches at most once an hour', async () => {
-  const cached = snap('2026-09-28', [row('TRY', 55.7, '2026-09-28'), row('USD', 1.13, '2026-09-28')], NOW - 10 * 60_000);
-  const w = world({ cached: { '2026-09-28': cached } });
+test("today: a code missing from the (whole) cached table refetches at most once an hour", async () => {
+  const cached = snap('2026-09-29', [row('TRY', 55.7, '2026-09-29'), row('USD', 1.13, '2026-09-29')], NOW - 10 * 60_000);
+  const w = world({ cached: { '2026-09-29': cached } });
   // Fresh (10 min old) and final: AED is simply unsupported for now, no upstream.
-  const res = await w.handler(post({ date: '2026-09-28', to: 'AED' }));
+  const res = await w.handler(post({ to: 'AED' }));
   assert.equal(res.status, 422);
   assert.equal(w.calls.length, 0);
   // An hour later the partial day heals from upstream (the blend has AED).
   w.setNow(NOW + 2 * HOUR);
-  const healed = await json(await w.handler(post({ date: '2026-09-28', to: 'AED' })));
+  const healed = await json(await w.handler(post({ to: 'AED' })));
   assert.equal(healed.rate, 4.1849);
   assert.equal(healed.source, 'frankfurter');
   assert.equal(w.calls.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Past days store the ECB set + requested codes only (Wave-1 review #8)
+// ---------------------------------------------------------------------------
+
+test('past day, ECB codes only: one ECB call, ~29 rows stored, not the 69-code blend', async () => {
+  const w = world({ ecb: (d) => ({ status: 200, body: wideEcb(d) }), blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  const res = await w.handler(post({ date: '2026-09-24', from: 'TRY', to: 'USD' }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(w.calls.map((c) => c.url), ['https://api.frankfurter.dev/v2/providers/ecb/rates?date=2026-09-24']);
+  assert.deepEqual(w.consumed, [{ service: 'frankfurter', units: 1, cap: 600 }]);
+  assert.equal(w.saves.length, 1);
+  assert.equal(w.saves[0]!.rows.length, 29);
+  assert.ok(w.saves[0]!.rows.every((r) => r.source === 'frankfurter-ecb'));
+});
+
+test('past day with a non-ECB code: ECB + blend, stores the ECB set + that code only; the answer still uses everything fetched', async () => {
+  const w = world({ ecb: (d) => ({ status: 200, body: wideEcb(d) }), blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  const body = await json(await w.handler(post({ date: '2026-09-24', base: 'TRY', quotes: ['AED', 'GEL'] })));
+  assert.ok(body.rates.AED > 0 && body.rates.GEL > 0);
+  assert.equal(w.calls.length, 2);
+  assert.deepEqual(w.consumed, [{ service: 'frankfurter', units: 2, cap: 600 }]);
+  const stored = w.saves[0]!.rows.map((r) => r.quote);
+  assert.equal(stored.length, 29 + 2, `stored ${stored.length}: ${stored.join(',')}`);
+  assert.ok(stored.includes('AED') && stored.includes('GEL') && stored.includes('TRY'));
+  assert.ok(!stored.includes('VND') && !stored.includes('KZT'), 'unrequested blend codes are not stored');
+  // TRY comes from the ECB, not the blend.
+  assert.equal(w.saves[0]!.rows.find((r) => r.quote === 'TRY')!.source, 'frankfurter-ecb');
+});
+
+test('past day, ECB-only plan but the ECB call fails: the blend answers, ECB-set codes + request stored', async () => {
+  const w = world({ ecb: () => ({ status: 503 }), blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  const body = await json(await w.handler(post({ date: '2026-09-24', to: 'TRY' })));
+  assert.ok(body.rate > 0);
+  assert.equal(body.source, 'frankfurter');
+  assert.deepEqual(w.consumed, [
+    { service: 'frankfurter', units: 1, cap: 600 },
+    { service: 'frankfurter', units: 1, cap: 600 },
+  ]);
+  assert.equal(w.saves[0]!.rows.length, 29);
+});
+
+test('past day top-up: a code not stored yet costs one blend call, appends only that code, keeps the ECB rows', async () => {
+  const cached = snap('2026-09-24', [row('TRY', 55.7, '2026-09-24'), row('USD', 1.13, '2026-09-24')], Date.parse('2026-09-25T08:00:00Z'));
+  const w = world({ cached: { '2026-09-24': cached }, blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  const res = await w.handler(post({ date: '2026-09-24', from: 'TRY', to: 'AED' }));
+  assert.equal(res.status, 200);
+  const body = await json(res);
+  assert.equal(body.meta.cache, 'miss');
+  assert.equal(body.rate, (1 + WIDE_EXTRA.indexOf('AED') / 10 + ECB_CODES.size / 10) / 55.7, 'AED from the blend over the cached ECB TRY');
+  assert.deepEqual(w.calls.map((c) => c.url), ['https://api.frankfurter.dev/v2/rates?date=2026-09-24']);
+  assert.deepEqual(w.consumed, [{ service: 'frankfurter', units: 1, cap: 600 }]);
+  assert.equal(w.userFillCalls, 1, 'a top-up is a metered fill');
+  assert.deepEqual(w.saves.map((s) => s.rows.map((r) => r.quote)), [['AED']]);
+  assert.equal(w.store.get('2026-09-24')!.rows.get('TRY')!.source, 'frankfurter-ecb', 'the ECB row is not overwritten');
+  // Now cached: no more upstream.
+  const again = await json(await w.handler(post({ date: '2026-09-24', from: 'TRY', to: 'AED' })));
+  assert.equal(again.meta.cache, 'hit');
+  assert.equal(w.calls.length, 1);
+});
+
+test('past day: a code upstream lacks is asked once, then not again for an hour (per isolate)', async () => {
+  const cached = snap('2026-09-24', [row('TRY', 55.7, '2026-09-24')], Date.parse('2026-09-25T08:00:00Z'));
+  const w = world({ cached: { '2026-09-24': cached } });
+  const first = await w.handler(post({ date: '2026-09-24', to: 'XYZ' }));
+  assert.equal(first.status, 422);
+  assert.equal((await json(first)).error.code, 'unsupported_currency');
+  assert.equal(w.calls.length, 1);
+  const second = await w.handler(post({ date: '2026-09-24', to: 'XYZ' }));
+  assert.equal(second.status, 422);
+  await second.body?.cancel();
+  assert.equal(w.calls.length, 1, 'remembered as absent');
+  assert.equal(w.userFillCalls, 1);
+  w.setNow(NOW + 2 * HOUR);
+  await (await w.handler(post({ date: '2026-09-24', to: 'XYZ' }))).body?.cancel();
+  assert.equal(w.calls.length, 2, 'asked again after an hour');
+});
+
+test('past day top-up refused or failing: 429 / 503, never a permanent 422', async () => {
+  const cached = snap('2026-09-24', [row('TRY', 55.7, '2026-09-24')], Date.parse('2026-09-25T08:00:00Z'));
+  const quota = world({ cached: { '2026-09-24': cached }, userFills: 'exceeded' });
+  const q = await quota.handler(post({ date: '2026-09-24', from: 'TRY', to: 'AED' }));
+  assert.equal(q.status, 429);
+  assert.equal((await json(q)).error.code, 'quota_exceeded');
+  // ...while a cached pair on the same day is still served.
+  const ok = await quota.handler(post({ date: '2026-09-24', to: 'TRY' }));
+  assert.equal(ok.status, 200);
+  await ok.body?.cancel();
+
+  const down = world({ cached: { '2026-09-24': cached }, blend: () => ({ status: 500 }) });
+  const d = await down.handler(post({ date: '2026-09-24', from: 'TRY', to: 'AED' }));
+  assert.equal(d.status, 503);
+  assert.equal((await json(d)).error.code, 'rates_unavailable');
+  assert.equal(down.saves.length, 0);
+  // Upstream failure is not proof of absence: the next request tries again.
+  await (await down.handler(post({ date: '2026-09-24', from: 'TRY', to: 'AED' }))).body?.cancel();
+  assert.equal(down.calls.filter((c) => c.url.includes('/v2/rates')).length, 4);
+});
+
+test('today is still stored whole', async () => {
+  const w = world({ ecb: (d) => ({ status: 200, body: wideEcb(d) }), blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  await (await w.handler(post({ to: 'TRY' }))).body?.cancel();
+  assert.equal(w.saves[0]!.rows.length, 29 + WIDE_EXTRA.length);
 });
 
 test('both Frankfurter calls fail -> currency-api fallback (filtered to ISO codes)', async () => {
@@ -447,8 +607,28 @@ test('concurrent requests for one date share a single upstream fill', async () =
     w.handler(post({ date: '2026-09-24', to: 'GBP' })),
   ]);
   assert.deepEqual([a.status, b.status, c.status], [200, 200, 200]);
-  assert.equal(w.calls.length, 2);
+  for (const r of [a, b, c]) await r.body?.cancel();
+  // All ECB codes on a past day: one ECB call, one quota charge.
+  assert.equal(w.calls.length, 1);
   assert.equal(w.userFillCalls, 1);
+});
+
+test('a request that joined a fill planned for other codes tops up its own code', async () => {
+  const w = world({ ecb: (d) => ({ status: 200, body: wideEcb(d) }), blend: (d) => ({ status: 200, body: wideBlend(d) }) });
+  const [a, b] = await Promise.all([
+    w.handler(post({ date: '2026-09-24', to: 'TRY' })), // ECB-only plan (initiator)
+    w.handler(post({ date: '2026-09-24', to: 'AED' })), // joins, then needs the blend
+  ]);
+  assert.equal(a.status, 200);
+  await a.body?.cancel();
+  assert.equal(b.status, 200);
+  assert.ok((await json(b)).rate > 0);
+  assert.deepEqual(
+    w.calls.map((c) => c.url),
+    ['https://api.frankfurter.dev/v2/providers/ecb/rates?date=2026-09-24', 'https://api.frankfurter.dev/v2/rates?date=2026-09-24'],
+  );
+  assert.equal(w.userFillCalls, 2, 'the joiner paid for its own top-up');
+  assert.deepEqual(w.saves[1]!.rows.map((r) => r.quote), ['AED']);
 });
 
 test('currencies action lists EUR + every cached code with the ECB flag', async () => {

@@ -139,6 +139,13 @@ const WIKI_TIMEOUT_MS = 3_000;
 const ENRICH_TOP_N = 20;
 /** 0037 caps a poi_cache payload at 256 KiB; stay safely below it. */
 const MAX_CACHE_PAYLOAD_CHARS = 240_000;
+/**
+ * Geohash length for the search area in logs: a 4-char cell spans
+ * 0.35° × 0.18° (about 39 × 20 km at the equator, ~29 × 20 km in Istanbul),
+ * enough to tell which city the cache is serving but not where anyone
+ * stood. The ~5 km tile keys (TILE_PRECISION) are never logged.
+ */
+export const LOG_AREA_PRECISION = 4;
 
 const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 const OSM_COPYRIGHT_URL = 'https://www.openstreetmap.org/copyright';
@@ -743,9 +750,10 @@ export function createHandler(deps: PoiDeps): (req: Request) => Promise<Response
         fn: FN,
         level: 'info',
         stage: 'done',
-        userId,
-        lat: roundTo(lat, 2),
-        lng: roundTo(lng, 2),
+        // Privacy (Wave-1 review #10): the search centre is where someone
+        // is or plans to be, so this line carries no userId and only a
+        // coarse geohash cell (see LOG_AREA_PRECISION), never coordinates.
+        area: geohashEncode(lat, lng, LOG_AREA_PRECISION),
         radiusM,
         interests,
         tiles: tiles.length,

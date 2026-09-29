@@ -323,13 +323,25 @@ export interface TripExpense {
    *                            rate); the Y2.2 reconciler fills it.
    *
    * Converting ONE expense into the trip's CURRENT home currency
-   * (`trip.currency`) — the same precedence as the 0034 analytics MV, so the
-   * live client totals and the nightly rollup agree:
+   * (`trip.currency`). This is the same order as the analytics MV
+   * (0034, corrected by 0038), so the live client totals and the nightly
+   * rollup agree:
    *   1. currency NULL or === trip.currency              → × 1
    *   2. fx_rate != null && fx_home_currency === trip.currency → × fx_rate
-   *   3. else re-derive on fx_date from fx_rates (base EUR):
-   *        × rate(trip.currency) / rate(currency), with rate('EUR') = 1
-   *   4. still unknown → pending (the MV falls back to × (fx_rate ?? 1))
+   *   3. else, when fx_date is set AND fx_rates has both legs on that date
+   *      (base EUR): × rate(trip.currency) / rate(currency), with rate('EUR') = 1
+   *   4. otherwise the row is PENDING:
+   *      - EXCLUDE it from every converted total;
+   *      - report it separately: a pending count, plus the pending amounts
+   *        summed per ORIGINAL currency (e.g. "+ €12.50, $20 not yet converted").
+   *      NEVER multiply by `fx_rate` here: it converts into a DIFFERENT
+   *      (old) home currency. NEVER count the row 1:1 either.
+   *   The MV exposes this through get_my_trip_stats(): `pending_count` and
+   *   `pending_actual_by_currency` / `pending_estimated_by_currency`
+   *   ({ [ISO]: amount }, `{}` when none). See TripStatsRow.
+   *   After an owner changes the home currency (Y3.2), warm fx-rates for every
+   *   distinct `fx_date` of the trip's expenses. Step 3 can then resolve the
+   *   rows that are pending (the MV re-derives on its next nightly refresh).
    *
    * DB CHECKs (mirrored by src/sync/mutations.ts before any Tier-1 write,
    * because a server-rejected sync write is retried forever):
@@ -353,7 +365,8 @@ export interface TripExpense {
   /**
    * M5 (0034): the home currency `fx_rate` converts INTO. When it differs from
    * the trip's current `currency` (the owner changed the home currency), the
-   * frozen rate no longer applies — re-derive (step 3 above).
+   * frozen rate no longer applies. Re-derive (step 3 above), or treat the row
+   * as pending (step 4). Never fall back to `fx_rate`.
    */
   fx_home_currency?: CurrencyCode | null;
   created_at: string;
@@ -707,13 +720,148 @@ export interface TripCollaborator {
 // Account export (Phase 10)
 // ============================================================
 
+/** Memory visibility (0036): private by default; 'trip' shares with members. */
+export type AccountExportVisibility = 'only_me' | 'trip';
+
+/** `trip_packing_items` row (0024 + 0027 tombstone) as exported. */
+export interface AccountExportPackingItem {
+  id: Uuid;
+  trip_id: Uuid;
+  label: string;
+  category: string | null;
+  checked: boolean;
+  auto: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `trip_documents` row (0024): metadata only; the file is in bucket `trip-docs`. */
+export interface AccountExportDocument {
+  id: Uuid;
+  trip_id: Uuid;
+  name: string;
+  /** Object key in the private `trip-docs` bucket (not a URL). */
+  storage_path: string;
+  mime: string | null;
+  size_bytes: number | null;
+  created_at: string;
+}
+
+/** `trip_shares` row WITHOUT `token` (0003 reveals a share token once, on create). */
+export interface AccountExportShare {
+  id: Uuid;
+  trip_id: Uuid;
+  created_at: string;
+  revoked_at: string | null;
+  /** 0037 public-link toggles. */
+  show_itinerary: boolean;
+  show_expenses: boolean;
+  show_memories: boolean;
+}
+
+/** `trip_collaborators` row of an owned trip, without `invite_token` / `user_id`. */
+export type AccountExportCollaborator = Omit<TripCollaborator, 'user_id'>;
+
+/** `trip_journal_entries` row (0036) authored by the caller. */
+export interface AccountExportJournalEntry {
+  id: Uuid;
+  trip_id: Uuid;
+  author_id: Uuid;
+  day_index: number;
+  body: string;
+  visibility: AccountExportVisibility;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `trip_place_reviews` row (0036, 0038) authored by the caller: personal 1–5 rating + text. */
+export interface AccountExportPlaceReview {
+  id: Uuid;
+  trip_id: Uuid;
+  /** 0038: NULL once the place was removed from the trip (the snapshots remain). */
+  trip_place_id: Uuid | null;
+  author_id: Uuid;
+  rating: number | null;
+  body: string;
+  visibility: AccountExportVisibility;
+  /** 0038 (server-owned): the place's user title / google_place_id at review time. */
+  place_name_snapshot?: string | null;
+  place_google_id_snapshot?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
- * Response shape from the `export-account` Edge Function (ADR-0009).
+ * `trip_photos` row (0036) authored by the caller: metadata only. The bytes
+ * are in the private `trip-memories` bucket at `storage_path` / `thumb_path`
+ * (object keys, not URLs; no signed URLs are exported).
+ */
+export interface AccountExportPhoto {
+  id: Uuid;
+  trip_id: Uuid;
+  author_id: Uuid;
+  day_index: number | null;
+  trip_place_id: Uuid | null;
+  storage_path: string;
+  thumb_path: string;
+  width: number | null;
+  height: number | null;
+  bytes: number | null;
+  thumb_bytes: number | null;
+  caption: string | null;
+  taken_at: string | null;
+  status: string;
+  visibility: AccountExportVisibility;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `trip_place_comments` row (0019) authored by the caller. */
+export interface AccountExportPlaceComment {
+  id: Uuid;
+  trip_id: Uuid;
+  trip_place_id: Uuid;
+  author_id: Uuid;
+  body: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** `user_preferences` row (0037). */
+export interface AccountExportUserPreferences {
+  user_id: Uuid;
+  locale: string | null;
+  home_currency: CurrencyCode | null;
+  interests: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** How to read the `*_path` fields of an export (files are never embedded). */
+export interface AccountExportFilesNote {
+  note: string;
+  buckets: Record<string, { bucket: string; path_fields: string[] }>;
+}
+
+/**
+ * Response shape from the `export-account` Edge Function (ADR-0009; M5
+ * memories per ADR-0014; completed by Wave-1 review #7).
  *
- * The function reads `trips` filtered by the JWT-derived user id, then reads
- * `trip_places` / `trip_legs` / `trip_days` filtered by `trip_id in (<owned
- * trips>)`. The result is a flat dump — clients re-aggregate by `trip_id` if
- * needed.
+ * A flat dump; clients re-aggregate by `trip_id` if needed. Rows are whole
+ * table rows (`select *`) unless noted, so they may carry more columns than
+ * these types name. Soft-deleted rows (`deleted = true`) are never included.
+ *
+ * - `trips` = trips the caller OWNS. Every trip-level table (places, legs,
+ *   days, expenses, stays, packing, documents, share links, collaborators)
+ *   is limited to those trips.
+ * - Authored tables (journal, reviews, photos, comments, reactions) hold the
+ *   caller's OWN rows on any trip (including trips they are only a member
+ *   of), and never another member's.
+ * - Secrets are never exported: no share-link or invite tokens, and no
+ *   signed URLs. Photo / document files are referenced by object key only
+ *   (see `files`).
+ *
+ * The M5 fields are optional because an older server omits them.
  *
  * `exported_at` is the server-side ISO8601 timestamp at which the export was
  * generated. `user_id` matches the caller's auth.uid().
@@ -725,4 +873,19 @@ export interface AccountExport {
   trip_places: TripPlace[];
   trip_legs: TripLeg[];
   trip_days: TripDay[];
+  /** Original `amount` + `currency` and the frozen FX fields (0034). */
+  trip_expenses?: TripExpense[];
+  trip_accommodations?: TripAccommodation[];
+  trip_packing_items?: AccountExportPackingItem[];
+  trip_documents?: AccountExportDocument[];
+  trip_shares?: AccountExportShare[];
+  trip_collaborators?: AccountExportCollaborator[];
+  trip_journal_entries?: AccountExportJournalEntry[];
+  trip_place_reviews?: AccountExportPlaceReview[];
+  trip_photos?: AccountExportPhoto[];
+  trip_place_comments?: AccountExportPlaceComment[];
+  trip_place_reactions?: TripPlaceReaction[];
+  /** null when the caller never saved preferences. */
+  user_preferences?: AccountExportUserPreferences | null;
+  files?: AccountExportFilesNote;
 }

@@ -128,6 +128,35 @@ export function needsRefresh(s: Snapshot, nowMs: number): boolean {
   return nowMs - s.fetchedAt >= REFRESH_AFTER_MS || nowMs >= startOfDayMs(addDays(s.date, 1));
 }
 
+/**
+ * 'full' = (re)fetch the day's table; 'topup' = fetch the blend only to add
+ * requested codes a past day's cached table does not hold yet.
+ */
+export type FillMode = 'full' | 'topup';
+
+/**
+ * What to fetch before answering for one day, or null to answer from cache.
+ * `wanted` = the request's non-EUR codes; `isAbsent(code)` = upstream
+ * recently answered this day without a rate for `code`.
+ */
+export function planFill(
+  snapshot: Snapshot | null,
+  wanted: readonly string[],
+  latest: boolean,
+  nowMs: number,
+  isAbsent: (code: string) => boolean,
+): FillMode | null {
+  if (!snapshot || needsRefresh(snapshot, nowMs)) return 'full';
+  const missing = wanted.filter((c) => !snapshot.rows.has(c));
+  if (missing.length === 0) return null;
+  // Today's table is stored whole: a missing code is one upstream lacks (or
+  // a fill that partly failed), so it is re-asked at most once an hour.
+  if (latest) return nowMs - snapshot.fetchedAt >= MISSING_QUOTE_RETRY_MS ? 'full' : null;
+  // A past day holds the ECB set + the codes asked for so far: a missing code
+  // is usually just not stored yet, unless upstream recently said otherwise.
+  return missing.some((c) => !isAbsent(c)) ? 'topup' : null;
+}
+
 // ---------------------------------------------------------------------------
 // fx_rates.source encoding
 // ---------------------------------------------------------------------------
@@ -203,6 +232,40 @@ export function parseCurrencyApi(
     const quote = k.toUpperCase();
     if (!ISO_CODE.test(quote) || quote === FX_BASE || !known.has(quote) || !positive(v)) continue;
     out.push({ quote, rate: v, source: 'currency-api', publishedDate: published });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// What a past day stores (Wave-1 review #8)
+// ---------------------------------------------------------------------------
+
+/**
+ * The codes the ECB publishes reference rates for (Frankfurter
+ * `/v2/providers/ecb/rates`, checked live 2026-09-29: these 29 plus EUR).
+ * They cover most trips, so a past day's fill asks only the ECB endpoint
+ * when every requested code is in here, and a past day's cached table always
+ * keeps them. Historical ECB rows outside this list (e.g. BGN before 2026)
+ * are kept too: persistence keys on the row's source, not only on this list.
+ */
+export const ECB_CODES: ReadonlySet<string> = new Set(
+  (
+    'AUD BRL CAD CHF CNY CZK DKK GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK NZD PHP PLN ' +
+    'RON SEK SGD THB TRY USD ZAR'
+  ).split(' '),
+);
+
+/**
+ * The rows of a PAST day worth persisting: every ECB reference row, a row for
+ * any ECB-set code whichever provider answered (so a day whose ECB call
+ * failed still caches the common set), and the codes the caller asked for.
+ * About 30 rows plus the requested ones, instead of the ~166-code blend.
+ * Today's table ('latest') is stored whole; see handler.ts.
+ */
+export function pastDayRowsToKeep(rows: Iterable<RateRow>, requested: ReadonlySet<string>): RateRow[] {
+  const out: RateRow[] = [];
+  for (const r of rows) {
+    if (r.source === 'frankfurter-ecb' || ECB_CODES.has(r.quote) || requested.has(r.quote)) out.push(r);
   }
   return out;
 }

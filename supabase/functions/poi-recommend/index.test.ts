@@ -21,6 +21,7 @@ import {
   clampRadius,
   createHandler,
   instanceBudget,
+  LOG_AREA_PRECISION,
   normalizeLang,
   type PoiDeps,
   tileKey,
@@ -413,6 +414,35 @@ test('cache miss: one Overpass call with UA + [timeout:], blocks cached (empty t
   assert.equal(food.kind, 'amenity=restaurant');
   assert.equal(food.tags.cuisine, 'turkish');
   assert.ok(!w.calls.some((c) => c.url.includes('google')));
+});
+
+test('the done log line has no userId and no coordinates, only a geohash-4 area', async () => {
+  const w = world({ urls: [OVP_A] });
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  try {
+    const res = await w.handler(search({ lang: 'en' }));
+    assert.equal(res.status, 200);
+    await res.body?.cancel();
+  } finally {
+    console.log = original;
+  }
+  const entries = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+  const done = entries.find((e) => e.fn === 'poi-recommend' && e.stage === 'done');
+  assert.ok(done, 'a done line is logged');
+  assert.equal(done!.userId, undefined);
+  assert.equal(done!.lat, undefined);
+  assert.equal(done!.lng, undefined);
+  assert.equal(done!.area, 'sxk9');
+  assert.equal(done!.area, geohashEncode(LAT, LNG, LOG_AREA_PRECISION));
+  // Nothing in the whole request's log output ties the user to the spot.
+  assert.ok(!lines.join('\n').includes(USER), 'no line carries the user id');
+  for (const e of entries) {
+    assert.ok(!('lat' in e) && !('lng' in e) && !('lon' in e), `no coordinates: ${JSON.stringify(e)}`);
+  }
 });
 
 test('all blocks cached: no upstream, no quota; Turkish names', async () => {

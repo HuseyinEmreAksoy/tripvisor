@@ -644,7 +644,13 @@ select tv_test.expect_error('G7 another user cannot write preferences for someon
   $$insert into public.user_preferences (user_id, locale) values ('036a0000-0000-4000-8000-00000000000a', 'en')$$,
   '42501', 'new row violates row-level security policy%') \g /dev/null
 
-select tv_test.expect_count('G8 authenticated can read poi_cache', $$select 1 from public.poi_cache limit 1$$, 0) \g /dev/null
+-- 0038 (Wave-1 #9): poi_cache / service_usage are service-role only. Asserted
+-- as a privilege error, so the check does not depend on what the cache holds
+-- (Wave-1 #3: the old `count = 0` failed on any stack with cached POIs).
+select tv_test.expect_error('G8 authenticated cannot read poi_cache (0038)',
+  $$select 1 from public.poi_cache limit 1$$, '42501') \g /dev/null
+select tv_test.expect_error('G8b authenticated cannot read service_usage (0038)',
+  $$select 1 from public.service_usage limit 1$$, '42501') \g /dev/null
 select tv_test.expect_error('G9 authenticated cannot write poi_cache',
   $$insert into public.poi_cache (key, payload) values ('ovp:v1:sxk9j:food', '[]')$$, '42501') \g /dev/null
 select tv_test.expect_error('G10 authenticated cannot write service_usage',

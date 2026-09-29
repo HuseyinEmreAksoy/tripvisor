@@ -302,7 +302,9 @@ end $$;
 --                                                      -> 20 * 35.5/1.1   (re-derived)
 --     #5 EUR 999 actual, TOMBSTONED                    -> excluded
 --     #6 GBP 7 estimated, frozen 41 for OLD home EUR, no GBP/TRY rate cached on its fx_date
---                                                      -> 7 * 41 (last-resort coalesce(fx_rate, 1))
+--                                                      -> PENDING (0038 / Wave-1 #4): excluded from the
+--                                                         total, reported as pending {GBP: 7}. 0034 used
+--                                                         7 * 41, a GBP->EUR rate applied to a TRY total.
 --   T2 (home EUR):
 --     #7 EUR 10 actual, frozen 0.028 for an OLD home TRY (currency = home now) -> 10
 insert into public.trip_expenses (id, trip_id, category, amount, kind, currency, fx_rate, fx_date, fx_home_currency, deleted) values
@@ -318,7 +320,7 @@ select set_config('request.jwt.claims', '{"sub":"03410000-0000-4000-8000-0000000
 do $$
 declare
   s record;
-  want_est numeric := round(20 * 35.5 / 1.1 + 7 * 41, 6);
+  want_est numeric := round(20 * 35.5 / 1.1, 6);
 begin
   select * into s from public.get_my_trip_stats() where trip_id = '03420000-0000-4000-8000-0000000000a1';
   if s is null then raise exception 'FAIL 4a: owner has no stats row for T1'; end if;
@@ -326,9 +328,15 @@ begin
     raise exception 'FAIL 4a: T1 actual spend = % (expected 627.5 = 350 + 177.5 + 100; tombstone excluded)', s.total_actual_spend;
   end if;
   if round(s.total_estimated_spend, 6) <> want_est then
-    raise exception 'FAIL 4b: T1 estimated spend = % (expected %)', s.total_estimated_spend, want_est;
+    raise exception 'FAIL 4b: T1 estimated spend = % (expected % : the uncached GBP row is pending, not 7 * 41)', s.total_estimated_spend, want_est;
   end if;
-  raise notice 'PASS 4a/4b: frozen, pending (re-derived), legacy, home-changed and uncached rows convert as documented (actual %, estimated %)',
+  if s.pending_count <> 1
+     or s.pending_actual_by_currency <> '{}'::jsonb
+     or s.pending_estimated_by_currency <> '{"GBP": 7}'::jsonb then
+    raise exception 'FAIL 4b: pending columns wrong (count %, actual %, estimated %)',
+      s.pending_count, s.pending_actual_by_currency, s.pending_estimated_by_currency;
+  end if;
+  raise notice 'PASS 4a/4b: frozen, pending (re-derived), legacy and home-changed rows convert; the uncached row is pending {GBP: 7} (actual %, estimated %)',
     s.total_actual_spend, round(s.total_estimated_spend, 4);
 
   select * into s from public.get_my_trip_stats() where trip_id = '03420000-0000-4000-8000-0000000000a2';

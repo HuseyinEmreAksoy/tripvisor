@@ -15,7 +15,9 @@
 // times (<= 2).
 //
 // Pure except for the injected `fetchFn`, so the Deno tests drive it with
-// fakes and the repo-level tsc can check it without Deno globals.
+// fakes and the repo-level tsc can check it without Deno globals. It also
+// avoids Deno-only APIs and TS-only runtime syntax, so upstream.test.mjs runs
+// under both `deno test` and `node --experimental-strip-types --test`.
 
 export const DEFAULT_UPSTREAM_CONTACT = 'https://tripvisor.pages.dev';
 
@@ -30,10 +32,11 @@ export function userAgent(fn: string, contact: string | undefined = undefined): 
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 export type UpstreamResult<T> =
+  /** `bytes`: body size as read, in bytes (after fetch undoes any Content-Encoding). */
   | { ok: true; status: number; data: T; attempts: number; durationMs: number; bytes: number }
   | {
       ok: false;
-      /** 'timeout' | 'network' | 'http_<status>' | 'bad_json' */
+      /** 'timeout' | 'network' | 'http_<status>' | 'too_large' | 'bad_json' */
       reason: string;
       status: number | null;
       attempts: number;
@@ -50,11 +53,77 @@ export interface FetchJsonOptions {
   body?: string;
   /** Test hook; production jitter is 150–450 ms. */
   sleep?: (ms: number) => Promise<void>;
-  /** Cap on the response body we are willing to parse (bytes of text). */
+  /**
+   * Cap on the response body, in bytes. Counted while the body streams in:
+   * the read stops (and the stream is cancelled) as soon as the count passes
+   * the cap, so an oversized answer is never buffered whole (reason
+   * 'too_large'). No cap = read to the end.
+   */
   maxBytes?: number;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export type CappedText =
+  | { ok: true; text: string; bytes: number }
+  | { ok: false; reason: 'too_large'; bytes: number };
+
+/** Drop a body we will not read (frees the connection; never throws). */
+export async function discardBody(res: Response): Promise<void> {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // Already consumed, locked or errored: nothing left to free.
+  }
+}
+
+/**
+ * Read `res`'s body as UTF-8 text with a byte counter (Wave-1 review #14).
+ * A declared Content-Length over `maxBytes` is refused before reading a
+ * byte; otherwise chunks are counted as they arrive and the stream is
+ * cancelled the moment the total passes the cap, so a huge or endless
+ * upstream answer costs at most about one chunk over the cap in memory.
+ *
+ * Decoding matches `Response.text()`: UTF-8, BOM stripped, invalid bytes as
+ * U+FFFD, and a character split across chunks decodes correctly. `bytes` is
+ * the exact byte count read. Errors from the stream (e.g. the caller's
+ * AbortController firing mid-body) propagate to the caller.
+ *
+ * Runtime-neutral (Response / ReadableStream / TextDecoder only), so it runs
+ * under Deno and under Node's test runner.
+ */
+export async function readTextCapped(
+  res: Response,
+  maxBytes: number = Number.POSITIVE_INFINITY,
+): Promise<CappedText> {
+  const declared = Number(res.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await discardBody(res);
+    return { ok: false, reason: 'too_large', bytes: declared };
+  }
+  const body = res.body;
+  if (!body) return { ok: true, text: '', bytes: 0 };
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  const parts: string[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The stream already failed; nothing more to release.
+      }
+      return { ok: false, reason: 'too_large', bytes };
+    }
+    parts.push(decoder.decode(value, { stream: true }));
+  }
+  parts.push(decoder.decode());
+  return { ok: true, text: parts.join(''), bytes };
+}
 
 /**
  * GET/POST a JSON endpoint with a hard timeout per attempt. Never throws.
@@ -78,8 +147,9 @@ export async function fetchJson<T = unknown>(url: string, opts: FetchJsonOptions
         body: opts.body,
         signal: controller.signal,
       });
-      const text = await res.text();
       if (!res.ok) {
+        // An error page is never parsed: drop it instead of buffering it.
+        await discardBody(res);
         last = { reason: `http_${res.status}`, status: res.status };
         if (res.status >= 500 && attempts <= retries) {
           await sleep(150 + Math.floor(Math.random() * 300));
@@ -87,7 +157,10 @@ export async function fetchJson<T = unknown>(url: string, opts: FetchJsonOptions
         }
         break;
       }
-      if (opts.maxBytes !== undefined && text.length > opts.maxBytes) {
+      // Still inside this attempt's timeout: a body that trickles in past
+      // `timeoutMs` aborts the read ('timeout'), like slow headers would.
+      const body = await readTextCapped(res, opts.maxBytes);
+      if (!body.ok) {
         last = { reason: 'too_large', status: res.status };
         break;
       }
@@ -95,10 +168,10 @@ export async function fetchJson<T = unknown>(url: string, opts: FetchJsonOptions
         return {
           ok: true,
           status: res.status,
-          data: JSON.parse(text) as T,
+          data: JSON.parse(body.text) as T,
           attempts,
           durationMs: Date.now() - started,
-          bytes: text.length,
+          bytes: body.bytes,
         };
       } catch {
         last = { reason: 'bad_json', status: res.status };
@@ -128,7 +201,12 @@ export async function fetchJson<T = unknown>(url: string, opts: FetchJsonOptions
  */
 export class Breaker {
   private openUntil = new Map<string, number>();
-  constructor(private readonly now: () => number = Date.now) {}
+  // A plain field, not a constructor parameter property: Node's type
+  // stripping (upstream.test.mjs) cannot run parameter properties.
+  private readonly now: () => number;
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
   isOpen(key: string): boolean {
     const until = this.openUntil.get(key);
     return until !== undefined && this.now() < until;
