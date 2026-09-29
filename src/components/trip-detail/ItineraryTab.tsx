@@ -138,7 +138,11 @@ import {
   groupPlacesPreservingOrder,
   pickGapFillDay,
 } from './itinerary/sections';
-import { useDayNavigation } from './itinerary/useDayNavigation';
+import {
+  useActiveDay,
+  useDayNavigation,
+  type ActiveDayStore,
+} from './itinerary/useDayNavigation';
 
 // v2 N4 4.2: a day advertises gap-fill only when ≥1h of budget is left —
 // below that, suggestions would mostly be unusable (server floor is 30m).
@@ -260,6 +264,15 @@ export function ItineraryTab({
   const currentUserId = session?.user?.id;
   const { data: tripReactions = [] } = useTripReactions(tripId);
   const setReaction = useSetTripPlaceReaction();
+  // One pass instead of a tripReactions.find() per row per render.
+  const myReactionByPlace = useMemo(() => {
+    const m = new Map<string, (typeof tripReactions)[number]['reaction']>();
+    if (!currentUserId) return m;
+    for (const r of tripReactions) {
+      if (r.user_id === currentUserId) m.set(r.trip_place_id, r.reaction);
+    }
+    return m;
+  }, [tripReactions, currentUserId]);
 
   // v2 N1 1.7: ONE batch read for all comment-count badges (per spec — never
   // fan out a query per place). The thread sheet has its own per-place query.
@@ -311,7 +324,7 @@ export function ItineraryTab({
     dayChips,
     chipByDay,
     collapsedDays,
-    activeDay,
+    activeDayStore,
     scrollRef,
     onJump,
     onSectionLayout,
@@ -493,14 +506,23 @@ export function ItineraryTab({
     );
   }
 
+  // aiSheets MUST sit at the same tree position in both branches: when an
+  // import / AI edit lands the first place, places.length flips 0 → 1 and a
+  // position change would remount the sheets mid-write (progress, summary
+  // and the undo journal lost). Both branches are a Fragment in slot 0, the
+  // sheets always in slot 1.
   if (places.length === 0) {
     return (
       <View style={{ flex: 1 }}>
-        {assist ? <DayJumpStrip chips={[]} activeDayIndex={null} onJump={onJump} trailing={assist} /> : null}
-        <EmptyState
-          {...noPlaces}
-          onPress={() => router.push(`/trip/${tripId}/add`)}
-        />
+        <>
+          {assist ? <DayJumpStrip chips={[]} activeDayIndex={null} onJump={onJump} trailing={assist} /> : null}
+          <EmptyState
+            {...noPlaces}
+            // Viewers can't add places (RLS: editor role) — no dead-end CTA.
+            ctaLabel={canEdit ? noPlaces.ctaLabel : undefined}
+            onPress={canEdit ? () => router.push(`/trip/${tripId}/add`) : undefined}
+          />
+        </>
         {aiSheets}
       </View>
     );
@@ -510,9 +532,10 @@ export function ItineraryTab({
 
   return (
     <View style={{ flex: 1 }}>
-      <DayJumpStrip
+      <>
+      <ActiveDayJumpStrip
+        store={activeDayStore}
         chips={dayChips}
-        activeDayIndex={activeDay}
         onJump={onJump}
         trailing={assist}
       />
@@ -640,11 +663,7 @@ export function ItineraryTab({
                 return {
                   id: place.id,
                   render: (dragging, gesture) => {
-                    const myReaction = currentUserId
-                      ? (tripReactions.find(
-                          (r) => r.trip_place_id === place.id && r.user_id === currentUserId,
-                        )?.reaction ?? null)
-                      : null;
+                    const myReaction = myReactionByPlace.get(place.id) ?? null;
                     return (
                       <View style={{ gap: t.spacing.xs }}>
                         <PlaceRow
@@ -656,7 +675,7 @@ export function ItineraryTab({
                           onOpenDetails={() => openPlace(place)}
                           // v2 M4 X2.3: the full-card target carries the
                           // drag long-press (see DraggableRowGesture).
-                          onLongPress={gesture.onLongPress}
+                          onLongPress={canEdit ? gesture.onLongPress : undefined}
                           // v2 M4 X2.3: transit link destination = the
                           // next stop of this day (the leg's to-place).
                           nextStop={
@@ -705,7 +724,9 @@ export function ItineraryTab({
                           // opens — PlaceRow renders it as a web-only kebab
                           // (desktop/mobile web have no discoverable
                           // long-press; native rows never show it).
-                          onOpenActions={() => setActivePlaceId(place.id)}
+                          // Viewers: no actions sheet (edits/deletes are
+                          // editor-only in RLS and would retry forever).
+                          onOpenActions={canEdit ? () => setActivePlaceId(place.id) : undefined}
                           // v2 S2.6: muted chip while an offline reorder
                           // awaits its route recompute (always false flag-off).
                           pendingRecompute={pendingRecompute.has(place.id)}
@@ -731,7 +752,10 @@ export function ItineraryTab({
                   },
                 };
               })}
+              // Viewers get a read-only list: no drag pickup, no long-press.
+              disabled={!canEdit}
               onReorder={(newIds: string[]) => {
+                if (!canEdit) return; // belt-and-braces: viewers never reorder
                 if (section.dayIndex < 0) return; // unscheduled bucket is not orderable
                 // ── v2 S2.8.7: single-path drag commit ────────────────────
                 // Flag ON (checked at CALL time so a mid-session flip is
@@ -807,7 +831,7 @@ export function ItineraryTab({
                   orderedIds: newIds,
                 });
               }}
-              onLongPress={(id: string) => setActivePlaceId(id)}
+              onLongPress={canEdit ? (id: string) => setActivePlaceId(id) : undefined}
             />
 
             {/* v2 N4 4.2: subtle footer chip when the day has ≥1h of slack */}
@@ -840,12 +864,14 @@ export function ItineraryTab({
         ) : null}
       </ScrollView>
 
-      <PlaceActionsSheet
-        visible={activePlaceId !== null}
-        onClose={() => setActivePlaceId(null)}
-        place={activePlace}
-        availableDays={availableDays}
-      />
+      {canEdit ? (
+        <PlaceActionsSheet
+          visible={activePlaceId !== null}
+          onClose={() => setActivePlaceId(null)}
+          place={activePlace}
+          availableDays={availableDays}
+        />
+      ) : null}
 
       {/* v2 N1 1.7: per-place comment thread */}
       <PlaceCommentsSheet
@@ -855,9 +881,23 @@ export function ItineraryTab({
         tripId={tripId}
         tripOwnerId={trip.user_id}
       />
+      </>
 
-      {/* v2 N4: AI edit / import / gap-fill sheets (editors only) */}
+      {/* v2 N4: AI edit / import / gap-fill sheets (editors only) — slot 1,
+          same position as in the empty branch (see above). */}
       {aiSheets}
     </View>
   );
+}
+
+/**
+ * The only subscriber to the scroll-tracked active day, so a day-boundary
+ * crossing re-renders this strip — not the whole itinerary.
+ */
+function ActiveDayJumpStrip({
+  store,
+  ...rest
+}: { store: ActiveDayStore } & Omit<React.ComponentProps<typeof DayJumpStrip>, 'activeDayIndex'>) {
+  const activeDay = useActiveDay(store);
+  return <DayJumpStrip {...rest} activeDayIndex={activeDay} />;
 }

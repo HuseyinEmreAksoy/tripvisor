@@ -31,7 +31,9 @@ import {
   useCreateShareLink,
   useCurrentShareLink,
   useRevokeShareLink,
+  useSharedPhotoUrl,
   useSharedTrip,
+  SHARED_TRIP_STALE_MS,
   useTripShareSettings,
   useUpdateShareSettings,
   type CurrentShareLink,
@@ -74,7 +76,7 @@ afterEach(() => {
 describe('constants', () => {
   it('matches the server defaults and contract', () => {
     expect(DEFAULT_SHARE_SETTINGS).toEqual({ showItinerary: true, showExpenses: false, showMemories: false });
-    expect(SHARE_CONTRACT_VERSION).toBe(3);
+    expect(SHARE_CONTRACT_VERSION).toBe(4);
     expect(shareKeys.current(TRIP)).toEqual(['share', 'current', TRIP]);
   });
 });
@@ -286,5 +288,68 @@ describe('useSharedTrip (anonymous, v3 payload)', () => {
     const { result } = renderHook(() => useSharedTrip('revokedtoken1234567890123'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBeNull();
+  });
+});
+
+describe('Wave-2 sweep: rate-limited anonymous reads (contract v4)', () => {
+  it('caches a read for 40 min and never refetches it on window focus', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(200, { trip: { title: 'T' }, places: [], legs: [], meta: { contractVersion: 4 } }),
+    );
+    const { client, wrapper } = setup();
+    const { result } = renderHook(() => useSharedTrip('validtoken12345678901234'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const query = client.getQueryCache().find({ queryKey: shareKeys.trip('validtoken12345678901234') })!;
+    const options = query.options as { staleTime?: number; refetchOnWindowFocus?: boolean };
+    expect(options.staleTime).toBe(SHARED_TRIP_STALE_MS);
+    expect(SHARED_TRIP_STALE_MS).toBe(40 * 60 * 1000);
+    expect(options.refetchOnWindowFocus).toBe(false);
+    expect(result.current.isStale).toBe(false);
+  });
+
+  it('a 429 is a typed rate_limited error and is never retried', async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse(429, { error: { code: 'rate_limited', message: 'slow down' }, retryAfterSeconds: 60, scope: 'ip' }),
+    );
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSharedTrip('validtoken12345678901234'), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBeInstanceOf(ShareLinkError);
+    expect((result.current.error as ShareLinkError).code).toBe('rate_limited');
+    expect((result.current.error as ShareLinkError).status).toBe(429);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('useSharedPhotoUrl asks op photo_url for ONE photo and re-bases the signed URL', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(200, {
+        url: 'http://kong:8000/storage/v1/object/sign/trip-memories/t/a/p1.jpg?token=full',
+        expiresAt: '2030-01-01T00:00:00Z',
+        meta: { contractVersion: 4 },
+      }),
+    );
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSharedPhotoUrl('validtoken12345678901234', 'photo-1'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual({
+      url: 'http://supabase.test/storage/v1/object/sign/trip-memories/t/a/p1.jpg?token=full',
+      expiresAt: '2030-01-01T00:00:00Z',
+    });
+    expect(bodies()[0]).toEqual({ op: 'photo_url', token: 'validtoken12345678901234', photoId: 'photo-1' });
+  });
+
+  it('useSharedPhotoUrl holds without a photo / when disabled, and does not retry a 404', async () => {
+    const { wrapper } = setup();
+    const idle = renderHook(() => useSharedPhotoUrl('validtoken12345678901234', undefined), { wrapper });
+    const held = renderHook(() => useSharedPhotoUrl('validtoken12345678901234', 'p', { enabled: false }), { wrapper });
+    expect(idle.result.current.fetchStatus).toBe('idle');
+    expect(held.result.current.fetchStatus).toBe('idle');
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    mockFetch.mockResolvedValue(jsonResponse(404, { error: { code: 'not_found', message: 'Photo not found' } }));
+    const { result } = renderHook(() => useSharedPhotoUrl('validtoken12345678901234', 'gone'), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ShareLinkError).code).toBe('not_found');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

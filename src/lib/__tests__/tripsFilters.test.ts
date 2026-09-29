@@ -6,8 +6,9 @@
  * runtime without any native-module mocks.
  */
 
+import { describe, expect, it } from '@jest/globals';
 import type { Trip, Uuid } from '@/api/types';
-import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
+import { applySearch, applyDateFilter, applySort, localISODate } from '@/lib/tripsFilters';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -216,5 +217,20 @@ describe('applySort', () => {
     const copy = [...trips];
     applySort(trips, 'recent', emptyLegs);
     expect(trips).toEqual(copy);
+  });
+});
+
+// ── localISODate ─────────────────────────────────────────────────────────────
+
+describe('localISODate', () => {
+  it('uses local calendar parts, not the UTC date', () => {
+    // 00:30 local on 5 Oct — UTC may still be 4 Oct east of Greenwich.
+    expect(localISODate(new Date(2026, 9, 5, 0, 30))).toBe('2026-10-05');
+    // 23:30 local on 4 Oct — UTC may already be 5 Oct west of Greenwich.
+    expect(localISODate(new Date(2026, 9, 4, 23, 30))).toBe('2026-10-04');
+  });
+
+  it('zero-pads month and day', () => {
+    expect(localISODate(new Date(2026, 0, 3, 12))).toBe('2026-01-03');
   });
 });

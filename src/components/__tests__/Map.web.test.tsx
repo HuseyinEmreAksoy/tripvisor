@@ -50,28 +50,28 @@ describe('GoogleMap.web — key-gated rendering', () => {
     delete process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY;
   });
 
-  it('renders MapUnavailable (accessibilityRole="summary") when key is absent', () => {
+  it('renders MapUnavailable (header labelled "map unavailable") when key is absent', () => {
     delete process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY;
     const { getByRole } = renderMap();
-    expect(getByRole('summary')).toBeTruthy();
+    expect(getByRole('header', { name: /map unavailable/i })).toBeTruthy();
   });
 
   it('renders MapUnavailable when key is empty string', () => {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY = '';
     const { getByRole } = renderMap();
-    expect(getByRole('summary')).toBeTruthy();
+    expect(getByRole('header', { name: /map unavailable/i })).toBeTruthy();
   });
 
   it('MapUnavailable accessibility label mentions "map unavailable" when key absent', () => {
     delete process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY;
     const { getByRole } = renderMap();
-    const summary = getByRole('summary');
+    const summary = getByRole('header', { name: /map unavailable/i });
     expect(summary.props.accessibilityLabel).toMatch(/map unavailable/i);
   });
 
   it('does NOT render MapUnavailable when a non-empty key is set', () => {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY = 'AIzaTestKey123';
     const { queryByRole } = renderMap();
-    expect(queryByRole('summary')).toBeNull();
+    expect(queryByRole('header', { name: /map unavailable/i })).toBeNull();
   });
 });

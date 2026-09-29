@@ -1,1 +1,15 @@
-{}
+{
+  "edit": {
+    "startNew": "Start a new edit",
+    "startNewA11y": "Start a new AI edit — this ends the undo for the changes above"
+  },
+  "gapFill": {
+    "inIdeas": "In Ideas",
+    "inIdeasA11y": "{{name}} was added to Ideas, not Day {{day}}",
+    "addedToIdeasNote": "Added to Ideas — couldn't schedule it on Day {{day}}. Move it from the itinerary."
+  },
+  "import": {
+    "nextBatch_one": "Import the next {{count}} place",
+    "nextBatch_other": "Import the next {{count}} places"
+  }
+}

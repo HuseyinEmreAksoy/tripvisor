@@ -169,6 +169,9 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
     const result: MapPolyline[] = [];
     for (const l of legs) {
       if (l.day_index < 0) continue;
+      // Stale legs (an endpoint was deleted/tombstoned and no re-optimize ran,
+      // e.g. the trip dropped below 2 places) must not draw to a ghost place.
+      if (!byPlaceId.has(l.from_place_id) || !byPlaceId.has(l.to_place_id)) continue;
       // v2 P1.2: multi-leg transit geometry — one polyline per step (solid
       // day-colored TRANSIT rides, dashed gray WALK connectors). Legs
       // without transit_steps keep the pre-P1 behavior below, exactly.

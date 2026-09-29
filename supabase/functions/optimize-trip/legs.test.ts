@@ -20,6 +20,8 @@ import {
   type LegPlace,
   orderChainByRank,
   planDayLegs,
+  planElements,
+  planMatrixRequests,
   routedLegsFromDirections,
   segmentDayLegs,
   userLegMinutes,
@@ -309,4 +311,76 @@ test('source counts and day totals', () => {
     ),
     120,
   );
+});
+
+// ---- matrix request planning (sweep fix) --------------------------------------
+
+/** Every ordered pair (i, j), i != j, of n places. */
+const allPairs = (n: number): Array<[number, number]> => {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j) out.push([i, j]);
+  return out;
+};
+
+/** True when every missing pair falls inside exactly one request. */
+function coversExactlyOnce(plan: ReturnType<typeof planMatrixRequests>, missing: Array<[number, number]>): boolean {
+  return missing.every(
+    ([o, d]) => plan.filter((r) => r.origins.includes(o) && r.destinations.includes(d)).length === 1,
+  );
+}
+
+test('matrix plan: nothing missing -> no request', () => {
+  assertEquals(planMatrixRequests([]), []);
+});
+
+test('matrix plan: a first run (everything missing) is ONE N x N request', () => {
+  const missing = allPairs(8);
+  const plan = planMatrixRequests(missing);
+  assertEquals(plan.length, 1);
+  assertEquals(planElements(plan), 64);
+  assert(coversExactlyOnce(plan, missing));
+});
+
+test('matrix plan: one new place among 12 costs 2 x 12 elements, not 13 x 13', () => {
+  const X = 12;
+  const missing: Array<[number, number]> = [];
+  for (let i = 0; i < X; i++) missing.push([X, i], [i, X]);
+  const plan = planMatrixRequests(missing);
+  assertEquals(plan.length, 2);
+  assertEquals(planElements(plan), 24);
+  assert(coversExactlyOnce(plan, missing));
+  assertEquals(plan[0], { origins: [X], destinations: Array.from({ length: 12 }, (_, i) => i) });
+  assertEquals(plan[1], { origins: Array.from({ length: 12 }, (_, i) => i), destinations: [X] });
+});
+
+test('matrix plan: a single stale pair is a 1 x 1 request', () => {
+  const plan = planMatrixRequests([[3, 7]]);
+  assertEquals(plan, [{ origins: [3], destinations: [7] }]);
+});
+
+test('matrix plan: tiny savings do not buy a second call (call penalty)', () => {
+  // 4 places, one new: split = 3 + 3 + penalty 10 = 16, same as one 4 x 4.
+  const missing: Array<[number, number]> = [];
+  for (let i = 0; i < 3; i++) missing.push([3, i], [i, 3]);
+  const plan = planMatrixRequests(missing);
+  assertEquals(plan.length, 1);
+  assert(coversExactlyOnce(plan, missing));
+  assertEquals(planMatrixRequests(missing, 0).length, 2, 'without a penalty the split wins');
+});
+
+test('matrix plan: random missing sets are always covered, never costlier than one bounding request', () => {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (let run = 0; run < 200; run++) {
+    const n = 2 + Math.floor(rnd() * 24);
+    const missing = allPairs(n).filter(() => rnd() < 0.3);
+    if (missing.length === 0) continue;
+    const plan = planMatrixRequests(missing);
+    assert(plan.length >= 1 && plan.length <= 2);
+    assert(coversExactlyOnce(plan, missing), `run ${run}: a missing pair is not covered exactly once`);
+    const origins = new Set(missing.map(([o]) => o));
+    const dests = new Set(missing.map(([, d]) => d));
+    assert(planElements(plan) <= origins.size * dests.size, `run ${run}: plan costs more than the bounding request`);
+    for (const r of plan) assert(r.origins.length <= 25 && r.destinations.length <= 25);
+  }
 });

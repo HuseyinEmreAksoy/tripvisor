@@ -157,12 +157,22 @@ export function PlaceRow({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            Platform.OS === 'web'
+            Platform.OS === 'web' || !onOpenActions
               ? // Web: the kebab is the actions affordance — don't teach
-                // mouse users a long-press gesture they don't have.
+                // mouse users a long-press gesture they don't have. Viewers
+                // (no onOpenActions) have no long-press actions at all.
                 tx('row.openDetails', { title })
               : tx('row.openDetailsNative', { title })
           }
+          // Non-gesture path to the actions sheet for screen-reader users
+          // (VoiceOver rotor / TalkBack actions menu) — long-press drag is
+          // not reachable from assistive tech on native.
+          accessibilityActions={
+            onOpenActions ? [{ name: 'placeActions', label: tx('row.actions') }] : undefined
+          }
+          onAccessibilityAction={(e) => {
+            if (e.nativeEvent.actionName === 'placeActions') onOpenActions?.();
+          }}
           onPress={onOpenDetails}
           onLongPress={onLongPress}
           delayLongPress={180}

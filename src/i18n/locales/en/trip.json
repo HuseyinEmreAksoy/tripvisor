@@ -170,5 +170,15 @@
       "endBeforeStart": "The end date can’t be before the start date",
       "createFailed": "Couldn’t create the trip. Check your connection and try again."
     }
+  },
+  "list": {
+    "errors": {
+      "archive": "Couldn't archive this trip. Check your connection and try again.",
+      "unarchive": "Couldn't restore this trip. Check your connection and try again.",
+      "duplicate": "Couldn't duplicate this trip. Check your connection and try again."
+    }
+  },
+  "settingsSheet": {
+    "currencyFxFailed": "Couldn’t get an exchange rate to convert your budget, so the currency wasn’t changed. Check your connection and try again."
   }
 }

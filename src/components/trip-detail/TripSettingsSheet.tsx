@@ -21,6 +21,7 @@ import { useT } from '@/i18n';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
+import { fetchFxRate } from '@/api/fx';
 import { DeleteTripError, useUpdateTrip, type TransportMode, type TripCurrency } from '@/api';
 import { CoverPhotoSection } from './CoverPhotoSection';
 import { CoverPickerModal } from './CoverPickerModal';
@@ -57,6 +58,12 @@ export interface TripSettingsSheetProps {
   dailyHoursBudget: number;
   transportMode: TransportMode;
   currency: TripCurrency;
+  /**
+   * `trips.total_budget` in the CURRENT home currency. When set, a home
+   * currency change converts it in the same write (else the budget would be
+   * read as the new currency's units).
+   */
+  totalBudget?: number | null;
   hasPlaces: boolean;
   canEdit: boolean;
   isOwner: boolean;
@@ -68,6 +75,16 @@ export interface TripSettingsSheetProps {
    * Build it with {@link deleteTripErrorKey} so typed codes get their copy.
    */
   deleteError?: DeleteTripErrorKey | null;
+}
+
+/**
+ * Budget converted into the new home currency, rounded to its minor units
+ * (JPY has none). Exported for tests.
+ */
+export function convertBudget(amount: number, rate: number, to: TripCurrency): number {
+  const digits = to === 'JPY' ? 0 : 2;
+  const f = 10 ** digits;
+  return Math.round(amount * rate * f) / f;
 }
 
 export function TripSettingsSheet(props: TripSettingsSheetProps) {
@@ -103,6 +120,7 @@ function TripSettingsBody({
   dailyHoursBudget,
   transportMode,
   currency,
+  totalBudget = null,
   hasPlaces,
   canEdit,
   isOwner,
@@ -128,8 +146,27 @@ function TripSettingsBody({
   // money is tracked via the category-based budget, not km × rate.
   const updateTrip = useUpdateTrip(tripId);
 
-  function handleCurrencyChange(value: TripCurrency) {
-    updateTrip.mutate({ currency: value });
+  const [currencyBusy, setCurrencyBusy] = useState(false);
+  const [currencyError, setCurrencyError] = useState(false);
+
+  async function handleCurrencyChange(value: TripCurrency) {
+    if (value === currency || currencyBusy) return;
+    setCurrencyError(false);
+    if (totalBudget == null || !(totalBudget > 0)) {
+      updateTrip.mutate({ currency: value });
+      return;
+    }
+    // F3 fix: convert the budget with the home change, in one write. No rate
+    // reachable → keep the old currency (never leave a mis-denominated budget).
+    setCurrencyBusy(true);
+    try {
+      const { rate } = await fetchFxRate(currency, value, 'latest');
+      updateTrip.mutate({ currency: value, total_budget: convertBudget(totalBudget, rate, value) });
+    } catch {
+      setCurrencyError(true);
+    } finally {
+      setCurrencyBusy(false);
+    }
   }
 
   // Web Slider's <input type="range"> fires onChange per-tick during drag, so
@@ -243,12 +280,17 @@ function TripSettingsBody({
         <SegmentedControl<TripCurrency>
           label="Currency"
           value={currency}
-          onChange={handleCurrencyChange}
+          onChange={(v) => void handleCurrencyChange(v)}
           options={CURRENCIES.map((c) => ({ value: c, label: c }))}
         />
       ) : (
         <ReadOnlyValue label="Currency" value={currency} />
       )}
+      {isOwner && currencyError ? (
+        <Text accessibilityRole="alert" style={[t.typography.caption, { color: t.colors.danger }]}>
+          {tx('settingsSheet.currencyFxFailed')}
+        </Text>
+      ) : null}
 
       {/* ── Calendar export ─────────────────────────────────────────────── */}
       <SectionHeading label="Export" />

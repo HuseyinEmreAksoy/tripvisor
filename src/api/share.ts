@@ -10,7 +10,12 @@
 //     (optimistic; rolls back on failure).
 // Public side:
 //   - `useSharedTrip` — anonymous read of a link (contract v3: optional
-//     `sections` / `expenses` / `memories`, see ./share.types.ts).
+//     `sections` / `expenses` / `memories`, see ./share.types.ts). v4 (Wave-2
+//     sweep): photos carry THUMBNAIL URLs only (`url` === `thumbUrl`), reads
+//     are rate limited server-side (429 `rate_limited`), so the read is cached
+//     for 40 min and never refetched on focus.
+//   - `useSharedPhotoUrl` — the FULL image of one shared photo, on demand
+//     (lightbox), through the rate-limited `photo_url` op.
 // Everything funnels through the `share-trip` Edge Function; the
 // `trip_shares` table is intentionally not reachable from the client.
 // The 'share' query root is memory-only (not in the persister allowlist), so
@@ -47,7 +52,29 @@ export type {
 } from './share.types';
 
 /** `meta.contractVersion` of the share-trip read this client understands. */
-export const SHARE_CONTRACT_VERSION = 3;
+export const SHARE_CONTRACT_VERSION = 4;
+
+/**
+ * How long a public read stays fresh. Reads are rate limited per link
+ * (~300/day) and per IP (~60/h), and the photo URLs they carry live 1 h.
+ */
+export const SHARED_TRIP_STALE_MS = 40 * 60 * 1000;
+
+/**
+ * While a read carries photos, refetch it before its 1 h signed URLs run
+ * out (TanStack pauses intervals in a hidden tab).
+ */
+export const SHARED_TRIP_PHOTO_REFRESH_MS = 50 * 60 * 1000;
+
+/** A full-size photo URL is signed for 1 h; reuse it for 50 min. */
+export const SHARED_PHOTO_URL_STALE_MS = 50 * 60 * 1000;
+
+/** `photo_url` answer (share-trip contract v4). `url` is already re-based onto this app's Supabase URL. */
+export interface SharedPhotoUrl {
+  url: string;
+  /** ISO time the URL stops working. */
+  expiresAt: string;
+}
 
 /** Toggles of a brand-new link when nothing is chosen (server column defaults). */
 export const DEFAULT_SHARE_SETTINGS: Readonly<ShareSettings> = Object.freeze({
@@ -63,6 +90,9 @@ export const DEFAULT_SHARE_SETTINGS: Readonly<ShareSettings> = Object.freeze({
  *   - `not_authenticated` — 401 — no / expired session
  *   - `not_found`         — 404 — trip missing or not visible to the caller
  *   - `no_active_link`    — 404 — update_settings with no live link (create one)
+ *   - `rate_limited`      — 429 — anonymous read / photo over the per-link or
+ *                            per-IP cap ("try again later"; never retried)
+ *   - `rate_limit_unavailable` — 503 — the server's counter is down
  *   - `invalid_input` 400 · `db_error` / `internal_error` 500
  * Non-envelope failures (network, gateway) are rethrown as-is.
  */
@@ -83,6 +113,9 @@ export const shareKeys = {
   trip: (token: string | undefined) => [...shareKeys.all, 'trip', token ?? 'none'] as const,
   /** The owner's current-link read (token + toggles) for one trip. */
   current: (tripId: string | undefined) => [...shareKeys.all, 'current', tripId ?? 'none'] as const,
+  /** One shared photo's full-size URL (`photo_url`). */
+  photo: (token: string | undefined, photoId: string | undefined) =>
+    [...shareKeys.all, 'photo', token ?? 'none', photoId ?? 'none'] as const,
 };
 
 /** 4xx answers (auth / ownership / validation) and contract drift don't get better on retry. */
@@ -282,25 +315,44 @@ function definedToggles(patch: Partial<ShareSettings>): Partial<ShareSettings> {
 // Public read (anonymous)
 // ===========================================================================
 
+/** HTTP status of a `functions.invoke` failure, when there was a response. */
+function invokeStatus(error: unknown): number | undefined {
+  const status = (error as { context?: { status?: unknown } }).context?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+/** Anonymous reads: never retry a 4xx (404 revoked, 429 rate limited) or contract drift. */
+function retryAnonymous(failureCount: number, error: Error): boolean {
+  if (error instanceof ShareLinkError && error.status < 500) return false;
+  if (error instanceof z.ZodError) return false;
+  const msg = error.message?.toLowerCase() ?? '';
+  if (msg.includes('not_found') || msg.includes('404')) return false;
+  return failureCount < 2;
+}
+
 /**
  * Anonymous read of a shared trip by token. No auth required. The Edge
  * Function uses the service-role key to fetch the trip + its ToS-safe
- * fields. Returns null if the token is missing or revoked. With contract v3
+ * fields. Returns null if the token is missing or revoked. With contract v3+
  * the payload may carry `sections`, `expenses` and `memories` (each only when
- * the owner turned it on); memory photo URLs expire after 1 h, so the 1 min
- * staleTime keeps them fresh on an open page.
+ * the owner turned it on).
+ *
+ * Contract v4: reads are rate limited server-side (per link and per IP), so
+ * the data stays fresh for 40 min and is never refetched on window focus. A
+ * payload with photos is refetched every 50 min while the page is visible,
+ * before its 1 h thumbnail URLs expire. Over a cap the query fails with a
+ * `ShareLinkError` whose code is `rate_limited` (status 429, not retried).
+ * Full-size photos: {@link useSharedPhotoUrl}.
  */
 export function useSharedTrip(token: string | undefined) {
-  return useQuery<SharedTripPayload | null>({
+  return useQuery<SharedTripPayload | null, ShareLinkError | Error>({
     queryKey: shareKeys.trip(token),
     enabled: Boolean(token),
-    staleTime: 1000 * 60, // 1 min — share content can change (edits on owner side)
-    retry: (failureCount, err) => {
-      // 404 means revoked or unknown — don't retry on that.
-      const msg = (err as Error).message?.toLowerCase() ?? '';
-      if (msg.includes('not_found') || msg.includes('404')) return false;
-      return failureCount < 2;
-    },
+    staleTime: SHARED_TRIP_STALE_MS,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) =>
+      (query.state.data?.memories?.photos.length ?? 0) > 0 ? SHARED_TRIP_PHOTO_REFRESH_MS : false,
+    retry: retryAnonymous,
     queryFn: async () => {
       if (!token) return null;
       const { data, error } = await supabase.functions.invoke<SharedTripPayload>('share-trip', {
@@ -309,12 +361,48 @@ export function useSharedTrip(token: string | undefined) {
       if (error) {
         // Edge Function returns 404 for missing/revoked — surface as null so the
         // consuming screen can show a friendly "link no longer available" state.
-        const status = (error as { context?: { status?: number } }).context?.status;
-        if (status === 404) return null;
-        throw error;
+        if (invokeStatus(error) === 404) return null;
+        await throwShareError(error);
       }
       return data ? withReachablePhotoUrls(data) : null;
     },
+  });
+}
+
+const photoUrlSchema = z.object({ url: z.string().min(1), expiresAt: z.string() });
+
+/** One shared photo's full-size URL (op `photo_url`), re-based onto this app's Supabase URL. */
+export async function fetchSharedPhotoUrl(token: string, photoId: string): Promise<SharedPhotoUrl> {
+  const { data, error } = await supabase.functions.invoke('share-trip', {
+    body: { op: 'photo_url', token, photoId },
+  });
+  if (error) await throwShareError(error);
+  const parsed = photoUrlSchema.parse(data);
+  return { url: rebaseSignedStorageUrl(parsed.url, appSupabaseOrigin()), expiresAt: parsed.expiresAt };
+}
+
+/**
+ * The FULL-size image of one photo on a public share page (the read only
+ * carries thumbnails since contract v4). Mount it where the full image is
+ * actually shown (the lightbox), not per grid tile: each call is counted
+ * against the link's and the viewer's rate limits. Cached for 50 min (the
+ * URL lives 1 h); `not_found` (404) = the photo is no longer shared,
+ * `rate_limited` (429) = show the thumbnail and try later. Pass
+ * `{ enabled: false }` to hold it.
+ */
+export function useSharedPhotoUrl(
+  token: string | undefined,
+  photoId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery<SharedPhotoUrl, ShareLinkError | Error>({
+    queryKey: shareKeys.photo(token, photoId),
+    enabled: Boolean(token) && Boolean(photoId) && (options.enabled ?? true),
+    staleTime: SHARED_PHOTO_URL_STALE_MS,
+    gcTime: SHARED_PHOTO_URL_STALE_MS,
+    refetchOnWindowFocus: false,
+    retry: retryAnonymous,
+    queryFn: () => fetchSharedPhotoUrl(token!, photoId!),
   });
 }
 

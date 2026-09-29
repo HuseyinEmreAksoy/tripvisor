@@ -6,7 +6,8 @@
     "goBackTo": "Go back to {{label}}",
     "next": "Next",
     "cancel": "Cancel",
-    "done": "Done"
+    "done": "Done",
+    "selectDate": "Select date"
   },
   "language": {
     "system": "System",

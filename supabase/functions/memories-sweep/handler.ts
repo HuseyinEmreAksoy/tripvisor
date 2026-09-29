@@ -1,5 +1,6 @@
 // memories-sweep — remove ORPHANED objects from the private `trip-memories`
-// Storage bucket (M5 Y2.1; the 0038 §2d follow-up). Sweep logic: ./sweep.ts.
+// Storage bucket (M5 Y2.1; the 0038 §2d follow-up), and since 0040 the
+// objects of photos tombstoned more than 7 days ago. Sweep logic: ./sweep.ts.
 //
 // Contract (contractVersion 1):
 //   POST (internal callers only — see "Who may call")
@@ -30,9 +31,11 @@
 //
 // Service-role justification: the candidates RPC is EXECUTE-granted to
 // service_role only (0038) and orphans have no owning row, so no user's RLS
-// could reach them. The function takes no trip/user input at all (no IDOR
+// could reach them (a long-tombstoned photo's author may no longer be a
+// member, 0040). The function takes no trip/user input at all (no IDOR
 // surface): it only deletes objects the database itself reports as
-// ownerless and older than the age floor.
+// ownerless, or as belonging to a photo tombstoned > 7 days ago, and older
+// than the age floor.
 //
 // Rule 7: every outbound request (RPC, Storage) goes through a 10 s
 // AbortController timeout; no retries — the job is idempotent and runs

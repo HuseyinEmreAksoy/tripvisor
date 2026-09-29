@@ -69,6 +69,10 @@
 //       existing routing_provider switch) that returns a per-leg split.
 //     - transit: one Google Routes call per leg while the caller's routing
 //       quota lasts and app_config 'transit_routing' is not 'estimate'/'off'.
+//       Sweep fix: a fresh routed transit day leg of an earlier run with the
+//       same from -> to is REUSED (no call; its computed_at is kept), and
+//       every call takes one unit of a GLOBAL daily budget
+//       (consume_service_usage('google_transit', 1, 300)); past it -> estimate.
 //     - flight / ferry: never routed.
 //     - arrival_minutes set: the user's duration ('user'), no call.
 //     - anything a routing API can't answer (quota spent, kill switch,
@@ -92,9 +96,13 @@
 //     transport_mode = the leg's effective mode, polyline per leg (null for
 //     transit, which carries transit_steps, and for estimate/user legs).
 //   - matrix cache rows: day_index = -1, one per ordered pair, keyed by mode;
-//     only routed answers are cached (never estimates).
+//     routed answers (30-day TTL) plus, since the sweep fix, NEGATIVE rows
+//     (source 'estimate', 24 h) for pairs a matrix answered without a route.
+//     Only the missing pairs are requested (at most two rectangles, see
+//     legs.ts planMatrixRequests), never the full N x N again.
 //   'manual' replaces ALL of the trip's legs; 'optimized' replaces the day
-//   legs and keeps the (TTL-bounded) matrix cache rows.
+//   legs and keeps the matrix cache, purging (before the insert) the rows
+//   it re-inserts, expired rows and rows of places that are gone.
 //
 // Security (audit 2026-09-29):
 //   #6 Viewers could run this function. RLS only proved the trip was
@@ -154,6 +162,7 @@ import {
   orderChainByRank,
   type PlannedLeg,
   planDayLegs,
+  planMatrixRequests,
   routedLegsFromDirections,
   routedSource,
   type RunMode,
@@ -165,6 +174,8 @@ import {
 
 const MAX_PLACES = 25;
 const LEG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** `in('id', …)` filter chunk (URL length). */
+const ID_CHUNK = 100;
 
 // Outer budgets for the sibling-function hops. Each sits above the callee's
 // own upstream budget (distance-matrix / directions-polyline: 10s Google,
@@ -189,6 +200,24 @@ const ROUTING_BUDGET_MS = 60_000;
 
 /** app_config key: 'estimate' | 'off' stops Google transit calls (M5 Y2.3). */
 const TRANSIT_SWITCH_KEY = 'transit_routing';
+
+/**
+ * Sweep fix: a pair the matrix answered WITHOUT a route (no road / no transit
+ * connection) is cached as a `source: 'estimate'` row (day_index -1) for this
+ * long, so every optimize run does not pay for it again. Short on purpose:
+ * a new ferry line or a fixed ORS graph should be picked up within a day.
+ */
+const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sweep fix: GLOBAL (all users) cap on Google transit directions calls per
+ * UTC day, via 0037 consume_service_usage('google_transit'). Transit is the
+ * one leg type routed one call per leg, and only Google can answer it; past
+ * the cap every transit leg becomes a labelled estimate. Zero extra spend:
+ * 300/day stays far inside the $200 monthly credit.
+ */
+const GOOGLE_TRANSIT_DAILY_CAP = 300;
+const GOOGLE_TRANSIT_SERVICE = 'google_transit';
 
 /** meta.contractVersion of every 2xx body (v1 = pre-M5, no `meta`). */
 export const OPTIMIZE_CONTRACT_VERSION = 2;
@@ -246,6 +275,8 @@ interface TripDayModeRow {
 
 /** A trip_legs row read as a matrix-cache candidate. */
 interface CachedLegRow {
+  /** Absent on narrow mocks; needed only to purge a superseded row. */
+  id?: string;
   from_place_id: string;
   to_place_id: string;
   duration_seconds: number;
@@ -269,6 +300,19 @@ interface LegInsertRow {
   polyline: string | null;
   transit_steps: unknown[] | null;
   source: LegSource;
+  /**
+   * Always set explicitly: a bulk insert with a key missing on some rows
+   * would send NULL (NOT NULL column). Reused legs keep their original time.
+   */
+  computed_at: string;
+}
+
+/** A routed transit day leg of an earlier run that a new run may reuse. */
+interface ReusableTransitLeg {
+  durationSeconds: number;
+  distanceMeters: number;
+  transitSteps: unknown[] | null;
+  computedAt: string;
 }
 
 interface ResponseDay {
@@ -291,8 +335,20 @@ interface RoutingCtx {
   quotaExhausted: boolean;
   /** Memoized app_config 'transit_routing' read (true = Google allowed). */
   transitAllowed: () => Promise<boolean>;
+  /**
+   * Takes one unit of the global per-day Google transit budget. false = spent
+   * (or the counter is unavailable: fails closed) -> estimate. Memoized once
+   * spent, so a run stops asking.
+   */
+  consumeTransitBudget: () => Promise<boolean>;
+  /** Fresh routed transit day legs of earlier runs, by `from__to` (lazy, one read). */
+  reusableTransit: () => Promise<ReadonlyMap<string, ReusableTransitLeg>>;
+  /** ISO time stamped on every freshly computed leg row of this run. */
+  runAt: string;
   /** Routing calls made (logs). */
   routingCalls: number;
+  /** Transit legs reused from an earlier run instead of routed (logs). */
+  transitReused: number;
 }
 
 export async function handler(req: Request): Promise<Response> {
@@ -508,7 +564,11 @@ export async function handler(req: Request): Promise<Response> {
       deadline: Date.now() + ROUTING_BUDGET_MS,
       quotaExhausted: false,
       transitAllowed: makeTransitSwitch(user, requestId, body.tripId),
+      consumeTransitBudget: makeTransitBudget(admin, requestId, body.tripId),
+      reusableTransit: makeTransitReuse(user, requestId, body.tripId),
+      runAt: new Date().toISOString(),
       routingCalls: 0,
+      transitReused: 0,
     };
 
     // Branch on mode. 'manual' bypasses clustering + 2-opt entirely and
@@ -572,19 +632,28 @@ async function runOptimizedMode(args: {
   let cacheHit = true;
   let reordered = false;
   const cacheRows: LegInsertRow[] = [];
+  /** ids of existing matrix-cache rows that this run's cacheRows replace. */
+  const supersededIds = new Set<string>();
   const optimizedDays: ResponseDay[] = [];
 
   if (freePlaces.length > 0) {
-    // Matrix cache: routed (never estimated) pairwise rows < 30 days old,
-    // keyed by mode. Only the modes a matrix may be built in are read.
+    // Matrix cache: pairwise rows (day_index -1) keyed by mode; routed rows
+    // < 30 days old are answers, 'estimate' rows < 24 h are known-unroutable
+    // pairs (negative cache). One read PER MODE: each stays far below
+    // PostgREST's 1000-row cap (<= 25 x 24 pairs), where one read over every
+    // mode could be silently truncated.
     const matrixModes = [...new Set<TripMode>([ctx.tripMode, ...ctx.dayModes.values()])];
-    const { data: cachedRaw } = (await user
-      .from('trip_legs')
-      .select('from_place_id, to_place_id, duration_seconds, distance_meters, computed_at, transport_mode, source, day_index')
-      .eq('trip_id', tripId)
-      .lt('day_index', 0)
-      .in('transport_mode', matrixModes)) as { data: CachedLegRow[] | null };
-    const cachedRows: CachedLegRow[] = cachedRaw ?? [];
+    const cacheReads = (await Promise.all(
+      matrixModes.map((mode) =>
+        user
+          .from('trip_legs')
+          .select('id, from_place_id, to_place_id, duration_seconds, distance_meters, computed_at, transport_mode, source, day_index')
+          .eq('trip_id', tripId)
+          .lt('day_index', 0)
+          .eq('transport_mode', mode)
+      ),
+    )) as Array<{ data: CachedLegRow[] | null }>;
+    const cachedRows: CachedLegRow[] = cacheReads.flatMap((r) => r.data ?? []);
 
     const phase1 = await buildMatrix({ places: freePlaces, mode: ctx.tripMode, cachedRows, ctx, stage: 'matrix' });
     if (phase1.kind === 'quota') {
@@ -603,6 +672,7 @@ async function runOptimizedMode(args: {
     }
     cacheHit = phase1.cacheHit;
     cacheRows.push(...phase1.cacheRows);
+    for (const id of phase1.supersededIds) supersededIds.add(id);
 
     const result = optimize({
       places: freePlaces.map(toOptimizerPlace),
@@ -638,6 +708,7 @@ async function runOptimizedMode(args: {
       const m = await buildMatrix({ places: dayPlaces, mode: dayMode, cachedRows, ctx, stage: 'day_matrix' });
       if (m.kind !== 'ok') continue;
       cacheRows.push(...m.cacheRows);
+      for (const id of m.supersededIds) supersededIds.add(id);
       const re = optimize({
         places: dayPlaces.map(toOptimizerPlace),
         legs: m.legs,
@@ -697,7 +768,7 @@ async function runOptimizedMode(args: {
     ...keptChains,
   ].sort((a, b) => a.dayIndex - b.dayIndex);
   const legsByDay = await computeDayLegs(dayChains, ctx);
-  const dayLegRows = legRows(tripId, dayChains, legsByDay);
+  const dayLegRows = legRows(tripId, dayChains, legsByDay, ctx.runAt);
 
   // Replace the day legs (day_index >= 0) — the previous layout's legs would
   // otherwise be summed with the new ones. Matrix cache rows (-1) stay.
@@ -710,6 +781,10 @@ async function runOptimizedMode(args: {
     log({ requestId, fn: 'optimize-trip', level: 'error', stage: 'delete_legs', err: delErr.message });
     return errorResponse('db_error', delErr.message, 500, origin);
   }
+  // Sweep fix: the matrix cache used to grow without bound (every re-asked
+  // pair was inserted again, rows of removed places stayed until the nightly
+  // 30-day purge). Best effort: a failed purge only means extra rows.
+  await purgeMatrixCache(admin, ctx, places, supersededIds);
   // Cache rows first, day legs last: pre-Y2.3 clients key legs by
   // from->to with last-wins, so the day leg must come after a same-pair
   // cache row in the (insertion-ordered) read.
@@ -755,6 +830,7 @@ async function runOptimizedMode(args: {
     polylineDays,
     legSources,
     routingCalls: ctx.routingCalls,
+    transitReused: ctx.transitReused,
   });
 
   return jsonResponse(
@@ -911,7 +987,7 @@ async function runManualMode(args: {
   //    fails: an unroutable leg becomes an estimate.
   const dayChains = sortedDays.map((dayIndex) => ({ dayIndex, chain: byDay.get(dayIndex)! }));
   const legsByDay = await computeDayLegs(dayChains, ctx);
-  const legsToInsert = legRows(tripId, dayChains, legsByDay);
+  const legsToInsert = legRows(tripId, dayChains, legsByDay, ctx.runAt);
 
   // 7. Wipe existing trip_legs for this trip. We overwrite per-day, but
   //    the prior layout might have had MORE days than the manual layout
@@ -966,6 +1042,7 @@ async function runManualMode(args: {
     polylineDays,
     legSources,
     routingCalls: ctx.routingCalls,
+    transitReused: ctx.transitReused,
   });
 
   return jsonResponse(
@@ -990,19 +1067,26 @@ async function runManualMode(args: {
 // ============================================================
 
 type MatrixOutcome =
-  | { kind: 'ok'; legs: OptimizerLeg[]; cacheRows: LegInsertRow[]; cacheHit: boolean }
+  | { kind: 'ok'; legs: OptimizerLeg[]; cacheRows: LegInsertRow[]; supersededIds: string[]; cacheHit: boolean }
   | { kind: 'quota'; message: string | null }
   | { kind: 'failed' };
 
 /**
  * Travel times between every ordered pair of `places` in `mode`:
- * fresh routed cache rows first, one distance-matrix call for the rest.
+ * fresh routed cache rows first, then distance-matrix requests for ONLY the
+ * missing pairs (sweep fix; legs.ts planMatrixRequests: at most two
+ * rectangles, e.g. one new place costs 2(N-1) elements instead of N x N).
  *   - non-transit: failures surface ('quota' / 'failed'); the phase-1 caller
  *     maps them to the pre-M5 429 / 502, phase 2 just keeps its order.
- *   - transit: never fails. Kill switch, spent quota, time budget, a matrix
+ *   - transit: never fails. Kill switch, spent quota, time budget, a request
  *     over Google's 100-element transit cap, or any upstream error ->
  *     estimated pairs (NOT cached, so a later run can still route them).
- * Returned cacheRows are the freshly routed pairs (day_index -1).
+ * A pair a SUCCESSFUL request answered without a route is negative-cached
+ * (source 'estimate', day_index -1, NEGATIVE_CACHE_TTL_MS) so the next runs
+ * do not ask again; it is fed to the optimizer exactly like on the first run
+ * (transit: an estimate; other modes: left out -> the optimizer's fallback).
+ * Returned cacheRows are the new day_index -1 rows; supersededIds the ids of
+ * existing cache rows for the same pairs (purged before the insert).
  */
 async function buildMatrix(args: {
   places: TripPlaceRow[];
@@ -1013,18 +1097,28 @@ async function buildMatrix(args: {
 }): Promise<MatrixOutcome> {
   const { places, mode, cachedRows, ctx, stage } = args;
   const ids = new Set(places.map((p) => p.id));
+  const pairKey = (from: string, to: string) => `${from}__${to}`;
 
-  // Freshest routed row per ordered pair.
+  // Freshest routed row per ordered pair, and the pairs known to be
+  // unroutable (fresh negative rows). Every same-mode row of a pair is
+  // remembered so a re-inserted pair replaces them all.
   const nowMs = Date.now();
   const cachedByPair = new Map<string, CachedLegRow>();
+  const unroutable = new Set<string>();
+  const rowIdsByPair = new Map<string, string[]>();
   for (const row of cachedRows) {
     if (row.transport_mode !== mode) continue;
     if (!ids.has(row.from_place_id) || !ids.has(row.to_place_id)) continue;
     if (typeof row.day_index === 'number' && row.day_index >= 0) continue; // day legs are not a matrix
-    if (row.source === 'estimate' || row.source === 'user') continue; // never cache a guess
+    const key = pairKey(row.from_place_id, row.to_place_id);
+    if (row.id) rowIdsByPair.set(key, [...(rowIdsByPair.get(key) ?? []), row.id]);
     const at = Date.parse(row.computed_at);
+    if (row.source === 'estimate') {
+      if (nowMs - at < NEGATIVE_CACHE_TTL_MS) unroutable.add(key); // known: no route
+      continue;
+    }
+    if (row.source === 'user') continue; // never a matrix answer
     if (!(nowMs - at < LEG_TTL_MS)) continue; // stale (or unparseable)
-    const key = `${row.from_place_id}__${row.to_place_id}`;
     const prev = cachedByPair.get(key);
     if (!prev || Date.parse(prev.computed_at) < at) cachedByPair.set(key, row);
   }
@@ -1034,16 +1128,30 @@ async function buildMatrix(args: {
     durationSeconds: l.duration_seconds,
   }));
 
-  const missing: Array<{ from: TripPlaceRow; to: TripPlaceRow }> = [];
-  for (const a of places) {
-    for (const b of places) {
-      if (a.id === b.id) continue;
-      if (!cachedByPair.has(`${a.id}__${b.id}`)) missing.push({ from: a, to: b });
-    }
+  const missing: Array<{ from: number; to: number }> = [];
+  const knownUnroutable: Array<{ from: TripPlaceRow; to: TripPlaceRow }> = [];
+  places.forEach((a, i) => {
+    places.forEach((b, j) => {
+      if (i === j) return;
+      const key = pairKey(a.id, b.id);
+      if (cachedByPair.has(key)) return;
+      if (unroutable.has(key)) knownUnroutable.push({ from: a, to: b });
+      else missing.push({ from: i, to: j });
+    });
+  });
+  // Transit pairs without a route are estimates (the optimizer's own
+  // fallback assumes ~30 km/h by car); other modes keep the pre-M5 behavior
+  // and leave them out (the optimizer falls back itself).
+  const unroutableLegs = (pairs: ReadonlyArray<{ from: TripPlaceRow; to: TripPlaceRow }>): OptimizerLeg[] =>
+    mode === 'transit' ? pairs.map((p) => estimatedPair(mode, p.from, p.to)) : [];
+  const knownLegs = [...cached, ...unroutableLegs(knownUnroutable)];
+  if (missing.length === 0) {
+    return { kind: 'ok', legs: knownLegs, cacheRows: [], supersededIds: [], cacheHit: true };
   }
-  if (missing.length === 0) return { kind: 'ok', legs: cached, cacheRows: [], cacheHit: true };
 
-  const estimatedMissing = (reason: string): MatrixOutcome => {
+  const toPairs = (list: ReadonlyArray<{ from: number; to: number }>) =>
+    list.map((m) => ({ from: places[m.from]!, to: places[m.to]! }));
+  const logEstimated = (pairs: number, reason: string) =>
     log({
       requestId: ctx.requestId,
       fn: 'optimize-trip',
@@ -1052,121 +1160,169 @@ async function buildMatrix(args: {
       userId: ctx.userId,
       tripId: ctx.tripId,
       mode,
-      pairs: missing.length,
+      pairs,
       outcome: 'estimated',
       reason,
     });
+  const estimatedMissing = (reason: string): MatrixOutcome => {
+    logEstimated(missing.length, reason);
     return {
       kind: 'ok',
-      legs: [...cached, ...missing.map((m) => estimatedPair(mode, m.from, m.to))],
+      legs: [...knownLegs, ...toPairs(missing).map((m) => estimatedPair(mode, m.from, m.to))],
       cacheRows: [],
+      supersededIds: [],
       cacheHit: false,
     };
   };
 
   if (mode === 'transit') {
     if (!(await ctx.transitAllowed())) return estimatedMissing('transit_disabled');
-    if (places.length * places.length > GOOGLE_TRANSIT_MATRIX_MAX_ELEMENTS) {
-      return estimatedMissing('transit_matrix_limit');
-    }
     if (ctx.quotaExhausted) return estimatedMissing('quota_exhausted');
     if (Date.now() > ctx.deadline) return estimatedMissing('time_budget');
   } else if (stage === 'day_matrix' && (ctx.quotaExhausted || Date.now() > ctx.deadline)) {
     return { kind: 'failed' };
   }
 
-  // Fix (2026-06-11, caught by the first real 14-place trip): send each
-  // UNIQUE place once as both origin and destination. distance-matrix
-  // computes the full N×M cross product, so pair-expanded arrays would both
-  // blow the endpoint's 25-coordinate cap and request a quadratically
-  // redundant matrix. `places` is capped at MAX 25 by the too_many_places
-  // guard, which is exactly the matrix endpoint's per-side limit.
-  const coords = places.map((p) => ({ lat: p.lat, lng: p.lng }));
-  ctx.routingCalls += 1;
-  const matrixRes = await callEdge(
-    'distance-matrix',
-    { origins: coords, destinations: coords, mode },
-    ctx.callerAuth,
-    MATRIX_TIMEOUT_MS,
-  );
-  if (!matrixRes.ok) {
-    const quota = matrixRes.status === 429 && matrixRes.errorCode === 'quota_exceeded';
-    if (quota) ctx.quotaExhausted = true;
-    if (mode === 'transit') {
-      return estimatedMissing(quota ? 'quota_exceeded' : `http_${matrixRes.status}:${matrixRes.errorCode ?? 'unknown'}`);
-    }
-    log({
-      requestId: ctx.requestId,
-      fn: 'optimize-trip',
-      level: quota ? 'info' : 'error',
-      stage,
-      userId: ctx.userId,
-      tripId: ctx.tripId,
-      mode,
-      status: matrixRes.status,
-      ...(quota ? { outcome: 'quota_exceeded' } : { err: matrixRes.errorCode ?? 'unknown' }),
-    });
-    return quota ? { kind: 'quota', message: matrixRes.errorMessage } : { kind: 'failed' };
-  }
-
-  const matrixBody = matrixRes.body as { legs?: unknown; provider?: unknown } | null;
-  const matrixLegs = Array.isArray(matrixBody?.legs) ? matrixBody.legs : null;
-  if (!matrixLegs) {
-    if (mode === 'transit') return estimatedMissing('bad_response');
-    log({ requestId: ctx.requestId, fn: 'optimize-trip', level: 'error', stage, mode, err: 'bad_matrix_response' });
-    return { kind: 'failed' };
-  }
-
-  const source = routedSource(matrixBody?.provider);
-  const missingKeys = new Set(missing.map((m) => `${m.from.id}__${m.to.id}`));
+  // Each UNIQUE place is sent once per side of a request (fix 2026-06-11:
+  // distance-matrix computes the full cross product, and pair-expanded
+  // arrays would blow its 25-per-side cap). `places` is capped at MAX 25.
+  const plan = planMatrixRequests(missing.map((m) => [m.from, m.to] as const));
+  const missingKeys = new Set(missing.map((m) => pairKey(places[m.from]!.id, places[m.to]!.id)));
   const fresh: OptimizerLeg[] = [];
+  const extra: OptimizerLeg[] = [];
   const cacheRows: LegInsertRow[] = [];
   const answered = new Set<string>();
-  for (const raw of matrixLegs) {
-    const el = raw as { fromIndex?: unknown; toIndex?: unknown; durationSeconds?: unknown; distanceMeters?: unknown };
-    if (typeof el.fromIndex !== 'number' || typeof el.toIndex !== 'number') continue;
-    const fromPlace = places[el.fromIndex];
-    const toPlace = places[el.toIndex];
-    if (!fromPlace || !toPlace) continue;
-    if (fromPlace.id === toPlace.id) continue; // diagonal — zero-length hop
-    const key = `${fromPlace.id}__${toPlace.id}`;
-    // Cached pairs stay cached; only the ones we actually needed are fresh.
-    if (!missingKeys.has(key) || answered.has(key)) continue;
-    if (typeof el.durationSeconds !== 'number' || !Number.isFinite(el.durationSeconds) || el.durationSeconds < 0) continue;
-    const durationSeconds = Math.round(el.durationSeconds);
-    const distanceMeters =
-      typeof el.distanceMeters === 'number' && Number.isFinite(el.distanceMeters) && el.distanceMeters >= 0
-        ? Math.round(el.distanceMeters)
-        : 0;
-    answered.add(key);
-    fresh.push({ fromId: fromPlace.id, toId: toPlace.id, durationSeconds });
-    cacheRows.push({
-      trip_id: ctx.tripId,
-      from_place_id: fromPlace.id,
-      to_place_id: toPlace.id,
-      day_index: -1,
-      transport_mode: mode,
-      duration_seconds: durationSeconds,
-      distance_meters: distanceMeters,
-      polyline: null,
-      // Pairwise cache rows come from distance-matrix, which carries no
-      // step geometry — transit_steps is a render artifact, not a cache key.
-      transit_steps: null,
-      source,
-    });
+
+  for (let r = 0; r < plan.length; r++) {
+    const request = plan[r]!;
+    const origins = request.origins.map((i) => places[i]!);
+    const destinations = request.destinations.map((i) => places[i]!);
+    const requestMissing = missing.filter(
+      (m) => request.origins.includes(m.from) && request.destinations.includes(m.to),
+    );
+    const estimateRest = (reason: string) => {
+      const rest = plan.slice(r).flatMap((req) =>
+        missing.filter((m) => req.origins.includes(m.from) && req.destinations.includes(m.to)),
+      );
+      logEstimated(rest.length, reason);
+      extra.push(...toPairs(rest).map((m) => estimatedPair(mode, m.from, m.to)));
+    };
+
+    if (mode === 'transit') {
+      if (origins.length * destinations.length > GOOGLE_TRANSIT_MATRIX_MAX_ELEMENTS) {
+        // Refused upstream AFTER the caller's quota was consumed: never sent.
+        logEstimated(requestMissing.length, 'transit_matrix_limit');
+        extra.push(...toPairs(requestMissing).map((m) => estimatedPair(mode, m.from, m.to)));
+        continue;
+      }
+      if (ctx.quotaExhausted || Date.now() > ctx.deadline) {
+        estimateRest(ctx.quotaExhausted ? 'quota_exhausted' : 'time_budget');
+        break;
+      }
+    }
+
+    ctx.routingCalls += 1;
+    const matrixRes = await callEdge(
+      'distance-matrix',
+      {
+        origins: origins.map((p) => ({ lat: p.lat, lng: p.lng })),
+        destinations: destinations.map((p) => ({ lat: p.lat, lng: p.lng })),
+        mode,
+      },
+      ctx.callerAuth,
+      MATRIX_TIMEOUT_MS,
+    );
+    if (!matrixRes.ok) {
+      const quota = matrixRes.status === 429 && matrixRes.errorCode === 'quota_exceeded';
+      if (quota) ctx.quotaExhausted = true;
+      if (mode === 'transit') {
+        estimateRest(quota ? 'quota_exceeded' : `http_${matrixRes.status}:${matrixRes.errorCode ?? 'unknown'}`);
+        break;
+      }
+      log({
+        requestId: ctx.requestId,
+        fn: 'optimize-trip',
+        level: quota ? 'info' : 'error',
+        stage,
+        userId: ctx.userId,
+        tripId: ctx.tripId,
+        mode,
+        status: matrixRes.status,
+        ...(quota ? { outcome: 'quota_exceeded' } : { err: matrixRes.errorCode ?? 'unknown' }),
+      });
+      return quota ? { kind: 'quota', message: matrixRes.errorMessage } : { kind: 'failed' };
+    }
+
+    const matrixBody = matrixRes.body as { legs?: unknown; provider?: unknown } | null;
+    const matrixLegs = Array.isArray(matrixBody?.legs) ? matrixBody.legs : null;
+    if (!matrixLegs) {
+      if (mode === 'transit') {
+        estimateRest('bad_response');
+        break;
+      }
+      log({ requestId: ctx.requestId, fn: 'optimize-trip', level: 'error', stage, mode, err: 'bad_matrix_response' });
+      return { kind: 'failed' };
+    }
+
+    const source = routedSource(matrixBody?.provider);
+    for (const raw of matrixLegs) {
+      const el = raw as { fromIndex?: unknown; toIndex?: unknown; durationSeconds?: unknown; distanceMeters?: unknown };
+      if (typeof el.fromIndex !== 'number' || typeof el.toIndex !== 'number') continue;
+      const fromPlace = origins[el.fromIndex];
+      const toPlace = destinations[el.toIndex];
+      if (!fromPlace || !toPlace) continue;
+      if (fromPlace.id === toPlace.id) continue; // diagonal — zero-length hop
+      const key = pairKey(fromPlace.id, toPlace.id);
+      // Cached pairs stay cached; only the ones we actually needed are fresh.
+      if (!missingKeys.has(key) || answered.has(key)) continue;
+      if (typeof el.durationSeconds !== 'number' || !Number.isFinite(el.durationSeconds) || el.durationSeconds < 0) continue;
+      const durationSeconds = Math.round(el.durationSeconds);
+      const distanceMeters =
+        typeof el.distanceMeters === 'number' && Number.isFinite(el.distanceMeters) && el.distanceMeters >= 0
+          ? Math.round(el.distanceMeters)
+          : 0;
+      answered.add(key);
+      fresh.push({ fromId: fromPlace.id, toId: toPlace.id, durationSeconds });
+      cacheRows.push({
+        trip_id: ctx.tripId,
+        from_place_id: fromPlace.id,
+        to_place_id: toPlace.id,
+        day_index: -1,
+        transport_mode: mode,
+        duration_seconds: durationSeconds,
+        distance_meters: distanceMeters,
+        polyline: null,
+        // Pairwise cache rows come from distance-matrix, which carries no
+        // step geometry — transit_steps is a render artifact, not a cache key.
+        transit_steps: null,
+        source,
+        computed_at: ctx.runAt,
+      });
+    }
+
+    // Asked and not answered: no route between the two. Negative-cache them.
+    const noRoute = toPairs(requestMissing).filter((m) => !answered.has(pairKey(m.from.id, m.to.id)));
+    for (const m of noRoute) {
+      const est = estimateLeg(mode, m.from, m.to);
+      cacheRows.push({
+        trip_id: ctx.tripId,
+        from_place_id: m.from.id,
+        to_place_id: m.to.id,
+        day_index: -1,
+        transport_mode: mode,
+        duration_seconds: est.durationSeconds,
+        distance_meters: est.distanceMeters,
+        polyline: null,
+        transit_steps: null,
+        source: 'estimate',
+        computed_at: ctx.runAt,
+      });
+    }
+    extra.push(...unroutableLegs(noRoute));
   }
 
-  // Transit pairs Google could not route become estimates (the optimizer's
-  // own fallback assumes ~30 km/h by car). Other modes keep the pre-M5
-  // behavior: unanswered pairs fall back inside the optimizer.
-  const extra: OptimizerLeg[] =
-    mode === 'transit'
-      ? missing
-          .filter((m) => !answered.has(`${m.from.id}__${m.to.id}`))
-          .map((m) => estimatedPair(mode, m.from, m.to))
-      : [];
-
-  return { kind: 'ok', legs: [...cached, ...fresh, ...extra], cacheRows, cacheHit: false };
+  const supersededIds = cacheRows.flatMap((row) => rowIdsByPair.get(pairKey(row.from_place_id, row.to_place_id)) ?? []);
+  return { kind: 'ok', legs: [...knownLegs, ...fresh, ...extra], cacheRows, supersededIds, cacheHit: false };
 }
 
 function estimatedPair(mode: TripMode, from: TripPlaceRow, to: TripPlaceRow): OptimizerLeg {
@@ -1227,14 +1383,38 @@ async function resolveSegment(segment: LegSegment<TripPlaceRow>, ctx: RoutingCtx
   }
 }
 
-/** One Google Routes transit call (quota + kill switch permitting), else an estimate. */
+/**
+ * A transit leg: the same routed leg of an earlier run when one is still
+ * fresh (sweep fix: re-rendering an unchanged day costs no call), else one
+ * Google Routes transit call (kill switch, caller quota and the GLOBAL daily
+ * transit budget permitting), else an estimate.
+ */
 async function resolveTransitLeg(leg: PlannedLeg, ctx: RoutingCtx): Promise<LegResult> {
-  const skip = !(await ctx.transitAllowed())
-    ? 'transit_disabled'
-    : ctx.quotaExhausted
-      ? 'quota_exhausted'
-      : Date.now() > ctx.deadline
-        ? 'time_budget'
+  if (!(await ctx.transitAllowed())) {
+    logLegEstimate(ctx, 'transit', 1, 'transit_disabled');
+    return estimatedLegResult(leg);
+  }
+  const reuse = (await ctx.reusableTransit()).get(`${leg.from.id}__${leg.to.id}`);
+  if (reuse) {
+    ctx.transitReused += 1;
+    return {
+      fromId: leg.from.id,
+      toId: leg.to.id,
+      mode: 'transit',
+      durationSeconds: reuse.durationSeconds,
+      distanceMeters: reuse.distanceMeters,
+      polyline: null,
+      transitSteps: reuse.transitSteps,
+      source: 'google',
+      computedAt: reuse.computedAt,
+    };
+  }
+  const skip = ctx.quotaExhausted
+    ? 'quota_exhausted'
+    : Date.now() > ctx.deadline
+      ? 'time_budget'
+      : !(await ctx.consumeTransitBudget())
+        ? 'transit_global_cap'
         : null;
   if (skip) {
     logLegEstimate(ctx, 'transit', 1, skip);
@@ -1339,6 +1519,7 @@ function legRows(
   tripId: string,
   days: ReadonlyArray<{ dayIndex: number }>,
   legsByDay: ReadonlyMap<number, LegResult[]>,
+  runAt: string,
 ): LegInsertRow[] {
   const rows: LegInsertRow[] = [];
   for (const { dayIndex } of days) {
@@ -1356,6 +1537,9 @@ function legRows(
         // polyline stays null for transit); null for every other leg.
         transit_steps: leg.transitSteps,
         source: leg.source,
+        // A reused leg keeps its first computed_at: the 30-day ToS clock of
+        // Google-derived data must never restart on a copy.
+        computed_at: leg.computedAt ?? runAt,
       });
     }
   }
@@ -1410,6 +1594,166 @@ function makeTransitSwitch(user: Db, requestId: string, tripId: string): () => P
     })();
     return pending;
   };
+}
+
+/**
+ * The GLOBAL per-UTC-day Google transit budget (0037 consume_service_usage,
+ * EXECUTE service_role only: the admin client). One unit per transit call.
+ * Fails CLOSED (an RPC error spends nothing upstream: the leg is estimated).
+ * Calls are serialized (legs resolve concurrently), so once refused, later
+ * legs of the run skip the RPC.
+ */
+function makeTransitBudget(admin: Db, requestId: string, tripId: string): () => Promise<boolean> {
+  let spent = false;
+  let queue: Promise<unknown> = Promise.resolve();
+  const take = async (): Promise<boolean> => {
+    if (spent) return false;
+    try {
+      const { data, error } = (await admin.rpc('consume_service_usage', {
+        p_service: GOOGLE_TRANSIT_SERVICE,
+        p_units: 1,
+        p_cap: GOOGLE_TRANSIT_DAILY_CAP,
+      })) as { data: unknown; error: { message: string } | null };
+      if (error) {
+        log({ requestId, fn: 'optimize-trip', level: 'warn', stage: 'transit_budget', tripId, err: error.message });
+        spent = true;
+        return false;
+      }
+      if (data !== true) {
+        log({ requestId, fn: 'optimize-trip', level: 'info', stage: 'transit_budget', tripId, outcome: 'daily_cap_reached', cap: GOOGLE_TRANSIT_DAILY_CAP });
+        spent = true;
+        return false;
+      }
+      return true;
+    } catch (err) {
+      log({ requestId, fn: 'optimize-trip', level: 'warn', stage: 'transit_budget', tripId, err: String(err).slice(0, 200) });
+      spent = true;
+      return false;
+    }
+  };
+  return () => {
+    const next = queue.then(take);
+    queue = next;
+    return next;
+  };
+}
+
+/**
+ * Fresh ROUTED transit day legs of the previous run, by `from__to` (one read
+ * through the caller-scoped client, only when the run has a transit leg).
+ * A re-render of an unchanged pair reuses the leg (duration, distance,
+ * steps) with its ORIGINAL computed_at, so the 30-day ToS window is never
+ * extended. A failed read just means no reuse.
+ */
+function makeTransitReuse(
+  user: Db,
+  requestId: string,
+  tripId: string,
+): () => Promise<ReadonlyMap<string, ReusableTransitLeg>> {
+  let pending: Promise<ReadonlyMap<string, ReusableTransitLeg>> | null = null;
+  return () => {
+    pending ??= (async () => {
+      const out = new Map<string, ReusableTransitLeg>();
+      try {
+        const cutoff = new Date(Date.now() - LEG_TTL_MS).toISOString();
+        const { data, error } = (await user
+          .from('trip_legs')
+          .select('from_place_id, to_place_id, duration_seconds, distance_meters, transit_steps, computed_at, day_index, transport_mode, source')
+          .eq('trip_id', tripId)
+          .gte('day_index', 0)
+          .eq('transport_mode', 'transit')
+          .eq('source', 'google')
+          .gte('computed_at', cutoff)) as {
+          data: Array<{
+            from_place_id?: string;
+            to_place_id?: string;
+            duration_seconds?: number;
+            distance_meters?: number;
+            transit_steps?: unknown;
+            computed_at?: string;
+            day_index?: number | null;
+            transport_mode?: string;
+            source?: string;
+          }> | null;
+          error: { message: string } | null;
+        };
+        if (error) {
+          log({ requestId, fn: 'optimize-trip', level: 'warn', stage: 'transit_reuse', tripId, err: error.message });
+          return out;
+        }
+        const nowMs = Date.now();
+        for (const row of data ?? []) {
+          // Re-checked in code (the filters are the contract; mocks and older
+          // rows may carry anything).
+          if (typeof row.day_index !== 'number' || row.day_index < 0) continue;
+          if (row.transport_mode !== 'transit' || row.source !== 'google') continue;
+          if (!row.from_place_id || !row.to_place_id || !row.computed_at) continue;
+          const at = Date.parse(row.computed_at);
+          if (!(nowMs - at < LEG_TTL_MS)) continue;
+          if (typeof row.duration_seconds !== 'number' || row.duration_seconds < 0) continue;
+          const key = `${row.from_place_id}__${row.to_place_id}`;
+          const prev = out.get(key);
+          if (prev && Date.parse(prev.computedAt) >= at) continue;
+          out.set(key, {
+            durationSeconds: row.duration_seconds,
+            distanceMeters: typeof row.distance_meters === 'number' ? row.distance_meters : 0,
+            transitSteps: Array.isArray(row.transit_steps) ? row.transit_steps : null,
+            computedAt: row.computed_at,
+          });
+        }
+      } catch (err) {
+        log({ requestId, fn: 'optimize-trip', level: 'warn', stage: 'transit_reuse', tripId, err: String(err).slice(0, 200) });
+      }
+      return out;
+    })();
+    return pending;
+  };
+}
+
+/**
+ * Bound the matrix cache (day_index -1) of one trip ('optimized' mode, right
+ * before the new rows are inserted):
+ *   1. rows this run replaces (same pair + mode), by id;
+ *   2. rows past their TTL (routed: 30 days; negative 'estimate': 24 h);
+ *   3. rows whose endpoint is no longer a live place of the trip.
+ * Day legs are never touched here. Best effort: failures are logged.
+ */
+async function purgeMatrixCache(
+  admin: Db,
+  ctx: RoutingCtx,
+  places: ReadonlyArray<{ id: string }>,
+  supersededIds: ReadonlySet<string>,
+): Promise<void> {
+  const ids = [...supersededIds];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { error } = (await admin
+      .from('trip_legs')
+      .delete()
+      .eq('trip_id', ctx.tripId)
+      .lt('day_index', 0)
+      .in('id', ids.slice(i, i + ID_CHUNK))) as { error: { message: string } | null };
+    if (error) {
+      log({ requestId: ctx.requestId, fn: 'optimize-trip', level: 'warn', stage: 'purge_cache', tripId: ctx.tripId, err: error.message });
+      break;
+    }
+  }
+  const staleCutoff = new Date(Date.now() - LEG_TTL_MS).toISOString();
+  const negativeCutoff = new Date(Date.now() - NEGATIVE_CACHE_TTL_MS).toISOString();
+  const live = places.map((p) => p.id).join(',');
+  const conditions = [
+    `computed_at.lt."${staleCutoff}"`,
+    `and(source.eq.estimate,computed_at.lt."${negativeCutoff}")`,
+    ...(live ? [`from_place_id.not.in.(${live})`, `to_place_id.not.in.(${live})`] : []),
+  ];
+  const { error } = (await admin
+    .from('trip_legs')
+    .delete()
+    .eq('trip_id', ctx.tripId)
+    .lt('day_index', 0)
+    .or(conditions.join(','))) as { error: { message: string } | null };
+  if (error) {
+    log({ requestId: ctx.requestId, fn: 'optimize-trip', level: 'warn', stage: 'purge_cache', tripId: ctx.tripId, err: error.message });
+  }
 }
 
 /** Runs `fn` over `items` with at most `limit` in flight; results keep input order. */

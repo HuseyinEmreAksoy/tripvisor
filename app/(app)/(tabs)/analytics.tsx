@@ -25,6 +25,11 @@
  *   - Per-category spending and the liked/disliked place CATALOGS are always
  *     live: the MV has no category breakdown and no place names — the
  *     per-trip places queries still resolve names.
+ *   - Money (F14 / Y3.2): live spend comes from useMoneySummaries (converted
+ *     into each trip's HOME currency, pending rows excluded — the MV's unit),
+ *     never from raw `amount`. Spending charts render once per home currency
+ *     (src/components/analytics/spending.ts) and pending amounts are noted
+ *     per original currency.
  *
  * Phase 24 Step 24.10 / 24.12; v2 P3.1 (gifted-charts) + P3.2 (MV wiring).
  */
@@ -54,37 +59,23 @@ import { LineChart } from '@/components/charts/LineChart';
 import { useAllUserReactions } from '@/api/trip-place-reactions';
 import { useAllUserExpenses } from '@/api/trip-expenses';
 import { useTripStats } from '@/api/trip-stats';
+import { useMoneySummaries } from '@/api/expense-fx';
+import { buildSpendingGroups, spendingOverTime } from '@/components/analytics/spending';
+import { formatMoney, useT } from '@/i18n';
 import { useTrips } from '@/api';
 import { tripPlacesKeys } from '@/api/_keys';
 import { supabase } from '@/api/supabase';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { dayColor } from '@/components/Map';
-import type { TripExpenseCategory, TripPlace } from '@/api/types';
-
-const CATEGORY_LABELS: Record<TripExpenseCategory, string> = {
-  accommodation: 'Accommodation',
-  food: 'Food',
-  transport: 'Transport',
-  shopping: 'Shopping',
-  activities: 'Activities',
-  other: 'Other',
-};
-
-const EXPENSE_CATEGORIES: TripExpenseCategory[] = [
-  'accommodation',
-  'food',
-  'transport',
-  'shopping',
-  'activities',
-  'other',
-];
+import type { TripPlace } from '@/api/types';
 
 // ── Screen ───────────────────────────────────────────────────────────────────
 
 export default function AnalyticsScreen() {
   const router = useRouter();
   const t = useTheme();
+  const { t: tx } = useT('insights');
   const bp = useBreakpoint();
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = bp === 'desktop';
@@ -155,50 +146,25 @@ export default function AnalyticsScreen() {
       const places = placeQueryResults[i]?.data ?? [];
       for (const place of places) {
         map.set(place.id, {
-          title: place.user_title ?? 'Unknown place',
-          tripTitle: trip?.title ?? 'Unknown trip',
+          title: place.user_title ?? tx('unknownPlace'),
+          tripTitle: trip?.title ?? tx('unknownTrip'),
           dayIndex: place.day_index,
         });
       }
     }
     return map;
-  }, [placeQueryResults, allTrips]);
+  }, [placeQueryResults, allTrips, tx]);
 
-  // ── Chart 1: Spending per trip ────────────────────────────────────────────
-  // MV-first: trips with an MV row use total_actual_spend; trips absent from
-  // the MV use the live client sum over allExpenses (P3.2 merge).
-  const spendingPerTrip = useMemo(() => {
-    const byTrip = new Map<string, number>();
-    for (const exp of allExpenses) {
-      if (exp.kind !== 'actual') continue;
-      byTrip.set(exp.trip_id, (byTrip.get(exp.trip_id) ?? 0) + exp.amount);
-    }
-    const totalFor = (tripId: string): number =>
-      statsByTrip.get(tripId)?.total_actual_spend ?? byTrip.get(tripId) ?? 0;
-    return allTrips
-      .filter((trip) => totalFor(trip.id) > 0)
-      .map((trip, i) => ({
-        label: trip.title,
-        value: totalFor(trip.id),
-        color: dayColor(i),
-      }));
-  }, [allExpenses, allTrips, statsByTrip]);
-
-  // ── Chart 2: Spending by category ────────────────────────────────────────
-  const spendingByCategory = useMemo(() => {
-    const byCategory = new Map<TripExpenseCategory, number>();
-    for (const exp of allExpenses) {
-      if (exp.kind !== 'actual') continue;
-      byCategory.set(exp.category, (byCategory.get(exp.category) ?? 0) + exp.amount);
-    }
-    return EXPENSE_CATEGORIES
-      .filter((cat) => (byCategory.get(cat) ?? 0) > 0)
-      .map((cat) => ({
-        label: CATEGORY_LABELS[cat],
-        value: byCategory.get(cat) ?? 0,
-        color: categoryColor(t, cat),
-      }));
-  }, [allExpenses, t]);
+  // ── Spending (charts 1, 2, 4) — per HOME currency ─────────────────────
+  // MV-first per-trip totals (total_actual_spend, home currency); trips absent
+  // from the MV use the live converted summary. Never raw `amount` sums, and
+  // never one chart across different home currencies.
+  const money = useMoneySummaries(allTrips, allExpenses);
+  const spendingGroups = useMemo(
+    () => buildSpendingGroups(allTrips, statsByTrip, money.data),
+    [allTrips, statsByTrip, money.data],
+  );
+  const multiCurrency = spendingGroups.length > 1;
 
   // ── Chart 3: Liked vs disliked per trip ───────────────────────────────────
   // MV-first: trips with an MV row use liked_count/disliked_count; trips
@@ -239,32 +205,6 @@ export default function AnalyticsScreen() {
       .filter((r) => r.liked + r.disliked > 0)
       .map((r, i) => ({ ...r, colorIndex: i }));
   }, [allReactions, allTrips, placeQueryResults, statsByTrip]);
-
-  // ── Chart 4: Spending over time ───────────────────────────────────────────
-  // Same MV-first merge as Chart 1, keyed by trip start month.
-  const spendingOverTime = useMemo(() => {
-    const withDates = allTrips
-      .filter((trip) => Boolean(trip.start_date))
-      .sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''));
-
-    const byTrip = new Map<string, number>();
-    for (const exp of allExpenses) {
-      if (exp.kind !== 'actual') continue;
-      byTrip.set(exp.trip_id, (byTrip.get(exp.trip_id) ?? 0) + exp.amount);
-    }
-    const totalFor = (tripId: string): number =>
-      statsByTrip.get(tripId)?.total_actual_spend ?? byTrip.get(tripId) ?? 0;
-
-    const result = withDates
-      .filter((trip) => totalFor(trip.id) > 0)
-      .map((trip) => ({
-        label: trip.start_date?.slice(0, 7) ?? '', // YYYY-MM
-        value: totalFor(trip.id),
-      }));
-
-    // Only show if 3+ trips with dates and expenses.
-    return result.length >= 3 ? result : [];
-  }, [allExpenses, allTrips, statsByTrip]);
 
   // ── Catalog 1: Most liked places ─────────────────────────────────────────
   const topLiked = useMemo(() => {
@@ -357,7 +297,7 @@ export default function AnalyticsScreen() {
           />
         }
       >
-        <Heading level={1}>Insights</Heading>
+        <Heading level={1}>{tx('title')}</Heading>
 
         {/* Loading state */}
         {isLoading ? (
@@ -366,50 +306,86 @@ export default function AnalyticsScreen() {
           // Empty state — zero trips
           <View style={styles.emptyContainer}>
             <Text style={[t.typography.subtitle, { color: t.colors.text, textAlign: 'center' }]}>
-              {'Take your first trip to see analytics here.'}
+              {tx('empty.title')}
             </Text>
             <Button
-              label="New trip"
+              label={tx('empty.cta')}
               onPress={() => router.push('/trip/new')}
-              accessibilityLabel="Create a new trip"
+              accessibilityLabel={tx('empty.ctaA11y')}
             />
           </View>
         ) : hasNoData ? (
           // Trips exist but no expenses or reactions yet
           <View style={styles.emptyContainer}>
             <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-              {'No data yet — add expenses or rate places to see insights.'}
+              {tx('noData')}
             </Text>
           </View>
         ) : (
           // ── Charts ──────────────────────────────────────────────────────
           <View style={styles.chartsContainer}>
 
-            {/* Chart 1: Spending per trip */}
-            {spendingPerTrip.length > 0 ? (
-              <ChartCard title="Spending per trip">
-                <BarChart
-                  data={spendingPerTrip}
-                  width={chartContainerWidth}
-                  height={200}
-                  maxBars={10}
-                />
-              </ChartCard>
-            ) : null}
-
-            {/* Chart 2: Spending by category */}
-            {spendingByCategory.length > 0 ? (
-              <ChartCard title="Spending by category">
-                <PieChart
-                  data={spendingByCategory}
-                  size={Math.min(160, chartContainerWidth * 0.5)}
-                />
-              </ChartCard>
-            ) : null}
+            {/* Charts 1, 2, 4: one set per home currency (never mixed units) */}
+            {spendingGroups.map((group) => {
+              const suffix = multiCurrency ? ` (${group.currency})` : '';
+              const overTime = spendingOverTime(group);
+              const pending = Object.entries(group.pendingByCurrency)
+                .map(([code, amount]) => formatMoney(amount, code))
+                .join(' · ');
+              return (
+                <View key={group.currency} style={styles.chartsContainer}>
+                  {group.perTrip.length > 0 ? (
+                    <ChartCard title={tx('spendingPerTrip') + suffix}>
+                      <BarChart
+                        data={group.perTrip.map((p, i) => ({
+                          label: p.title,
+                          value: p.value,
+                          color: dayColor(i),
+                        }))}
+                        width={chartContainerWidth}
+                        height={200}
+                        maxBars={10}
+                      />
+                      <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
+                        {tx('totalSpent', { amount: formatMoney(group.total, group.currency) })}
+                      </Text>
+                    </ChartCard>
+                  ) : null}
+                  {group.byCategory.length > 0 ? (
+                    <ChartCard title={tx('spendingByCategory') + suffix}>
+                      <PieChart
+                        title={tx('spendingByCategory') + suffix}
+                        data={group.byCategory.map((c) => ({
+                          label: `${tx(`categories.${c.category}`)} · ${formatMoney(c.value, group.currency)}`,
+                          value: c.value,
+                          color: categoryColor(t, c.category),
+                        }))}
+                        size={Math.min(160, chartContainerWidth * 0.5)}
+                      />
+                    </ChartCard>
+                  ) : null}
+                  {overTime.length >= 3 ? (
+                    <ChartCard title={tx('spendingOverTime') + suffix}>
+                      <LineChart
+                        data={overTime}
+                        width={chartContainerWidth}
+                        height={180}
+                        color={t.colors.primary}
+                      />
+                    </ChartCard>
+                  ) : null}
+                  {pending ? (
+                    <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+                      {tx('pendingNote', { count: group.pendingCount, amounts: pending })}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })}
 
             {/* Chart 3: Liked vs disliked per trip */}
             {reactionsByTrip.length > 0 ? (
-              <ChartCard title="Liked vs didn't like per trip">
+              <ChartCard title={tx('reactionsPerTrip')}>
                 <ReactionLegend />
                 <BarChart
                   data={reactionBarData}
@@ -421,25 +397,13 @@ export default function AnalyticsScreen() {
               </ChartCard>
             ) : null}
 
-            {/* Chart 4: Spending over time */}
-            {spendingOverTime.length >= 3 ? (
-              <ChartCard title="Spending over time">
-                <LineChart
-                  data={spendingOverTime}
-                  width={chartContainerWidth}
-                  height={180}
-                  color={t.colors.primary}
-                />
-              </ChartCard>
-            ) : null}
-
             {/* Textual catalogs */}
             {topLiked.length > 0 ? (
-              <ChartCard title="Most liked places">
+              <ChartCard title={tx('mostLiked')}>
                 {topLiked.map((item) => (
                   <PlaceCatalogRow
                     key={item.id}
-                    title={item.meta?.title ?? 'Unknown'}
+                    title={item.meta?.title ?? tx('unknownPlace')}
                     tripTitle={item.meta?.tripTitle ?? ''}
                     dayIndex={item.meta?.dayIndex ?? null}
                     count={item.count}
@@ -450,11 +414,11 @@ export default function AnalyticsScreen() {
             ) : null}
 
             {topDisliked.length > 0 ? (
-              <ChartCard title="Places you didn't like">
+              <ChartCard title={tx('didntLike')}>
                 {topDisliked.map((item) => (
                   <PlaceCatalogRow
                     key={item.id}
-                    title={item.meta?.title ?? 'Unknown'}
+                    title={item.meta?.title ?? tx('unknownPlace')}
                     tripTitle={item.meta?.tripTitle ?? ''}
                     dayIndex={item.meta?.dayIndex ?? null}
                     count={item.count}
@@ -465,18 +429,17 @@ export default function AnalyticsScreen() {
             ) : null}
 
             {/* No analytics data sub-message */}
-            {spendingPerTrip.length === 0 &&
-            spendingByCategory.length === 0 &&
+            {spendingGroups.length === 0 &&
             reactionsByTrip.length === 0 ? (
               <Text style={[t.typography.body, { color: t.colors.textMuted, textAlign: 'center' }]}>
-                {'No data yet — add expenses or rate places to see insights.'}
+                {tx('noData')}
               </Text>
             ) : null}
 
             {/* MV staleness footnote — only when server aggregates were used */}
             {mvContributed ? (
               <Text style={[t.typography.caption, { color: t.colors.textMuted, textAlign: 'center' }]}>
-                {'Aggregates refresh nightly.'}
+                {tx('refreshNightly')}
               </Text>
             ) : null}
           </View>

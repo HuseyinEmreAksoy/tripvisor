@@ -26,7 +26,7 @@ import { Icon } from './Icon';
 import { useTheme } from '@/theme';
 import { copyToClipboard } from '@/lib/clipboard';
 import { confirmDestructive } from '@/lib/confirm';
-import { ShareLinkError, useCreateShareLink, useRevokeShareLink } from '@/api/share';
+import { ShareLinkError, useCreateShareLink, useCurrentShareLink, useRevokeShareLink } from '@/api/share';
 import { useT } from '@/i18n';
 import { buildAppUrl, useShareAction } from './share';
 
@@ -57,8 +57,13 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
   const { t: tx } = useT('share');
   const router = useRouter();
 
-  // Token lives here after a successful create and is cleared on revoke.
-  const [token, setToken] = useState<string | null>(null);
+  // The live link comes from the server (`current`), so it survives a reload
+  // or remount and an older link can always be revoked. `createdToken` only
+  // bridges the moment between create and the cache update.
+  const current = useCurrentShareLink(tripId);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const token = current.data?.token ?? createdToken;
+  const loadingCurrent = current.isLoading && !createdToken;
   const [copied, setCopied] = useState(false);
   const { share, sharing, feedback } = useShareAction();
 
@@ -74,7 +79,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
   async function handleCreate() {
     try {
       const result = await createLink.mutateAsync();
-      setToken(result.token);
+      setCreatedToken(result.token);
     } catch {
       // Surfaced via createLink.isError below.
     }
@@ -88,8 +93,10 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
     });
     if (!ok) return;
     try {
-      await revokeLink.mutateAsync({ token: token ?? undefined });
-      setToken(null);
+      // No token = revoke EVERY active link of the trip: a link created on
+      // another device or before a reload must not stay public.
+      await revokeLink.mutateAsync();
+      setCreatedToken(null);
     } catch {
       // Surfaced via revokeLink.isError below.
     }
@@ -211,8 +218,8 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
               label="Create share link"
               variant="secondary"
               onPress={handleCreate}
-              loading={createLink.isPending}
-              disabled={createForbidden}
+              loading={createLink.isPending || loadingCurrent}
+              disabled={createForbidden || loadingCurrent}
               accessibilityLabel="Create a read-only share link for this trip"
             />
             {createLink.isError ? (

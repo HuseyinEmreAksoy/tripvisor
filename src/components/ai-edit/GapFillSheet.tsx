@@ -36,6 +36,8 @@ import { AiErrorNotice } from '@/components/ai-plan';
 import { formatDuration } from '@/lib/formatDuration';
 import { UnresolvedCard } from './UnresolvedCard';
 import { keyForIntent, type IntentKey } from './makeIdempotencyKey';
+import { useT } from '@/i18n';
+import { scheduleOnDayWithRetry } from '@/hooks/useAiScheduleOnDay';
 
 export interface GapFillSheetProps {
   visible: boolean;
@@ -60,7 +62,8 @@ function formatCategory(category: string): string {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
-type AddState = 'adding' | 'added' | 'failed';
+/** 'added-to-ideas' = the place was created but the day move never landed. */
+type AddState = 'adding' | 'added' | 'added-to-ideas' | 'failed';
 
 export function GapFillSheet({
   visible,
@@ -71,6 +74,7 @@ export function GapFillSheet({
   ideas,
 }: GapFillSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('ai');
   const suggest = useAiSuggest();
   const suggestReset = suggest.reset; // stable in TanStack Query v5
   const { mutateAsync: createPlaceAsync } = useCreateTripPlace();
@@ -117,15 +121,18 @@ export function GapFillSheet({
           lng: s.lng,
           visit_duration_minutes: Math.max(15, Math.min(480, Math.round(s.visitMinutes))),
         });
-        try {
-          // Suggestions carry dayHint = dayIndex + 1 (1-based); this sheet is
-          // already scoped to that day, so we move straight to dayIndex.
-          await moveToDayAsync({ id: row.id, tripId, toDayIndex: dayIndex });
-        } catch (moveErr) {
-          // Non-fatal: the place exists; the optimizer assigns it a day.
-          console.warn(`[GapFillSheet] day assignment failed for "${s.name}"`, moveErr);
-        }
-        setAddStates((prev) => new Map(prev).set(s.googlePlaceId, 'added'));
+        // Suggestions carry dayHint = dayIndex + 1 (1-based); this sheet is
+        // already scoped to that day, so we move straight to dayIndex. Retried:
+        // with Tier-1 sync the create's server INSERT is queued and an
+        // immediate move can race it. Offline every try fails -> say "Ideas".
+        const scheduled = await scheduleOnDayWithRetry(moveToDayAsync, {
+          id: row.id,
+          tripId,
+          toDayIndex: dayIndex,
+        });
+        setAddStates((prev) =>
+          new Map(prev).set(s.googlePlaceId, scheduled ? 'added' : 'added-to-ideas'),
+        );
       } catch (err) {
         console.warn(`[GapFillSheet] failed to add "${s.name}"`, err);
         setAddStates((prev) => new Map(prev).set(s.googlePlaceId, 'failed'));
@@ -313,18 +320,36 @@ export function GapFillSheet({
                           Couldn't add — tap to try again
                         </Text>
                       ) : null}
+                      {state === 'added-to-ideas' ? (
+                        <Text
+                          accessibilityLiveRegion="polite"
+                          style={[t.typography.small, { color: t.colors.textMuted }]}
+                        >
+                          {tx('gapFill.addedToIdeasNote', { day: dayNumber })}
+                        </Text>
+                      ) : null}
                     </View>
                     <AddPill
-                      label={state === 'added' ? 'Added ✓' : 'Add'}
+                      label={
+                        state === 'added'
+                          ? 'Added ✓'
+                          : state === 'added-to-ideas'
+                            ? tx('gapFill.inIdeas')
+                            : 'Add'
+                      }
                       accessibilityLabel={
                         state === 'added'
                           ? `${s.name} added to Day ${dayNumber}`
-                          : `Add ${s.name} to Day ${dayNumber}`
+                          : state === 'added-to-ideas'
+                            ? tx('gapFill.inIdeasA11y', { name: s.name, day: dayNumber })
+                            : `Add ${s.name} to Day ${dayNumber}`
                       }
                       onPress={() => void handleAddSuggestion(s)}
-                      disabled={state === 'added' || state === 'adding'}
+                      disabled={
+                        state === 'added' || state === 'added-to-ideas' || state === 'adding'
+                      }
                       pending={state === 'adding'}
-                      done={state === 'added'}
+                      done={state === 'added' || state === 'added-to-ideas'}
                     />
                   </View>
                 );

@@ -10,4 +10,9 @@ export { DraftPlaceCard, type DraftPlaceCardProps } from './DraftPlaceCard';
 export { DraftReview, type DraftReviewProps } from './DraftReview';
 export { CommitProgress, type CommitProgressProps, type CommitProgressPhase } from './CommitProgress';
 export { CommitSuccess, type CommitSuccessProps } from './CommitSuccess';
-export type { DraftPlaceEdit, DraftCommitPlace, DraftCommitPayload } from './types';
+export type {
+  DraftPlaceEdit,
+  DraftCommitPlace,
+  DraftCommitPayload,
+  DraftReviewSnapshot,
+} from './types';

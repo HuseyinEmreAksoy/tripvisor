@@ -12,6 +12,7 @@ export function DraggableItinerary({
   onReorder,
   onLongPress,
   groupLabel,
+  disabled = false,
 }: DraggableItineraryProps) {
   const keyExtractor = useMemo(() => (item: DraggableItem) => item.id, []);
 
@@ -28,15 +29,20 @@ export function DraggableItinerary({
         }}
         renderItem={({ item, drag, isActive }: RenderItemParams<DraggableItem>) => {
           const startDrag = () => {
+            if (disabled) return; // read-only list (viewers)
             drag();
             onLongPress?.(item.id);
           };
           return (
             <ScaleDecorator>
+              {/* Pure gesture surface, NOT an accessibility node (mirrors the
+                  web variant, S2.8.13): an accessible wrapper would collapse
+                  the row's own buttons into one VoiceOver element. The
+                  screen-reader path to actions is PlaceRow's
+                  accessibilityActions. */}
               <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Drag handle. Long-press to open actions.`}
-                onLongPress={startDrag}
+                accessible={false}
+                onLongPress={disabled ? undefined : startDrag}
                 delayLongPress={180}
                 style={styles.row}
               >

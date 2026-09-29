@@ -303,7 +303,8 @@ export function AccommodationEditSheet({
       accessibilityLabel={isEdit ? 'Edit accommodation' : 'Add accommodation'}
     >
       <ScrollView
-        scrollEnabled={false}
+        style={{ flexGrow: 0, flexShrink: 1 }}
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={{ gap: t.spacing.md }}
         keyboardShouldPersistTaps="handled"
       >
@@ -444,10 +445,14 @@ export function AccommodationEditSheet({
               justifyContent: 'space-between',
               alignItems: 'center',
             }}
-            accessible
-            accessibilityLabel={`Linked to Google place: ${form.googlePlaceName ?? form.name}`}
           >
-            <Text style={[t.typography.caption, { color: t.colors.info, flex: 1 }]} numberOfLines={1}>
+            {/* Only the text carries the summary; the Unlink button stays a
+                focusable sibling for VoiceOver/TalkBack. */}
+            <Text
+              style={[t.typography.caption, { color: t.colors.info, flex: 1 }]}
+              numberOfLines={1}
+              accessibilityLabel={`Linked to Google place: ${form.googlePlaceName ?? form.name}`}
+            >
               Linked: {form.googlePlaceName ?? form.name}
             </Text>
             <Pressable

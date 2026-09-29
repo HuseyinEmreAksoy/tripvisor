@@ -59,8 +59,9 @@ export function CoverPickerModal({
             maxHeight: '70%',
             paddingBottom: Math.max(insets.bottom, t.spacing.lg),
           }}
-          accessible
-          accessibilityLabel="Choose cover photo"
+          // Not `accessible`: that would merge the Close button and every
+          // place row into one VoiceOver element. The header Text below
+          // carries the sheet's name as an accessibility header.
         >
           {/* Header */}
           <View
@@ -73,7 +74,10 @@ export function CoverPickerModal({
               borderBottomColor: t.colors.border,
             }}
           >
-            <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
+            <Text
+              accessibilityRole="header"
+              style={[t.typography.subtitle, { color: t.colors.text }]}
+            >
               Choose cover photo
             </Text>
             <Pressable

@@ -505,7 +505,7 @@ export async function handler(req: Request): Promise<Response> {
   // destination string is the lever.
   const outcomes = await groundNames(
     proposed.map((p) => p.name),
-    { destination: body.destination },
+    { destination: body.destination, lang: body.lang },
     googleKey,
     requestId,
     FN,

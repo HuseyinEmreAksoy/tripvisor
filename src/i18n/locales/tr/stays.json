@@ -1,5 +1,8 @@
 {
   "edit": {
     "placesQuota": "Günlük yer arama sınırına ulaşıldı. Yarın tekrar dene ya da aşağıdaki adres alanını elle doldur."
+  },
+  "notes": {
+    "saveFailed": "Not kaydedilemedi — tekrar denemek için dokunun"
   }
 }

@@ -5,5 +5,16 @@
     "insights": "Insights",
     "profile": "Profile",
     "profileA11y": "Profile and settings"
+  },
+  "syncPill": {
+    "restart": {
+      "label": "Restart to enable offline sync",
+      "a11y": "Offline sync is off until you restart the app. Tap for details.",
+      "title": "Restart required",
+      "bodyWeb": "You switched accounts, so offline sync is paused for this session. Your changes still save while you're online, but they won't be kept offline. Reload the page to turn offline sync back on.",
+      "bodyNative": "You switched accounts, so offline sync is paused for this session. Your changes still save while you're online, but they won't be kept offline. Close and reopen Tripvisor to turn offline sync back on.",
+      "reload": "Reload now",
+      "dismiss": "Dismiss"
+    }
   }
 }

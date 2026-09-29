@@ -121,4 +121,22 @@ describe('PlaceRow', () => {
     const { queryByRole } = renderRow({ nextStop: null });
     expect(queryByRole('link', { name: /Plan transit/ })).toBeNull();
   });
+  it('exposes a screen-reader actions path when actions are available', () => {
+    const onOpenActions = jest.fn();
+    const { getByRole } = renderRow({ onOpenActions });
+    const card = getByRole('button', { name: /Open details for Louvre/ });
+    expect(card.props.accessibilityActions).toEqual([
+      { name: 'placeActions', label: expect.any(String) },
+    ]);
+    fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'placeActions' } });
+    expect(onOpenActions).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers no actions (and no long-press hint) to viewers', () => {
+    const { getByRole } = renderRow({ onOpenActions: undefined });
+    const card = getByRole('button', { name: /Open details for Louvre/ });
+    expect(card.props.accessibilityActions).toBeUndefined();
+    expect(card.props.accessibilityLabel).not.toMatch(/Long-press/);
+  });
 });
+

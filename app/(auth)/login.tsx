@@ -28,7 +28,7 @@ import { z } from 'zod';
 import { Button, GoogleSignInButton, Heading, Icon, TextField } from '@/components';
 import { HeroValueChips } from '@/components/HeroValueChips';
 import { LegalLinks } from '@/components/legal/LegalLinks';
-import { useSignInWithMagicLink } from '@/api';
+import { useAuthCallbackError, useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Trans, useT } from '@/i18n';
@@ -48,6 +48,9 @@ export default function Login() {
   const { t: tx } = useT(['auth', 'errors']);
   const router = useRouter();
   const signIn = useSignInWithMagicLink();
+  // Native deep-link return (tripvisor://?code=…) that failed to exchange:
+  // expired / already-used link, or a provider error.
+  const callback = useAuthCallbackError();
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
   const [resent, setResent] = useState(false);
   const bp = useBreakpoint();
@@ -64,6 +67,7 @@ export default function Login() {
 
   const onSubmit = async ({ email }: FormValues) => {
     try {
+      callback.clear();
       await signIn.mutateAsync(email.trim());
       setSubmittedEmail(email.trim());
       setResent(false);
@@ -85,6 +89,10 @@ export default function Login() {
   const errorText = signIn.error ? (
     <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[t.typography.small, { color: t.colors.danger }]}>
       {tx(authErrorKey(signIn.error))}
+    </Text>
+  ) : callback.error ? (
+    <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[t.typography.small, { color: t.colors.danger }]}>
+      {tx('errors:auth.callbackFailed')}
     </Text>
   ) : null;
 

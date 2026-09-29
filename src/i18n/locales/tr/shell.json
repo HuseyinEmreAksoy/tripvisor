@@ -5,5 +5,16 @@
     "insights": "Analiz",
     "profile": "Profil",
     "profileA11y": "Profil ve ayarlar"
+  },
+  "syncPill": {
+    "restart": {
+      "label": "Çevrimdışı eşitleme için yeniden başlat",
+      "a11y": "Uygulamayı yeniden başlatana kadar çevrimdışı eşitleme kapalı. Ayrıntılar için dokun.",
+      "title": "Yeniden başlatma gerekli",
+      "bodyWeb": "Hesap değiştirdiğin için çevrimdışı eşitleme bu oturumda duraklatıldı. Çevrimiçiyken değişikliklerin yine kaydedilir ama çevrimdışı saklanmaz. Çevrimdışı eşitlemeyi yeniden açmak için sayfayı yenile.",
+      "bodyNative": "Hesap değiştirdiğin için çevrimdışı eşitleme bu oturumda duraklatıldı. Çevrimiçiyken değişikliklerin yine kaydedilir ama çevrimdışı saklanmaz. Çevrimdışı eşitlemeyi yeniden açmak için Tripvisor'u kapatıp yeniden aç.",
+      "reload": "Şimdi yenile",
+      "dismiss": "Kapat"
+    }
   }
 }

@@ -79,6 +79,34 @@ describe('TripCard', () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the Trip actions button outside the link so VoiceOver can reach it', () => {
+    const { getByRole } = renderWithTheme(<TripCard trip={makeTrip()} onPress={() => {}} />);
+    const link = getByRole('link', { name: 'Open trip Lisbon 3 days' });
+    const actions = getByRole('button', { name: 'Trip actions' });
+    let node: typeof actions | null = actions.parent;
+    while (node) {
+      expect(node).not.toBe(link);
+      node = node.parent;
+    }
+  });
+
+  it('opens the actions sheet from the button and from the link accessibility action', () => {
+    const onPress = jest.fn();
+    const a = renderWithTheme(<TripCard trip={makeTrip()} onPress={onPress} />);
+    expect(a.queryByLabelText('Archive trip')).toBeNull();
+    fireEvent.press(a.getByRole('button', { name: 'Trip actions' }));
+    expect(onPress).not.toHaveBeenCalled();
+    expect(a.getByLabelText('Archive trip')).toBeTruthy();
+    a.unmount();
+
+    const b = renderWithTheme(<TripCard trip={makeTrip()} onPress={onPress} />);
+    const link = b.getByRole('link', { name: 'Open trip Lisbon 3 days' });
+    expect(link.props.accessibilityActions).toEqual([{ name: 'actions', label: 'Trip actions' }]);
+    fireEvent(link, 'accessibilityAction', { nativeEvent: { actionName: 'actions' } });
+    expect(b.getByLabelText('Archive trip')).toBeTruthy();
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
   it('renders a bundled destination cover (not a letter) when no Google cover is set', () => {
     const { getByTestId, queryByText } = renderWithTheme(
       <TripCard trip={makeTrip()} onPress={() => {}} />,

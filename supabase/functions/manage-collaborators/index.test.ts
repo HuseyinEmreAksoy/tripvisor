@@ -20,6 +20,7 @@ import {
   DAILY_INVITE_CAP,
   handler,
   MAX_PENDING_INVITES_PER_TRIP,
+  isReopenableInvite,
   secondsUntilUtcMidnight,
   // @ts-ignore -- Deno `.ts`-suffixed import
 } from './index.ts';
@@ -402,7 +403,11 @@ D.test('revoke action with non-owner caller returns 403 not_owner', async () => 
  *   pending  — live pending-invite count the HEAD count query reports
  *   quota    — consume_invite_quota RPC result (true/false), or 'error'
  */
-function inviteRoutes(opts: { pending: number; quota: boolean | 'error' }) {
+function inviteRoutes(opts: {
+  pending: number;
+  quota: boolean | 'error';
+  existing?: { id: string; status: string; created_at: string };
+}) {
   return (call: FetchCall): Response => {
     if (call.url.includes('/auth/v1/user')) return routeAuthGetUser(call.headers['authorization']);
     if (call.url.includes('/auth/v1/invite')) {
@@ -421,7 +426,10 @@ function inviteRoutes(opts: { pending: number; quota: boolean | 'error' }) {
       if (call.method === 'HEAD') {
         return new Response(null, { status: 200, headers: { 'content-range': `*/${opts.pending}` } });
       }
-      if (call.method === 'GET') return jsonResp([]); // no existing invite for this email
+      if (call.method === 'GET') return jsonResp(opts.existing ? [opts.existing] : []);
+      if (call.method === 'PATCH') {
+        return jsonResp({ id: opts.existing?.id ?? COLLAB_ID, invite_token: 'fresh-token-value' });
+      }
       if (call.method === 'POST') {
         return jsonResp({ id: COLLAB_ID, invite_token: INVITE_TOKEN }, 201);
       }
@@ -526,6 +534,67 @@ D.test('audit #14: a non-owner never reaches the quota (403 before any cap work)
   } finally {
     mock.restore();
   }
+});
+
+const collabPatches = (calls: FetchCall[]) =>
+  calls.filter((c) => c.url.includes('/rest/v1/trip_collaborators') && c.method === 'PATCH');
+
+D.test('re-invite: a revoked / declined / expired row is RE-OPENED (fresh token), not a 409', async () => {
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  for (const existing of [
+    { id: COLLAB_ID, status: 'revoked', created_at: new Date().toISOString() },
+    { id: COLLAB_ID, status: 'declined', created_at: new Date().toISOString() },
+    { id: COLLAB_ID, status: 'pending', created_at: eightDaysAgo },
+  ]) {
+    const mock = captureFetch(inviteRoutes({ pending: 0, quota: true, existing }));
+    try {
+      const res = await handler(inviteRequest());
+      assertEquals(res.status, 200, `status ${existing.status} must re-open`);
+      assertEquals(collabInserts(mock.calls).length, 0, 'no second row (unique(trip_id, invitee_email))');
+      const patches = collabPatches(mock.calls);
+      assertEquals(patches.length, 1);
+      assert(patches[0]!.url.includes(`id=eq.${COLLAB_ID}`), patches[0]!.url);
+      const patch = JSON.parse(patches[0]!.body ?? '{}') as Record<string, unknown>;
+      assertEquals(patch.status, 'pending');
+      assertEquals(patch.user_id, null);
+      assertEquals(patch.accepted_at, null);
+      assertEquals(patch.revoked_at, null);
+      assert(typeof patch.invite_token === 'string' && (patch.invite_token as string).length >= 40, 'fresh token');
+      assert(Date.now() - Date.parse(String(patch.created_at)) < 60_000, 'TTL restarts');
+      assertEquals(quotaCalls(mock.calls).length, 1, 're-invites still consume quota');
+      assertEquals(emailSends(mock.calls).length, 1);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+D.test('re-invite: a LIVE pending or accepted row is still 409 already_invited', async () => {
+  for (const existing of [
+    { id: COLLAB_ID, status: 'pending', created_at: new Date().toISOString() },
+    { id: COLLAB_ID, status: 'accepted', created_at: '2020-01-01T00:00:00Z' },
+  ]) {
+    const mock = captureFetch(inviteRoutes({ pending: 0, quota: true, existing }));
+    try {
+      const res = await handler(inviteRequest());
+      assertEquals(res.status, 409);
+      assertEquals(((await res.json()) as { error: { code: string } }).error.code, 'already_invited');
+      assertEquals(collabPatches(mock.calls).length + collabInserts(mock.calls).length, 0);
+      assertEquals(quotaCalls(mock.calls).length, 0);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+D.test('isReopenableInvite: only dead rows re-open', () => {
+  const now = Date.parse('2026-09-29T00:00:00Z');
+  assert(isReopenableInvite({ status: 'revoked' }, now));
+  assert(isReopenableInvite({ status: 'declined' }, now));
+  assert(isReopenableInvite({ status: 'pending', created_at: '2026-09-21T00:00:00Z' }, now));
+  assert(!isReopenableInvite({ status: 'pending', created_at: '2026-09-28T00:00:00Z' }, now));
+  assert(!isReopenableInvite({ status: 'pending', created_at: null }, now));
+  assert(!isReopenableInvite({ status: 'accepted' }, now));
 });
 
 D.test('secondsUntilUtcMidnight: counts down to the next UTC day, never 0', () => {

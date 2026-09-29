@@ -33,9 +33,11 @@ import {
   type Uuid,
 } from '@/api';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { BottomSheet, Button, Heading, PoweredByGoogle, StatusPill, TextField } from '@/components';
 import { AiErrorNotice, PromptField } from '@/components/ai-plan';
 import { MAX_IMPORT_BATCH, parseImportNames } from '@/lib/importParse';
+import { computeImportRemainder } from './importRemainder';
 import { UnresolvedCard } from './UnresolvedCard';
 import { CsvImportButton } from './CsvImportButton';
 import { keyForIntent, type IntentKey } from './makeIdempotencyKey';
@@ -63,6 +65,7 @@ interface ImportOutcome {
 
 export function ImportPlacesSheet({ visible, onClose, tripId, places }: ImportPlacesSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('ai');
   const ground = useGroundPlaces();
   const { mutateAsync: createPlaceAsync } = useCreateTripPlace();
 
@@ -79,6 +82,8 @@ export function ImportPlacesSheet({ visible, onClose, tripId, places }: ImportPl
   const intentRef = useRef<IntentKey | null>(null);
   // Re-entrancy guard for the sequential create loop (double-submit safety).
   const addingRef = useRef(false);
+  /** Input lines left over past the current batch (see importRemainder). */
+  const restRef = useRef('');
 
   const parsed = useMemo(() => parseImportNames(text), [text]);
   const existingPlaceIds = useMemo(
@@ -131,6 +136,8 @@ export function ImportPlacesSheet({ visible, onClose, tripId, places }: ImportPl
       return;
     }
     setInputError(null);
+    // Names past this batch: "Import more" pre-fills them for the next run.
+    restRef.current = parsed.truncated ? computeImportRemainder(text) : '';
     const signature = `${parsed.names.join('␟')}|${destination.trim()}`;
     intentRef.current = keyForIntent(intentRef.current, signature);
     ground.mutate(
@@ -143,10 +150,14 @@ export function ImportPlacesSheet({ visible, onClose, tripId, places }: ImportPl
     );
   };
 
-  /** Back to a fresh paste box (destination kept — likely the same trip). */
+  /**
+   * Back to the paste box (destination kept — likely the same trip), pre-filled
+   * with the names that didn't fit the last 30-name batch (empty otherwise).
+   */
   const resetForMore = () => {
     ground.reset();
-    setText('');
+    setText(restRef.current);
+    restRef.current = '';
     setCsvNotice(null);
     setOutcome(null);
     setProgress({ done: 0, total: 0 });
@@ -367,7 +378,16 @@ export function ImportPlacesSheet({ visible, onClose, tripId, places }: ImportPl
           </ScrollView>
 
           <Button label="Done" onPress={handleClose} />
-          <Button variant="ghost" label="Import more" onPress={resetForMore} />
+          {restRef.current ? (
+            <Button
+              label={tx('import.nextBatch', {
+                count: parseImportNames(restRef.current).names.length,
+              })}
+              onPress={resetForMore}
+            />
+          ) : (
+            <Button variant="ghost" label="Import more" onPress={resetForMore} />
+          )}
         </View>
       ) : null}
     </BottomSheet>

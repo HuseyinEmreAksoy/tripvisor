@@ -46,6 +46,7 @@ import {
   type Uuid,
 } from '@/api';
 import type { AiEditOp } from '@/components/ai-edit/types';
+import { scheduleOnDayWithRetry } from './useAiScheduleOnDay';
 
 export type AiEditApplyPhase = 'idle' | 'applying' | 'optimizing' | 'undoing';
 
@@ -179,6 +180,9 @@ export function useAiEditApply() {
       const failures: AiEditFailure[] = [];
       let createdOk = 0;
       let removedOk = 0;
+      // Ops that landed but only partly (added, yet stuck in Ideas) — reported
+      // in `failures` but still counted as applied.
+      let softFailures = 0;
 
       for (const [i, op] of ordered.entries()) {
         try {
@@ -194,19 +198,22 @@ export function useAiEditApply() {
             });
             entries.push({ kind: 'delete-created', id: row.id, name: op.place.name });
             createdOk += 1;
-            try {
-              // dayHint is 1-based (AI-surface convention) → 0-based day_index.
-              await moveToDayAsync({
-                id: row.id,
-                tripId: args.tripId,
-                toDayIndex: Math.max(0, op.place.dayHint - 1),
+            // dayHint is 1-based (AI-surface convention) → 0-based day_index.
+            // Retried: with Tier-1 sync the create's server INSERT is queued,
+            // so an immediate move can race it (see useAiScheduleOnDay).
+            const scheduled = await scheduleOnDayWithRetry(moveToDayAsync, {
+              id: row.id,
+              tripId: args.tripId,
+              toDayIndex: Math.max(0, op.place.dayHint - 1),
+            });
+            if (!scheduled) {
+              // The place exists but sits in Ideas — say so (manual mode never
+              // schedules day_index NULL places on its own).
+              softFailures += 1;
+              failures.push({
+                label: opLabel(op),
+                message: `added to Ideas — couldn't schedule it on Day ${op.place.dayHint}`,
               });
-            } catch (moveErr) {
-              // Non-fatal: the place exists; the optimizer assigns a day next.
-              console.warn(
-                `[useAiEditApply] day assignment failed for "${op.place.name}" — optimizer will place it`,
-                moveErr,
-              );
             }
           } else if (op.kind === 'remove') {
             const row = byId.get(op.tripPlaceId);
@@ -276,7 +283,7 @@ export function useAiEditApply() {
       setPhase('idle');
       inFlightRef.current = false;
       return {
-        applied: ordered.length - failures.length,
+        applied: ordered.length - (failures.length - softFailures),
         failures,
         canUndo: entries.length > 0,
       };
@@ -296,6 +303,7 @@ export function useAiEditApply() {
     setPhase('undoing');
 
     const failures: AiEditFailure[] = [];
+    let softFailures = 0;
     for (const [i, entry] of reversed.entries()) {
       try {
         if (entry.kind === 'delete-created') {
@@ -313,19 +321,19 @@ export function useAiEditApply() {
             notes: row.notes,
           });
           if (row.day_index !== null) {
-            try {
-              await moveToDayAsync({
-                id: created.id,
-                tripId: journal.tripId,
-                toDayIndex: row.day_index,
-                positionInDay: row.order_in_day ?? undefined,
+            const scheduled = await scheduleOnDayWithRetry(moveToDayAsync, {
+              id: created.id,
+              tripId: journal.tripId,
+              toDayIndex: row.day_index,
+              positionInDay: row.order_in_day ?? undefined,
+            });
+            if (!scheduled) {
+              // Restored, but into Ideas — report it rather than hide it.
+              softFailures += 1;
+              failures.push({
+                label: undoLabel(entry),
+                message: `restored to Ideas — couldn't put it back on Day ${row.day_index + 1}`,
               });
-            } catch (moveErr) {
-              // Non-fatal: restored to Ideas; the optimizer re-places it.
-              console.warn(
-                `[useAiEditApply] undo day restore failed for "${row.user_title ?? row.id}"`,
-                moveErr,
-              );
             }
           }
         } else if (entry.kind === 'reverse-move') {
@@ -364,8 +372,17 @@ export function useAiEditApply() {
 
     setPhase('idle');
     inFlightRef.current = false;
-    return { reverted: reversed.length - failures.length, failures };
+    return { reverted: reversed.length - (failures.length - softFailures), failures };
   }, [createPlaceAsync, deletePlaceAsync, moveToDayAsync, updatePlaceAsync, optimizeAsync]);
 
-  return { apply, undo, phase, done, total };
+  /**
+   * Ends the undo window. The sheet calls this when its session ends (close
+   * from done/undone, or "Start a new edit") so a stale Undo can never revert
+   * manual changes made after the sheet was dismissed.
+   */
+  const clearUndo = useCallback(() => {
+    journalRef.current = null;
+  }, []);
+
+  return { apply, undo, clearUndo, phase, done, total };
 }

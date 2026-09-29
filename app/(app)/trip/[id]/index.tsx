@@ -182,19 +182,43 @@ export default function TripDetail() {
     [places, trip?.daily_hours_budget, trip?.transport_mode, trip?.route_render_mode, tier1Active],
   );
   const lastOptimizedRef = useRef<string | null>(null);
+  // F3 fix: a key that failed with a non-transient error is not retried (no
+  // hot loop); a 409 `already_optimizing` is retried once the in-flight call
+  // settles, so a place added mid-run still gets routed.
+  const failedKeyRef = useRef<string | null>(null);
+  // Back off a little after a 409 so another device's long run is not hammered.
+  const busyRetryRef = useRef(false);
+  const optimizePending = optimize.isPending;
   useEffect(() => {
     // Audit #6: optimize is editor-only (viewers get 403 `not_editor`). Also
     // waits out role loading — the ref stays unset, so it runs once it flips.
     if (!canEditTrip) return;
     if (!id || places.length < 2 || !trip) return;
+    if (optimizePending) return;
     if (lastOptimizedRef.current === stateKey) return;
+    if (failedKeyRef.current === stateKey) return;
     const renderMode = trip.route_render_mode ?? 'optimized';
+    const keyAtCall = stateKey;
     const timer = setTimeout(() => {
-      lastOptimizedRef.current = stateKey;
-      optimizeMutate({ tripId: id, mode: renderMode });
-    }, 500);
+      optimizeMutate(
+        { tripId: id, mode: renderMode },
+        {
+          onSuccess: () => {
+            lastOptimizedRef.current = keyAtCall;
+            failedKeyRef.current = null;
+            busyRetryRef.current = false;
+          },
+          onError: (err) => {
+            const code = (err as { code?: unknown } | null)?.code;
+            const busy = code === 'already_optimizing';
+            busyRetryRef.current = busy;
+            failedKeyRef.current = busy ? null : keyAtCall;
+          },
+        },
+      );
+    }, busyRetryRef.current ? 3000 : 500);
     return () => clearTimeout(timer);
-  }, [canEditTrip, id, stateKey, places.length, trip, optimizeMutate]);
+  }, [canEditTrip, id, stateKey, places.length, trip, optimizeMutate, optimizePending]);
 
   if (isLoading) {
     return (
@@ -212,7 +236,7 @@ export default function TripDetail() {
           accessibilityLiveRegion="polite"
           style={[t.typography.body, { color: t.colors.textMuted, marginBottom: t.spacing.md }]}
         >
-          {error.message || tx('detail.loadErrorBody')}
+          {tx('detail.loadErrorBody')}
         </Text>
         <View style={{ gap: t.spacing.sm }}>
           <Button label={tx('detail.retry')} onPress={() => refetch()} accessibilityLabel={tx('detail.retryA11y')} />
@@ -376,6 +400,7 @@ export default function TripDetail() {
         dailyHoursBudget={trip.daily_hours_budget}
         transportMode={trip.transport_mode}
         currency={trip.currency}
+        totalBudget={trip.total_budget ?? null}
         hasPlaces={places.length > 0}
         canEdit={canEditTrip}
         isOwner={isOwner}

@@ -149,13 +149,15 @@ function SharedTripContent({
         })),
     [places, selected],
   );
-  const polylines: MapPolyline[] = useMemo(
-    () =>
-      legs
-        .filter((l) => l.polyline && l.day_index >= 0 && (selected === 'all' || l.day_index === selected))
-        .map((l) => ({ id: l.id, dayIndex: l.day_index, points: decodePolyline(l.polyline!) })),
-    [legs, selected],
-  );
+  const polylines: MapPolyline[] = useMemo(() => {
+    // Defense in depth (the server already drops them): never draw a leg to
+    // a stop that is not on the public itinerary (e.g. a deleted place).
+    const placeIds = new Set(places.map((p) => p.id));
+    return legs
+      .filter((l) => placeIds.has(l.from_place_id) && placeIds.has(l.to_place_id))
+      .filter((l) => l.polyline && l.day_index >= 0 && (selected === 'all' || l.day_index === selected))
+      .map((l) => ({ id: l.id, dayIndex: l.day_index, points: decodePolyline(l.polyline!) }));
+  }, [legs, places, selected]);
 
   const title = trip.title || 'Untitled trip';
   const onShare = () =>

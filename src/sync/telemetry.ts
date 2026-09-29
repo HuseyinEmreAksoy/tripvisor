@@ -241,13 +241,43 @@ export function recordPersistValueLarge(table: string, bytes: number, limitBytes
   }
 }
 
+/**
+ * Is this write error a plain "no network" failure? Those are the offline
+ * queue doing its job (the change is saved locally and retried), not a
+ * failed write — the pill must say "Offline — changes saved here", not
+ * "Sync issues". Wording differs per runtime: Chrome 'Failed to fetch',
+ * React Native 'Network request failed', Firefox 'NetworkError …',
+ * Safari 'Load failed'; postgrest-js also reports status 0.
+ */
+export function isNetworkClassError(error: unknown): boolean {
+  if (error && typeof error === 'object' && (error as { status?: unknown }).status === 0) return true;
+  const raw = typeof error === 'string' ? error : (error as { message?: unknown } | null | undefined)?.message;
+  const message = typeof raw === 'string' ? raw : '';
+  return /Failed to fetch|Network request failed|NetworkError|Load failed|Network Error/i.test(message);
+}
+
 export function recordWriteFailure(table: Tier1Table, error: unknown): void {
+  // Offline retries count as QUEUED, not failed (F11-3): otherwise every
+  // backoff attempt while offline bumped the counter.
+  if (isNetworkClassError(error)) return;
   state.entities[table].writeErrorCount += 1;
   breadcrumb('sync write failure', {
     table,
     message: error instanceof Error ? error.message : String(error),
     writeErrorCount: state.entities[table].writeErrorCount,
   });
+  refreshSyncStatus();
+}
+
+/**
+ * The root's write queue drained (numPendingSets reached 0): every change
+ * landed, so earlier failed attempts are history — clear the counter so the
+ * pill leaves "Sync issues (N)" (F11-3; before, it only reset on restart).
+ */
+export function clearWriteErrors(table: Tier1Table): void {
+  const e = state.entities[table];
+  if (e.writeErrorCount === 0) return;
+  e.writeErrorCount = 0;
   refreshSyncStatus();
 }
 

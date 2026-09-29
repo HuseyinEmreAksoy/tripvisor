@@ -114,15 +114,23 @@ export function useTripLegs(tripId: Uuid | undefined) {
       // projection without including transit_steps. The trips-list
       // aggregate path below (useAllTripLegs) stays projected — it never
       // needs geometry.
-      const { data, error } = await supabase
-        .from('trip_legs')
-        .select('*')
-        .eq('trip_id', tripId);
-      if (error) throw error;
+      //
+      // Wave-2 sweep: TWO reads. The matrix cache (day_index -1) holds up
+      // to 25 x 24 rows PER MODE, so one unordered read could hit
+      // PostgREST's max_rows (1000) and silently drop DAY legs, i.e. break
+      // the route. The day legs (<= 24 per day) are read on their own and
+      // can never be crowded out; the cache read is only a hop-lookup
+      // fallback (truncating it is harmless).
+      const [dayRes, cacheRes] = await Promise.all([
+        supabase.from('trip_legs').select('*').eq('trip_id', tripId).gte('day_index', 0),
+        supabase.from('trip_legs').select('*').eq('trip_id', tripId).lt('day_index', 0),
+      ]);
+      if (dayRes.error) throw dayRes.error;
+      if (cacheRes.error) throw cacheRes.error;
       // M5 Y2.3: matrix-cache rows (day_index -1) first, day legs last, so
       // from→to lookups with last-wins (computeDayTimeline) always pick the
       // day leg, whose mode may differ from the cached day-default pair.
-      return orderLegsForHopLookup((data ?? []) as TripLeg[]);
+      return orderLegsForHopLookup([...(cacheRes.data ?? []), ...(dayRes.data ?? [])] as TripLeg[]);
     },
   });
 }

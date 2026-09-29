@@ -1,1 +1,29 @@
-{}
+{
+  "title": "İçgörüler",
+  "empty": {
+    "title": "İçgörüleri burada görmek için ilk gezini oluştur.",
+    "cta": "Yeni gezi",
+    "ctaA11y": "Yeni bir gezi oluştur"
+  },
+  "noData": "Henüz veri yok. İçgörüleri görmek için harcama ekle ya da yerleri değerlendir.",
+  "spendingPerTrip": "Gezi başına harcama",
+  "spendingByCategory": "Kategoriye göre harcama",
+  "spendingOverTime": "Zaman içinde harcama",
+  "totalSpent": "Toplam: {{amount}}",
+  "pendingNote_one": "Kuru henüz belli olmadığı için {{count}} harcama toplama dahil edilmedi: {{amounts}}",
+  "pendingNote_other": "Kurları henüz belli olmadığı için {{count}} harcama toplama dahil edilmedi: {{amounts}}",
+  "categories": {
+    "accommodation": "Konaklama",
+    "food": "Yeme içme",
+    "transport": "Ulaşım",
+    "shopping": "Alışveriş",
+    "activities": "Etkinlikler",
+    "other": "Diğer"
+  },
+  "reactionsPerTrip": "Gezi başına beğendiklerin ve beğenmediklerin",
+  "mostLiked": "En çok beğenilen yerler",
+  "didntLike": "Beğenmediğin yerler",
+  "unknownPlace": "Bilinmeyen yer",
+  "unknownTrip": "Bilinmeyen gezi",
+  "refreshNightly": "Toplamlar her gece güncellenir."
+}

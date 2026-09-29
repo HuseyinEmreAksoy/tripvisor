@@ -2,7 +2,8 @@
 //
 // Orphans = objects in the private `trip-memories` bucket with NO
 // trip_photos row (rows purged by the hourly pending purge, hard-deleted
-// rows, cascades). SQL must not delete Storage objects (storage.protect_delete
+// rows, cascades), plus (0040) objects of long-tombstoned photos. SQL must
+// not delete Storage objects (storage.protect_delete
 // blocks it, and a SQL delete would only drop the metadata row and leave the
 // file in the object store), so this function removes them through the
 // Storage API instead. They keep counting against the author's byte quota
@@ -11,10 +12,13 @@
 // Candidates come from rpc('trip_memories_sweep_candidates', {p_min_age,
 // p_limit}) (0038, service-role EXECUTE only): objects older than p_min_age
 // (default 1 h — protects a just-deleted row that a client retry re-inserts
-// with the same id), oldest first, <= 1000 per call. Tombstoned rows keep
-// their objects (undo window; the author's client removes them), so they are
-// never candidates. Removing a name that no longer exists is not an error:
-// the sweep is idempotent and safe to overlap.
+// with the same id), oldest first, <= 1000 per call. Since 0040 the list also
+// holds the objects of photos TOMBSTONED more than 7 days ago (a device that
+// never came back online, or a revoked member who can no longer delete their
+// files). Younger tombstones keep their objects (the undo window; the
+// author's client normally removes them right away), and an un-delete after
+// the sweep keeps the row deleted (0040 §2 trigger). Removing a name that no
+// longer exists is not an error: the sweep is idempotent and safe to overlap.
 //
 // Pure w.r.t. I/O: everything goes through SweepDeps (handler.ts wires the
 // service-role supabase-js client), so index.test.ts drives it with fakes.

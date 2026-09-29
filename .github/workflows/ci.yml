@@ -43,10 +43,10 @@ jobs:
       # if the script is ever removed or renamed. We still want the job to run tests.
       - name: Lint (soft)
         run: |
-          if npm run | grep -qE '^\s*lint\s*$'; then
+          if [ -x node_modules/.bin/eslint ] && npm run | grep -qE '^\s*lint\s*$'; then
             npm run lint
           else
-            echo "::warning::No 'lint' npm script found — skipping lint."
+            echo "::warning::eslint or the 'lint' npm script is missing — skipping lint."
           fi
 
       # Coverage thresholds are enforced inside jest.config (Step 5.5). Here we

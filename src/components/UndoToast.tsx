@@ -22,13 +22,19 @@
  * is the codebase's native-driven Animated fade+rise (Button/EmptyState
  * precedent), skipped entirely under reduced motion.
  *
- * Accessibility: the message Text lives in an `accessibilityLiveRegion=
- * "polite"` container (aria-live on web), the Undo action is a real button
+ * Accessibility: announcements are per platform — Android uses
+ * `accessibilityLiveRegion="polite"` on the toast; iOS (no live regions in
+ * RN) gets `AccessibilityInfo.announceForAccessibility` on every message
+ * change; web keeps an ALWAYS-MOUNTED visually hidden aria-live region and
+ * only swaps its text (a region inserted together with its content is often
+ * not announced). With a screen reader running, the actionable toast lingers
+ * 10x longer (WCAG 2.2.1). The Undo action is a real button
  * with a ≥44 px touch target, and the host wrapper is pointerEvents
  * "box-none" so the rest of the screen stays interactive.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Animated,
   Easing,
@@ -48,6 +54,8 @@ import { useUndo } from '@/sync/undo';
 
 /** How long the actionable toast stays up before auto-dismissing. */
 const UNDOABLE_VISIBLE_MS = 6_000;
+/** Screen reader running: 10x the default (WCAG 2.2.1 "extend"). */
+const UNDOABLE_VISIBLE_MS_SCREEN_READER = 60_000;
 /** Confirmation ("Undid: …") linger. */
 const UNDONE_VISIBLE_MS = 2_500;
 /** Failure ("Couldn't undo …") linger — a touch longer so it can be read. */
@@ -63,12 +71,54 @@ interface ToastContent {
   label: string;
 }
 
+/** Visible + announced text for a toast state. */
+export function undoToastMessage(toast: ToastContent): string {
+  switch (toast.phase) {
+    case 'undoable':
+    case 'undoing':
+      return toast.label;
+    case 'undone':
+      return `Undid: ${toast.label}`;
+    case 'error':
+      return `Couldn't undo "${toast.label}"`;
+  }
+}
+
+/** What screen readers hear (the actionable state names the Undo action). */
+function announcementFor(toast: ToastContent): string | null {
+  if (toast.phase === 'undoing') return null;
+  if (toast.phase === 'undoable') return `${toast.label}. Undo available.`;
+  return undoToastMessage(toast);
+}
+
+/** Tracks whether a screen reader is running (VoiceOver/TalkBack/web: false). */
+function useScreenReaderEnabled(): boolean {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    AccessibilityInfo.isScreenReaderEnabled?.()
+      .then((on) => {
+        if (alive) setEnabled(Boolean(on));
+      })
+      .catch(() => undefined);
+    const sub = AccessibilityInfo.addEventListener?.('screenReaderChanged', (on: boolean) =>
+      setEnabled(Boolean(on)),
+    );
+    return () => {
+      alive = false;
+      sub?.remove?.();
+    };
+  }, []);
+  return enabled;
+}
+
 export function UndoToast() {
   const t = useTheme();
   const stack = useUndo();
   const reducedMotion = useReducedMotion();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const screenReaderOn = useScreenReaderEnabled();
 
   const [toast, setToast] = useState<ToastContent | null>(null);
   // 0 = hidden, 1 = shown. Native-driven opacity + translateY.
@@ -159,13 +209,26 @@ export function UndoToast() {
     if (!toast || toast.phase === 'undoing') return undefined;
     const ms =
       toast.phase === 'undoable'
-        ? UNDOABLE_VISIBLE_MS
+        ? screenReaderOn
+          ? UNDOABLE_VISIBLE_MS_SCREEN_READER
+          : UNDOABLE_VISIBLE_MS
         : toast.phase === 'undone'
           ? UNDONE_VISIBLE_MS
           : ERROR_VISIBLE_MS;
     const id = setTimeout(dismiss, ms);
     return () => clearTimeout(id);
-  }, [toast, dismiss]);
+  }, [toast, dismiss, screenReaderOn]);
+
+  // Announcements. iOS has no live regions in RN → announce explicitly;
+  // web writes into the persistent hidden aria-live node rendered below;
+  // Android relies on the toast's accessibilityLiveRegion (no double-read).
+  const announcement = toast ? announcementFor(toast) : null;
+  const [webLiveText, setWebLiveText] = useState('');
+  useEffect(() => {
+    if (!announcement) return;
+    if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(announcement);
+    else if (Platform.OS === 'web') setWebLiveText(announcement);
+  }, [announcement, toast]);
 
   const handleUndo = useCallback(async () => {
     undoInFlightRef.current = true;
@@ -195,26 +258,24 @@ export function UndoToast() {
   // Flag off → invisible (hooks above ran unconditionally). Pushes only
   // happen flag-on, so this is belt-and-braces against stale state.
   if (!isTier1SyncEnabled()) return null;
-  if (!toast) return null;
+  // Web: the live region stays mounted even with no toast up, so the next
+  // message is a text CHANGE on an existing region (reliably announced).
+  const webLiveRegion =
+    Platform.OS === 'web' ? (
+      <View accessibilityLiveRegion="polite" style={styles.visuallyHidden} testID="undo-toast-live">
+        <Text>{webLiveText}</Text>
+      </View>
+    ) : null;
+  if (!toast) return webLiveRegion;
 
   const isDesktopWeb = Platform.OS === 'web' && width >= DESKTOP_BREAKPOINT;
   const hasTrailingAction = toast.phase === 'undoable' || toast.phase === 'undoing';
 
-  let message: string;
-  switch (toast.phase) {
-    case 'undoable':
-    case 'undoing':
-      message = toast.label;
-      break;
-    case 'undone':
-      message = `Undid: ${toast.label}`;
-      break;
-    case 'error':
-      message = `Couldn't undo "${toast.label}"`;
-      break;
-  }
+  const message = undoToastMessage(toast);
 
   return (
+    <>
+    {webLiveRegion}
     <View
       pointerEvents="box-none"
       style={[
@@ -230,9 +291,9 @@ export function UndoToast() {
       ]}
     >
       <Animated.View
-        // Polite announce: VoiceOver/TalkBack/screen readers read the label
-        // when the toast appears and again on "Undid:"/"Couldn't undo".
-        accessibilityLiveRegion="polite"
+        // Android-only live region (iOS announces explicitly, web uses the
+        // persistent hidden region above — see the effect).
+        accessibilityLiveRegion={Platform.OS === 'android' ? 'polite' : undefined}
         style={[
           styles.toast,
           {
@@ -291,6 +352,7 @@ export function UndoToast() {
         ) : null}
       </Animated.View>
     </View>
+    </>
   );
 }
 
@@ -301,6 +363,14 @@ const webFixedHost = {
 } as ViewStyle;
 
 const styles = StyleSheet.create({
+  // Screen-reader-only (clipped 1px box), never visible or hit-testable.
+  visuallyHidden: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    overflow: 'hidden',
+    pointerEvents: 'none',
+  },
   host: {
     position: 'absolute',
     left: 0,

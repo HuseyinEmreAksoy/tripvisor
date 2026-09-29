@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { ThemeProvider } from '@/theme';
-import type { Trip, TripPlace } from '@/api';
+import type { Trip, TripLeg, TripPlace } from '@/api';
 import { MapTab } from '../MapTab';
 
 const mockRequest = jest.fn(async () => undefined);
@@ -40,12 +40,14 @@ jest.mock('@/components/Map', () => {
     DAY_NEUTRAL: '#78716A',
     Map: ({
       markers,
+      polylines,
       onMarkerPress,
     }: {
       markers: Array<{ id: string; title: string }>;
+      polylines?: Array<{ id: string }>;
       onMarkerPress: (id: string) => void;
-    }) =>
-      markers.map((m) => (
+    }) => [
+      ...markers.map((m) => (
         <Pressable
           key={m.id}
           accessibilityRole="button"
@@ -55,6 +57,8 @@ jest.mock('@/components/Map', () => {
           <Text>{m.title}</Text>
         </Pressable>
       )),
+      ...(polylines ?? []).map((p) => <Text key={`pl-${p.id}`}>{`polyline ${p.id}`}</Text>),
+    ],
   };
 });
 
@@ -115,5 +119,31 @@ describe('MapTab', () => {
       <MapTab tripId="trip-1" places={places} legs={[]} trip={trip} canEdit onMarker={jest.fn()} />,
     );
     expect(full.queryByText('Add places to see your route')).toBeNull();
+  });
+
+  it('does not draw a leg whose endpoint place was deleted', () => {
+    mockPermission = 'prompt';
+    const legs = [
+      { id: 'leg-stale', day_index: 0, from_place_id: 'row-1', to_place_id: 'row-gone', polyline: 'abc' },
+    ] as unknown as TripLeg[];
+    const { queryByText } = wrap(
+      <MapTab tripId="trip-1" places={places} legs={legs} trip={trip} canEdit onMarker={jest.fn()} />,
+    );
+    expect(queryByText('polyline leg-stale')).toBeNull();
+  });
+
+  it('still draws a leg whose endpoints both exist', () => {
+    mockPermission = 'prompt';
+    const two = [
+      ...places,
+      { id: 'row-2', google_place_id: 'gid-2', user_title: 'MAAT', lat: 38.7, lng: -9.19, day_index: 0, order_in_day: 1 },
+    ] as unknown as TripPlace[];
+    const legs = [
+      { id: 'leg-ok', day_index: 0, from_place_id: 'row-1', to_place_id: 'row-2', polyline: 'abc' },
+    ] as unknown as TripLeg[];
+    const { getByText } = wrap(
+      <MapTab tripId="trip-1" places={two} legs={legs} trip={trip} canEdit onMarker={jest.fn()} />,
+    );
+    expect(getByText('polyline leg-ok')).toBeTruthy();
   });
 });

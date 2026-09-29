@@ -1,1 +1,15 @@
-{}
+{
+  "edit": {
+    "startNew": "Yeni bir düzenleme başlat",
+    "startNewA11y": "Yeni bir yapay zekâ düzenlemesi başlat — yukarıdaki değişiklikleri geri alma seçeneği kapanır"
+  },
+  "gapFill": {
+    "inIdeas": "Fikirlerde",
+    "inIdeasA11y": "{{name}}, {{day}}. gün yerine Fikirler'e eklendi",
+    "addedToIdeasNote": "Fikirler'e eklendi, {{day}}. güne yerleştirilemedi. Güzergâhtan taşıyabilirsin."
+  },
+  "import": {
+    "nextBatch_one": "Sonraki {{count}} yeri içe aktar",
+    "nextBatch_other": "Sonraki {{count}} yeri içe aktar"
+  }
+}

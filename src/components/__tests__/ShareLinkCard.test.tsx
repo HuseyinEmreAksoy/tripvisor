@@ -18,6 +18,8 @@ const mockConfirm = jest.fn<() => Promise<boolean>>();
 const mockShareLink = jest.fn<(input: { url: string; title: string; message: string }) => Promise<string>>();
 // Last create failure as the mutation would expose it (null = no error).
 let mockCreateError: Error | null = null;
+// Server-side current link (useCurrentShareLink): undefined = loading, null = none.
+let mockCurrent: { token: string } | null | undefined = null;
 
 jest.mock('@/api/share', () => {
   class ShareLinkError extends Error {
@@ -36,6 +38,10 @@ jest.mock('@/api/share', () => {
       isPending: false,
       isError: mockCreateError !== null,
       error: mockCreateError,
+    }),
+    useCurrentShareLink: () => ({
+      data: mockCurrent,
+      isLoading: mockCurrent === undefined,
     }),
     useRevokeShareLink: () => ({
       mutateAsync: mockRevokeMutateAsync,
@@ -85,6 +91,7 @@ beforeEach(() => {
   mockConfirm.mockReset();
   mockShareLink.mockReset();
   mockCreateError = null;
+  mockCurrent = null;
   mockCreateMutateAsync.mockResolvedValue({ token: TOKEN });
   mockRevokeMutateAsync.mockResolvedValue({ revoked: 1 });
   mockConfirm.mockResolvedValue(true);
@@ -161,6 +168,23 @@ describe('ShareLinkCard — after successful create', () => {
   });
 });
 
+describe('ShareLinkCard — live link from the server', () => {
+  it('shows an existing link after a reload (no local state) and can revoke it', async () => {
+    mockCurrent = { token: 'older-live-token' };
+    const { getByText, getByRole, queryByRole } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(getByText(/\/share\/older-live-token/)).toBeTruthy();
+    expect(queryByRole('button', CREATE)).toBeNull();
+    fireEvent.press(getByRole('button', { name: /revoke share link/i }));
+    await waitFor(() => expect(mockRevokeMutateAsync).toHaveBeenCalledWith());
+  });
+
+  it('keeps Create inert while the current link is still loading', () => {
+    mockCurrent = undefined;
+    const { getByRole } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(getByRole('button', CREATE).props.accessibilityState).toMatchObject({ disabled: true });
+  });
+});
+
 describe('ShareLinkCard — revoke', () => {
   it('asks for confirmation and keeps the link when cancelled', async () => {
     mockConfirm.mockResolvedValue(false);
@@ -174,7 +198,9 @@ describe('ShareLinkCard — revoke', () => {
   it('revokes after confirmation and shows Create again', async () => {
     const { getByRole, queryByText } = await createLink();
     fireEvent.press(getByRole('button', { name: /revoke share link/i }));
-    await waitFor(() => expect(mockRevokeMutateAsync).toHaveBeenCalledWith({ token: TOKEN }));
+    // No token: every active link of the trip is revoked.
+    await waitFor(() => expect(mockRevokeMutateAsync).toHaveBeenCalledWith());
+    mockCurrent = null; // the hook's onSuccess clears the current-link cache
     await waitFor(() => expect(queryByText(new RegExp(`/share/${TOKEN}`))).toBeNull());
     expect(getByRole('button', CREATE)).toBeTruthy();
   });

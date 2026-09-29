@@ -8,10 +8,12 @@
  * Usage:
  *   <MapUnavailable markers={markers} polylines={polylines} />
  */
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ON_DAY_COLOR, dayColor, dayTint, useTheme } from '@/theme';
 import { Trans, useT } from '@/i18n';
 import type { MapViewProps } from './Map/types';
+
+const MY_LOCATION_ID = '__my_location__';
 
 type Props = MapViewProps & {
   /** Env var the hint tells the developer to set. Default: the web key. */
@@ -20,12 +22,14 @@ type Props = MapViewProps & {
 
 export function MapUnavailable({
   markers: maybeMarkers,
+  onMarkerPress,
   keyName = 'EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY',
 }: Props) {
   const t = useTheme();
   const { t: tx } = useT('trip');
   // Defensive: tolerate transient undefined during data hydration.
-  const markers = maybeMarkers ?? [];
+  // The render-only "my location" pseudo-marker is not a place row.
+  const markers = (maybeMarkers ?? []).filter((m) => m.id !== MY_LOCATION_ID);
 
   // Group markers by dayIndex (null/-1 → unscheduled bucket)
   const groups: Map<number, typeof markers> = new Map();
@@ -55,12 +59,15 @@ export function MapUnavailable({
           padding: t.spacing.lg,
         },
       ]}
-      accessible
-      accessibilityRole="summary"
-      accessibilityLabel={tx('mapUnavailable.a11y')}
     >
-      {/* Title */}
-      <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
+      {/* Title — the card itself is NOT `accessible` (that would merge the
+          whole list into one screen-reader stop); the summary label lives
+          on the header so day chips and place rows stay focusable. */}
+      <Text
+        style={[t.typography.subtitle, { color: t.colors.text }]}
+        accessibilityRole="header"
+        accessibilityLabel={tx('mapUnavailable.a11y')}
+      >
         {tx('mapUnavailable.title')}
       </Text>
       <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.xs }]}>
@@ -123,9 +130,12 @@ export function MapUnavailable({
 
               {/* Place rows */}
               {pins.map((pin) => (
-                <View
+                <Pressable
                   key={pin.id}
-                  style={[
+                  accessibilityRole="button"
+                  accessibilityLabel={pin.title}
+                  onPress={() => onMarkerPress?.(pin.id)}
+                  style={({ pressed }) => [
                     styles.placeRow,
                     {
                       borderColor: t.colors.border,
@@ -133,6 +143,7 @@ export function MapUnavailable({
                       backgroundColor: t.colors.bg,
                       paddingHorizontal: t.spacing.md,
                       paddingVertical: t.spacing.sm,
+                      opacity: pressed ? 0.7 : 1,
                     },
                   ]}
                 >
@@ -169,7 +180,7 @@ export function MapUnavailable({
                   >
                     {pin.title}
                   </Text>
-                </View>
+                </Pressable>
               ))}
             </View>
           ))}

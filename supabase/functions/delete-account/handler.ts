@@ -27,6 +27,10 @@
 //      belt-and-braces sweep). Cascade FKs clean every child table,
 //      including `trip_documents` and all memory tables of owned trips; the
 //      caller's memory rows on other trips cascade via `author_id`.
+//   4b. (0040 sweep) Delete the caller's own `trip_collaborators` rows on
+//      other people's trips, by the ids read in step 2. The user_id FK
+//      cascades since migration 0040 (then this is a no-op); before, it was
+//      SET NULL and left the member's email behind. Best-effort, logged.
 //   5. Best-effort Storage cleanup (see ./storage-cleanup.ts):
 //        - every object under `<tripId>/` of each OWNED trip, in every
 //          TRIP_PREFIXED_BUCKETS bucket (`trip-docs`, `trip-memories`: the
@@ -87,6 +91,8 @@ import {
 } from './storage-cleanup.ts';
 
 const PAGE = 1000;
+/** `in('id', …)` filter chunk (URL length). */
+const ID_CHUNK = 100;
 /** Cap error strings in the log line so one bad bucket can't flood it. */
 const MAX_LOGGED_ERRORS = 20;
 
@@ -190,16 +196,20 @@ export async function handler(req: Request): Promise<Response> {
 
   // 2b. (M5) Trips where the user may have memory objects without owning them.
   const memoryTripIds = new Set<string>();
-  for (const [table, column] of [
-    ['trip_photos', 'author_id'],
-    ['trip_collaborators', 'user_id'],
-  ] as const) {
-    const res = await collectTripIds(admin, table, column, userId);
-    if (res.error) {
-      log({ requestId, fn: 'delete-account', level: 'error', stage: 'memory_trips_list', userId, table, err: res.error });
-      return errorResponse('db_error', 'Failed to read account data', 500, origin);
-    }
-    for (const id of res.ids) if (!ownedSet.has(id)) memoryTripIds.add(id);
+  const photos = await collectTripIds(admin, 'trip_photos', 'author_id', userId);
+  if (photos.error) {
+    log({ requestId, fn: 'delete-account', level: 'error', stage: 'memory_trips_list', userId, table: 'trip_photos', err: photos.error });
+    return errorResponse('db_error', 'Failed to read account data', 500, origin);
+  }
+  // 2c. The user's own membership rows on other people's trips (any status).
+  // Their ids are kept for step 4b; their trips feed the memories cleanup.
+  const memberships = await collectCollaboratorRows(admin, userId);
+  if (memberships.error) {
+    log({ requestId, fn: 'delete-account', level: 'error', stage: 'memory_trips_list', userId, table: 'trip_collaborators', err: memberships.error });
+    return errorResponse('db_error', 'Failed to read account data', 500, origin);
+  }
+  for (const id of [...photos.ids, ...memberships.rows.map((r) => r.trip_id)]) {
+    if (!ownedSet.has(id)) memoryTripIds.add(id);
   }
   const authoredPrefixes = [...memoryTripIds].sort().map((t) => authorPrefix(t, userId));
 
@@ -233,6 +243,32 @@ export async function handler(req: Request): Promise<Response> {
       userId,
       err: dbErr.message,
     });
+  }
+
+  // 4b. The user's trip_collaborators rows on other people's trips. Since
+  // migration 0040 the user_id FK cascades, so the auth delete normally
+  // removed them already (this is then a no-op); before 0040 it was SET NULL
+  // and the rows (with the member's email) stayed behind. Deleted by the ids
+  // read in 2c: after the auth delete their user_id may already be NULL.
+  // Best-effort like the Storage cleanup: the account itself is gone.
+  const membershipIds = memberships.rows.map((r) => r.id);
+  let membershipsRemoved = 0;
+  for (let i = 0; i < membershipIds.length; i += ID_CHUNK) {
+    const chunk = membershipIds.slice(i, i + ID_CHUNK);
+    const { error: collabErr } = await admin.from('trip_collaborators').delete().in('id', chunk);
+    if (collabErr) {
+      log({
+        requestId,
+        fn: 'delete-account',
+        level: 'error',
+        stage: 'collaborators_cleanup',
+        userId,
+        err: collabErr.message,
+        ids: chunk.slice(0, MAX_LOGGED_ERRORS),
+      });
+      continue;
+    }
+    membershipsRemoved += chunk.length;
   }
 
   // 5. Best-effort Storage cleanup (never throws).
@@ -290,6 +326,8 @@ export async function handler(req: Request): Promise<Response> {
     stage: 'done',
     userId,
     trips: ownedTripIds.length,
+    memberships: membershipIds.length,
+    memberships_removed: membershipsRemoved,
     memory_trips_elsewhere: authoredPrefixes.length,
     objects_removed: storageReports.reduce((n, r) => n + r.removed, 0),
     storage_errors: storageReports.reduce((n, r) => n + r.errors.length, 0),
@@ -297,6 +335,27 @@ export async function handler(req: Request): Promise<Response> {
   });
 
   return jsonResponse({ ok: true }, { origin });
+}
+
+/** The user's own `trip_collaborators` rows (id + trip), any status, paged. */
+async function collectCollaboratorRows(
+  admin: AdminClient,
+  userId: string,
+): Promise<{ rows: Array<{ id: string; trip_id: string }>; error: string | null }> {
+  const rows: Array<{ id: string; trip_id: string }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin
+      .from('trip_collaborators')
+      .select('id, trip_id')
+      .eq('user_id', userId)
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return { rows, error: String(error.message) };
+    const page = (data ?? []) as Array<{ id: string | null; trip_id: string | null }>;
+    for (const r of page) if (r.id && r.trip_id) rows.push({ id: r.id, trip_id: r.trip_id });
+    if (page.length < PAGE) break;
+  }
+  return { rows, error: null };
 }
 
 /** Owned trip ids (`trips.user_id`), paged. */

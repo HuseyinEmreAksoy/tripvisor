@@ -26,7 +26,7 @@
  * Server state: useAiEditTrip (preview, writes nothing) — commits go through
  * the normal trip-places hooks inside useAiEditApply.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
   useAiEditTrip,
@@ -37,6 +37,7 @@ import {
   type Uuid,
 } from '@/api';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { BottomSheet, Button, Heading, PoweredByGoogle, StatusPill } from '@/components';
 import { AiErrorNotice, PromptField } from '@/components/ai-plan';
 import { useAiEditApply, type AiEditApplyOutcome, type AiEditUndoOutcome } from '@/hooks/useAiEditApply';
@@ -80,6 +81,7 @@ export function AiEditSheet({
   routeRenderMode,
 }: AiEditSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('ai');
   const edit = useAiEditTrip();
   const editApply = useAiEditApply();
 
@@ -172,6 +174,9 @@ export function AiEditSheet({
     setStage('applying');
     const outcome = await editApply.apply({ tripId, places, ops, routeRenderMode });
     if (outcome) {
+      // The trip changed: the same text must mint a NEW key next time, or the
+      // server replays this (now stale) diff.
+      intentRef.current = null;
       setApplyOutcome(outcome);
       setStage('done');
     } else {
@@ -183,13 +188,17 @@ export function AiEditSheet({
   const handleUndo = async () => {
     const outcome = await editApply.undo();
     if (outcome) {
+      intentRef.current = null; // undo re-created rows with new ids
       setUndoOutcome(outcome);
       setStage('undone');
     }
   };
 
-  /** Fresh edit: clears the result, instruction, and intent key. */
-  const resetForNewEdit = () => {
+  /**
+   * Back to input keeping the typed text (the "nothing to change" preview).
+   * Nothing was applied, so the intent key may still replay the same result.
+   */
+  const resetToInput = () => {
     edit.reset();
     setInstructionError(null);
     setExcluded(new Set());
@@ -197,6 +206,28 @@ export function AiEditSheet({
     setUndoOutcome(null);
     setStage('input');
   };
+
+  /**
+   * Fresh edit after an apply/undo: clears the result, instruction, intent key
+   * (the trip changed, so a replayed diff would point at dead place ids) and
+   * ends the undo window.
+   */
+  const resetForNewEdit = () => {
+    resetToInput();
+    intentRef.current = null;
+    setInstruction('');
+    editApply.clearUndo();
+  };
+
+  // The sheet stays mounted between opens: a close from done/undone ends the
+  // session, so the next "Edit with AI" starts on a clean input and a stale
+  // Undo can't revert manual changes made after the sheet was dismissed.
+  const sessionOver = !visible && !writing && (stage === 'done' || stage === 'undone');
+  const resetRef = useRef(resetForNewEdit);
+  resetRef.current = resetForNewEdit;
+  useEffect(() => {
+    if (sessionOver) resetRef.current();
+  }, [sessionOver]);
 
   const remainingRuns = usage ? Math.max(0, usage.dailyLimit - usage.runsToday) : null;
   const quotaProps = {
@@ -281,7 +312,7 @@ export function AiEditSheet({
               names={result.unresolved}
               hint="They couldn't be matched to real places, so there was nothing to add."
             />
-            <Button label="Try a different instruction" onPress={resetForNewEdit} />
+            <Button label="Try a different instruction" onPress={resetToInput} />
             <Button variant="ghost" label="Close" onPress={handleClose} />
           </View>
         ) : (
@@ -465,6 +496,13 @@ export function AiEditSheet({
             />
           ) : null}
           <Button label="Done" onPress={handleClose} disabled={writing} />
+          <Button
+            variant="ghost"
+            label={tx('edit.startNew')}
+            onPress={resetForNewEdit}
+            disabled={writing}
+            accessibilityLabel={tx('edit.startNewA11y')}
+          />
         </View>
       ) : null}
 

@@ -45,3 +45,15 @@ export interface DraftCommitPayload {
   title: string;
   places: DraftCommitPlace[];
 }
+
+/**
+ * The review screen's full edit state (every row incl. removed ones + the
+ * typed title). The plan screen keeps the latest snapshot per `runId` so a
+ * failed commit (or a trip back to "Edit request" that replays the same run)
+ * re-seeds DraftReview with the user's edits instead of the raw draft.
+ */
+export interface DraftReviewSnapshot {
+  runId: string;
+  edits: DraftPlaceEdit[];
+  title: string;
+}

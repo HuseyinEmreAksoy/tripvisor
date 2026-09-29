@@ -108,6 +108,32 @@ export function secondsUntilUtcMidnight(now: Date = new Date()): number {
   return Math.max(1, Math.ceil((next - now.getTime()) / 1000));
 }
 
+/**
+ * True when an existing (trip, email) row is NOT a live invite and may be
+ * re-opened by a new invite: declined, revoked, or pending past the TTL.
+ * A live pending invite or an accepted member stays a 409 already_invited.
+ */
+export function isReopenableInvite(
+  row: { status: string; created_at?: string | null },
+  nowMs: number,
+): boolean {
+  if (row.status === 'declined' || row.status === 'revoked') return true;
+  if (row.status === 'pending') {
+    const created = row.created_at ? Date.parse(row.created_at) : NaN;
+    return Number.isFinite(created) && nowMs - created > INVITE_TTL_MS;
+  }
+  return false;
+}
+
+/** Same shape as the 0011 trigger: base64url of 32 random bytes. */
+function newInviteToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 const InviteSchema = z.object({
   action: z.literal('invite'),
   tripId: z.string().uuid(),
@@ -306,13 +332,20 @@ async function handleInvite(
 
   // Detect duplicate-invite before INSERT for a cleaner error code than
   // a raw 23505 unique-violation.
+  //
+  // unique(trip_id, invitee_email) (0011) means one row per person per trip
+  // forever. A declined / revoked / expired-pending row is NOT a live invite:
+  // it is re-opened below (fresh token, created_at = now) instead of
+  // blocking the owner with already_invited for good. Only a live pending
+  // invite or an accepted member is a real duplicate.
   const { data: existing } = await admin
     .from('trip_collaborators')
-    .select('id, status')
+    .select('id, status, created_at')
     .eq('trip_id', body.tripId)
     .eq('invitee_email', normalizedEmail)
-    .maybeSingle<{ id: string; status: string }>();
-  if (existing) {
+    .maybeSingle<{ id: string; status: string; created_at: string }>();
+  const reopenId = existing && isReopenableInvite(existing, Date.now()) ? existing.id : null;
+  if (existing && !reopenId) {
     return errorResponse(
       'already_invited',
       `An invite for ${normalizedEmail} already exists (status: ${existing.status})`,
@@ -386,16 +419,31 @@ async function handleInvite(
     );
   }
 
-  const { data: inserted, error: insErr } = await admin
-    .from('trip_collaborators')
-    .insert({
-      trip_id: body.tripId,
-      invitee_email: normalizedEmail,
-      role,
-      status: 'pending',
-    })
-    .select('id, invite_token')
-    .single<{ id: string; invite_token: string }>();
+  const { data: inserted, error: insErr } = reopenId
+    ? await admin
+      .from('trip_collaborators')
+      .update({
+        status: 'pending',
+        role,
+        user_id: null,
+        invite_token: newInviteToken(),
+        created_at: new Date().toISOString(),
+        accepted_at: null,
+        revoked_at: null,
+      })
+      .eq('id', reopenId)
+      .select('id, invite_token')
+      .single<{ id: string; invite_token: string }>()
+    : await admin
+      .from('trip_collaborators')
+      .insert({
+        trip_id: body.tripId,
+        invitee_email: normalizedEmail,
+        role,
+        status: 'pending',
+      })
+      .select('id, invite_token')
+      .single<{ id: string; invite_token: string }>();
   if (insErr || !inserted) {
     log({
       requestId,

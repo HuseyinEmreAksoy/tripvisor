@@ -17,10 +17,18 @@ import AddPlace from '../../../../app/(app)/trip/[id]/add';
 
 const QUOTA_COPY = i18n.t('errors:places.quotaExceeded');
 
-let mockAutocomplete: { data: unknown[]; error: Error | null } = { data: [], error: null };
+let mockAutocomplete: { data: unknown[]; error: Error | null; fetchStatus?: string } = {
+  data: [],
+  error: null,
+};
 let mockDetailsError: Error | null = null;
+let mockDetailsFetchStatus = 'idle';
+let mockRole = { canEditTrip: true, isLoading: false };
+const mockRefetchAutocomplete = jest.fn();
+const mockCreate = jest.fn();
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: 'trip-1' }) }));
+jest.mock('@/hooks/useTripRole', () => ({ useTripRole: () => mockRole }));
 jest.mock('@/hooks/useSafeBack', () => ({ useSafeBack: () => jest.fn() }));
 jest.mock('@/hooks/useBreakpoint', () => ({ useBreakpoint: () => 'phone' }));
 jest.mock('@/api/offline', () => ({ useIsOnline: () => true }));
@@ -44,13 +52,20 @@ jest.mock('@/api', () => {
     PlacesError,
     isPlacesQuotaExceeded: (e: unknown) => e instanceof PlacesError && e.code === 'quota_exceeded',
     useAutocompleteSession: () => ({ sessionToken: 'tok', rotate: jest.fn() }),
-    useCreateTripPlace: () => ({ mutateAsync: jest.fn() }),
+    useCreateTripPlace: () => ({ mutateAsync: mockCreate }),
     useMoveToDay: () => ({ mutateAsync: jest.fn() }),
-    usePlacesAutocomplete: () => ({ ...mockAutocomplete, isFetching: false }),
+    usePlacesAutocomplete: () => ({
+      fetchStatus: 'idle',
+      ...mockAutocomplete,
+      isFetching: false,
+      refetch: mockRefetchAutocomplete,
+    }),
     usePlaceDetails: ({ placeId }: { placeId?: string }) => ({
       data: undefined,
       isLoading: false,
       error: placeId ? mockDetailsError : null,
+      fetchStatus: placeId ? mockDetailsFetchStatus : 'idle',
+      refetch: jest.fn(),
     }),
     useTrip: () => ({ data: { id: 'trip-1', start_date: '2026-10-01', end_date: '2026-10-03' } }),
     useTripPlaces: () => ({ data: [] }),
@@ -120,5 +135,69 @@ describe('AddPlace — Places quota', () => {
     fireEvent.press(back);
     expect(utils.getByRole('button', { name: 'Choose Belém Tower' })).toBeTruthy();
     expect(utils.queryByText(QUOTA_COPY)).toBeNull();
+  });
+});
+
+describe('AddPlace — search / details failure states', () => {
+  beforeEach(() => {
+    mockAutocomplete = { data: [], error: null };
+    mockDetailsError = null;
+    mockDetailsFetchStatus = 'idle';
+    mockRole = { canEditTrip: true, isLoading: false };
+    mockRefetchAutocomplete.mockClear();
+  });
+
+  it('an upstream autocomplete error shows a retry, not "No results"', async () => {
+    mockAutocomplete = { data: [], error: new MockPlacesError('upstream_timeout', 'Timeout', 504) };
+    const { getByText, queryByText, getByRole } = await renderAndSearch();
+    expect(getByText(i18n.t('errors:places.searchFailed'))).toBeTruthy();
+    expect(queryByText('No results')).toBeNull();
+    fireEvent.press(getByRole('button', { name: i18n.t('errors:places.retry') }));
+    expect(mockRefetchAutocomplete).toHaveBeenCalled();
+  });
+
+  it('a search paused offline shows the offline notice, not "No results"', async () => {
+    mockAutocomplete = { data: [], error: null, fetchStatus: 'paused' };
+    const { getByText, queryByText } = await renderAndSearch();
+    expect(getByText(i18n.t('errors:places.searchOffline'))).toBeTruthy();
+    expect(queryByText('No results')).toBeNull();
+  });
+
+  it('a details query paused offline offers a way back instead of a spinner', async () => {
+    mockAutocomplete = {
+      data: [{ placeId: 'g1', mainText: 'Belém Tower', secondaryText: 'Lisbon' }],
+      error: null,
+    };
+    mockDetailsFetchStatus = 'paused';
+    const utils = await renderAndSearch();
+    fireEvent.press(utils.getByRole('button', { name: 'Choose Belém Tower' }));
+    expect(utils.getByText(i18n.t('errors:places.detailsOffline'))).toBeTruthy();
+    fireEvent.press(utils.getByRole('button', { name: 'Pick a different place' }));
+    expect(utils.getByRole('button', { name: 'Choose Belém Tower' })).toBeTruthy();
+  });
+
+  it('typing a new query leaves the details view', async () => {
+    mockAutocomplete = {
+      data: [{ placeId: 'g1', mainText: 'Belém Tower', secondaryText: 'Lisbon' }],
+      error: null,
+    };
+    mockDetailsFetchStatus = 'paused';
+    const utils = await renderAndSearch();
+    fireEvent.press(utils.getByRole('button', { name: 'Choose Belém Tower' }));
+    fireEvent.changeText(utils.getByLabelText('Search places'), 'belem t');
+    expect(utils.queryByText(i18n.t('errors:places.detailsOffline'))).toBeNull();
+    expect(utils.getByRole('button', { name: 'Choose Belém Tower' })).toBeTruthy();
+  });
+
+  it('a viewer sees a read-only notice and no search box', async () => {
+    mockRole = { canEditTrip: false, isLoading: false };
+    const { getByText, queryByLabelText } = render(
+      <ThemeProvider>
+        <AddPlace />
+      </ThemeProvider>,
+    );
+    expect(getByText(i18n.t('errors:places.readOnly'))).toBeTruthy();
+    expect(queryByLabelText('Search places')).toBeNull();
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

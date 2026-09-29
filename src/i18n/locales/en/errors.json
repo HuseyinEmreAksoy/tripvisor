@@ -7,14 +7,21 @@
     "rateLimited": "Too many attempts. Wait a minute, then try again.",
     "invalidEmail": "That email address doesn’t look right.",
     "emailRequired": "Email is required.",
-    "emailInUse": "That email is already in use."
+    "emailInUse": "That email is already in use.",
+    "callbackFailed": "This sign-in link didn't work. It may have expired or already been used, so please request a new one."
   },
   "account": {
     "deleteFailed": "Couldn’t delete your account. Please try again.",
-    "exportFailed": "Couldn’t export your data. Please try again."
+    "exportFailed": "Couldn’t export your data. Please try again.",
+    "signOutFailed": "Couldn’t sign out. Check your connection and try again."
   },
   "places": {
     "quotaExceeded": "Daily place search limit reached. Try again tomorrow.",
-    "detailsFailed": "Couldn’t load this place. Check your connection and try again."
+    "detailsFailed": "Couldn’t load this place. Check your connection and try again.",
+    "searchFailed": "Couldn’t search places right now. Please try again.",
+    "searchOffline": "You’re offline. Place search will work again once you’re connected.",
+    "detailsOffline": "You’re offline, so this place can’t be loaded. Pick another or try again when you’re connected.",
+    "retry": "Try again",
+    "readOnly": "You can view this trip but not add places. Ask the owner for editor access."
   }
 }

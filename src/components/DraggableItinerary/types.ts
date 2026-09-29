@@ -21,4 +21,9 @@ export interface DraggableItineraryProps {
   onLongPress?: (id: string) => void;
   /** Optional label announced to screen readers describing the section (e.g. "Day 1"). */
   groupLabel?: string;
+  /**
+   * Read-only list (viewers): no drag pickup (native never calls drag(), web
+   * uses useSortable({ disabled: true })) and no long-press actions.
+   */
+  disabled?: boolean;
 }

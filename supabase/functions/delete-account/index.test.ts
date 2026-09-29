@@ -186,12 +186,15 @@ interface World {
   buckets: Record<string, Set<string>>;
 }
 
+const collabRowId = (i: number) => `44444444-4444-4444-8888-${String(i + 1).padStart(12, '0')}`;
+
 function router(
   opts: {
     storageFails?: boolean;
     photoTrips?: string[];
     collabTrips?: string[];
     failTable?: string;
+    failCollabDelete?: boolean;
   } = {},
 ): { route: (c: Call) => Response; world: World } {
   const world: World = {
@@ -217,7 +220,7 @@ function router(
   const tableRows: Record<string, unknown[]> = {
     trips: [{ id: TRIP_A }],
     trip_photos: (opts.photoTrips ?? [TRIP_A, TRIP_C, TRIP_C]).map((trip_id) => ({ trip_id })),
-    trip_collaborators: (opts.collabTrips ?? [TRIP_C, TRIP_R]).map((trip_id) => ({ trip_id })),
+    trip_collaborators: (opts.collabTrips ?? [TRIP_C, TRIP_R]).map((trip_id, i) => ({ id: collabRowId(i), trip_id })),
   };
   const route = (c: Call): Response => {
     if (c.url.includes('/auth/v1/user')) return json({ id: USER_ID, email: 'u@test.local' });
@@ -230,6 +233,10 @@ function router(
         return json(tableRows[table] ?? []);
       }
       if (table === 'trips' && c.method === 'DELETE') return new Response(null, { status: 204 });
+      if (table === 'trip_collaborators' && c.method === 'DELETE') {
+        if (opts.failCollabDelete) return json({ message: 'db down' }, 500);
+        return new Response(null, { status: 204 });
+      }
     }
     const list = /\/storage\/v1\/object\/list\/([a-z-]+)/.exec(c.url);
     if (list) {
@@ -338,6 +345,53 @@ D.test('handler: Storage failure is best-effort — response stays { ok: true }'
     assertEquals(await res.json(), { ok: true });
   } finally {
     restore();
+  }
+});
+
+D.test('handler: deletes the user\'s trip_collaborators rows (by id) AFTER the auth delete', async () => {
+  const { route } = router();
+  const { calls, restore } = stubFetch(route);
+  try {
+    const res = await handler(postReq());
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), { ok: true });
+    const read = calls.find((c) => c.url.includes('/rest/v1/trip_collaborators') && c.method === 'GET')!;
+    assert(decodeURIComponent(read.url).includes('select=id,trip_id'), `ids must be read up front: ${read.url}`);
+    const authDelIdx = calls.findIndex((c) => c.url.includes('/auth/v1/admin/users/'));
+    const dels = calls.filter((c) => c.url.includes('/rest/v1/trip_collaborators') && c.method === 'DELETE');
+    assertEquals(dels.length, 1);
+    assert(calls.indexOf(dels[0]!) > authDelIdx, 'membership rows go after the auth delete (user keeps them if it fails)');
+    const url = decodeURIComponent(dels[0]!.url);
+    assert(url.includes(`id=in.(${collabRowId(0)},${collabRowId(1)})`), `delete must be scoped to the read ids: ${url}`);
+    assert(!url.includes('user_id'), 'never a broad user_id filter (it may already be NULL)');
+  } finally {
+    restore();
+  }
+});
+
+D.test('handler: no memberships -> no trip_collaborators delete; a failing delete stays best-effort', async () => {
+  {
+    const { route } = router({ collabTrips: [] });
+    const { calls, restore } = stubFetch(route);
+    try {
+      const res = await handler(postReq());
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+      assert(!calls.some((c) => c.url.includes('/rest/v1/trip_collaborators') && c.method === 'DELETE'));
+    } finally {
+      restore();
+    }
+  }
+  {
+    const { route } = router({ failCollabDelete: true });
+    const { restore } = stubFetch(route);
+    try {
+      const res = await handler(postReq());
+      assertEquals(res.status, 200);
+      assertEquals(await res.json(), { ok: true });
+    } finally {
+      restore();
+    }
   }
 });
 

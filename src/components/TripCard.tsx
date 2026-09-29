@@ -11,7 +11,11 @@
  *
  * Contract notes (Jest queries by role/label — keep stable):
  *   - role "link", accessible name = trip:card.open (`Open trip ${title}`)
- *   - overflow trigger: role "button", label = trip:card.actions
+ *   - overflow trigger: role "button", label = trip:card.actions. It is a
+ *     SIBLING of the link (absolutely positioned over the body), never a
+ *     child: iOS collapses an accessible Pressable into one VoiceOver element
+ *     and web would nest a button inside role=link. The link also exposes an
+ *     "actions" accessibility action that opens the same sheet.
  */
 import { useRef, useState, type ComponentProps } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
@@ -99,6 +103,10 @@ export function TripCard({
         <Pressable
           accessibilityRole="link"
           accessibilityLabel={tx('card.open', { title: trip.title })}
+          accessibilityActions={[{ name: 'actions', label: tx('card.actions') }]}
+          onAccessibilityAction={(e) => {
+            if (e.nativeEvent.actionName === 'actions') setSheetOpen(true);
+          }}
           onPress={onPress}
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
@@ -140,21 +148,8 @@ export function TripCard({
                 </View>
               </View>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={tx('card.actions')}
-                onPress={handleOverflowPress}
-                hitSlop={6}
-                style={({ pressed }) => [
-                  styles.overflowTrigger,
-                  {
-                    backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
-                    borderRadius: t.radius.pill,
-                  },
-                ]}
-              >
-                <Icon name="ellipsis-vertical" size={20} color={t.colors.textMuted} />
-              </Pressable>
+              {/* Reserves room for the overflow button rendered above. */}
+              <View style={styles.overflowSpacer} />
             </View>
 
             <View style={styles.metaRow}>
@@ -178,6 +173,24 @@ export function TripCard({
               {isArchived ? <StatusPill tone="info" label={tx('card.archived')} /> : null}
             </View>
           </View>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={tx('card.actions')}
+          onPress={handleOverflowPress}
+          hitSlop={6}
+          style={({ pressed }) => [
+            styles.overflowTrigger,
+            {
+              top: COVER_HEIGHT + t.layout.cardPadding - 8,
+              right: t.layout.cardPadding - 8,
+              backgroundColor: pressed ? t.colors.bgMuted : 'transparent',
+              borderRadius: t.radius.pill,
+            },
+          ]}
+        >
+          <Icon name="ellipsis-vertical" size={20} color={t.colors.textMuted} />
         </Pressable>
       </Animated.View>
 
@@ -212,13 +225,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   overflowTrigger: {
+    position: 'absolute',
     width: 44,
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: -8,
-    marginTop: -8,
   },
+  // 44px trigger minus the 8px it overhangs the body padding.
+  overflowSpacer: { width: 36, height: 28 },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',

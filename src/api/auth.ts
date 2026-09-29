@@ -1,46 +1,201 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Session } from '@supabase/supabase-js';
-import { useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { isAuthRetryableFetchError, type AuthChangeEvent, type Session } from '@supabase/supabase-js';
+import { useEffect, useSyncExternalStore } from 'react';
+import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import { supabase } from './supabase';
+import { storageAdapter } from './storage';
 import { initTier1Sync, teardownTier1Sync } from '@/sync/hydrate';
 import { startPhotoUploads, stopPhotoUploads } from './memories.upload-queue';
 
 const SESSION_KEY = ['auth', 'session'] as const;
 
+// ------------------------------------------------------------
+// Single auth lifecycle seam (module level, registered once)
+// ------------------------------------------------------------
+// Every useSession() consumer used to add its own onAuthStateChange
+// subscription; auth-js emits INITIAL_SESSION to each new subscriber, so every
+// screen mount re-ran a full Tier-1 resync + upload pump. Now ONE listener
+// feeds every mounted QueryClient and drives the Tier-1 / photo-upload
+// lifecycle, deduped by user id (TOKEN_REFRESHED for the same user is a no-op).
+
+const queryClients = new Map<QueryClient, number>();
+let listenerRegistered = false;
+let lifecycleUserId: string | null = null;
+
+function writeSession(session: Session | null) {
+  queryClients.forEach((_n, qc) => qc.setQueryData(SESSION_KEY, session));
+}
+
+function startLifecycle(userId: string) {
+  if (lifecycleUserId === userId) return;
+  lifecycleUserId = userId;
+  // v2 S2.8: the Tier-1 offline engine follows the auth lifecycle. Inert when
+  // the sync flag is off and never blocks the auth callback.
+  void initTier1Sync({ userId }).catch(() => {
+    // Engine boot failures are telemetered inside src/sync.
+  });
+  // M5 Y2.1: resume this user's durable photo upload queue (never throws).
+  startPhotoUploads(userId);
+}
+
+function stopLifecycle() {
+  lifecycleUserId = null;
+  teardownTier1Sync();
+  stopPhotoUploads();
+}
+
+/** Exported for tests: the single auth-state handler. */
+export function handleAuthStateChange(event: AuthChangeEvent, session: Session | null) {
+  if (session?.user?.id) {
+    writeSession(session);
+    startLifecycle(session.user.id);
+    return;
+  }
+  // A null session is only authoritative on an explicit SIGNED_OUT. auth-js
+  // emits INITIAL_SESSION(null) when a refresh fails with a retryable
+  // (offline) error while still keeping the stored session; treating that as
+  // "signed out" bounced offline travellers to /login. The session query's
+  // own queryFn resolves the initial state instead.
+  if (event !== 'SIGNED_OUT') return;
+  writeSession(null);
+  stopLifecycle();
+}
+
+// ------------------------------------------------------------
+// Native deep-link auth callback (PKCE ?code= exchange)
+// ------------------------------------------------------------
+// auth-js only reads the URL itself when window AND document exist (web). On
+// iOS/Android the tripvisor://?code=... return from the magic link / Google
+// OAuth must be exchanged here, or sign-in never completes.
+
+let callbackError: string | null = null;
+const callbackErrorListeners = new Set<() => void>();
+const handledCodes = new Set<string>();
+
+function setCallbackError(next: string | null) {
+  callbackError = next;
+  callbackErrorListeners.forEach((l) => l());
+}
+
+function readParam(url: string, name: string): string | null {
+  const m = new RegExp(`[?#&]${name}=([^&#]*)`).exec(url);
+  if (!m || m[1] === undefined) return null;
+  try {
+    return decodeURIComponent(m[1].replace(/\+/g, ' '));
+  } catch {
+    return m[1];
+  }
+}
+
+/**
+ * Exchange a PKCE auth code carried by an incoming deep link. Returns true when
+ * the URL was an auth callback (success or error). Exported for tests.
+ */
+export async function handleAuthCallbackUrl(url: string | null | undefined): Promise<boolean> {
+  if (!url) return false;
+  const errorDescription = readParam(url, 'error_description') ?? readParam(url, 'error');
+  if (errorDescription) {
+    setCallbackError(errorDescription);
+    return true;
+  }
+  const code = readParam(url, 'code');
+  if (!code) return false;
+  if (handledCodes.has(code)) return true;
+  handledCodes.add(code);
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  setCallbackError(error ? error.message || 'exchange_failed' : null);
+  return true;
+}
+
+function subscribeCallbackError(l: () => void) {
+  callbackErrorListeners.add(l);
+  return () => {
+    callbackErrorListeners.delete(l);
+  };
+}
+
+/** Last deep-link auth callback failure (null when none); login shows it. */
+export function useAuthCallbackError(): { error: string | null; clear: () => void } {
+  const error = useSyncExternalStore(subscribeCallbackError, () => callbackError, () => callbackError);
+  return { error, clear: () => setCallbackError(null) };
+}
+
+function ensureAuthListeners() {
+  if (listenerRegistered) return;
+  listenerRegistered = true;
+  supabase.auth.onAuthStateChange((event, session) => handleAuthStateChange(event, session));
+  if (Platform.OS !== 'web') {
+    void Linking.getInitialURL()
+      .then((url) => handleAuthCallbackUrl(url))
+      .catch(() => {});
+    Linking.addEventListener('url', ({ url }) => {
+      void handleAuthCallbackUrl(url).catch(() => {});
+    });
+  }
+}
+
+/** Test-only: reset module-level auth state. */
+export function __resetAuthModuleForTests() {
+  queryClients.clear();
+  listenerRegistered = false;
+  lifecycleUserId = null;
+  handledCodes.clear();
+  callbackError = null;
+  callbackErrorListeners.clear();
+}
+
+/**
+ * The persisted session, read straight from storage. Used when auth-js can't
+ * refresh an expired access token because the device is offline: the refresh
+ * token is still valid, so the user is NOT signed out and must reach the
+ * Tier-1 offline plan. Auto-refresh renews the token once back online.
+ */
+async function readPersistedSession(): Promise<Session | null> {
+  try {
+    const key = (supabase.auth as unknown as { storageKey?: string }).storageKey;
+    if (!key) return null;
+    const raw = await storageAdapter.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Session> | null;
+    if (parsed?.access_token && parsed.refresh_token && parsed.user?.id) return parsed as Session;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function useSession() {
   const qc = useQueryClient();
 
   useEffect(() => {
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      qc.setQueryData(SESSION_KEY, session ?? null);
-      // v2 S2.8: the Tier-1 offline engine follows the auth lifecycle from
-      // this single seam (covers magic link, OAuth, session restore, and
-      // sign-out alike). Inert when the sync flag is off — initTier1Sync
-      // resolves to a no-op — and never blocks the auth callback.
-      if (session?.user?.id) {
-        void initTier1Sync({ userId: session.user.id }).catch(() => {
-          // Engine boot failures are telemetered inside src/sync — auth
-          // must never fail because offline sync couldn't start.
-        });
-        // M5 Y2.1: resume this user's durable photo upload queue (never throws).
-        startPhotoUploads(session.user.id);
-      } else {
-        teardownTier1Sync();
-        stopPhotoUploads();
-      }
-    });
-    return () => data.subscription.unsubscribe();
+    ensureAuthListeners();
+    queryClients.set(qc, (queryClients.get(qc) ?? 0) + 1);
+    return () => {
+      const n = (queryClients.get(qc) ?? 1) - 1;
+      if (n <= 0) queryClients.delete(qc);
+      else queryClients.set(qc, n);
+    };
   }, [qc]);
 
   return useQuery<Session | null>({
     queryKey: SESSION_KEY,
     queryFn: async () => {
       const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      return data.session ?? null;
+      if (error) {
+        if (!isAuthRetryableFetchError(error)) throw error;
+        const persisted = await readPersistedSession();
+        if (persisted?.user?.id) startLifecycle(persisted.user.id);
+        return persisted;
+      }
+      const session = data.session ?? null;
+      if (session?.user?.id) startLifecycle(session.user.id);
+      return session;
     },
     staleTime: Infinity,
+    // Web pauses queries while navigator is offline; a paused session query
+    // has no data and read as "signed out". The queryFn is offline-safe.
+    networkMode: 'always',
   });
 }
 
@@ -64,8 +219,15 @@ export function useSignOut() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
+      // Global sign-out hits /logout first; offline, auth-js returns early and
+      // keeps the local session, so "Sign out" silently did nothing (on a
+      // shared device the next person kept access). Fall back to a local
+      // sign-out, which always clears the session and fires SIGNED_OUT; other
+      // devices stay signed in until their refresh token expires.
       const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      if (!error) return;
+      const local = await supabase.auth.signOut({ scope: 'local' });
+      if (local.error) throw local.error;
     },
     onSuccess: () => {
       qc.setQueryData(SESSION_KEY, null);

@@ -51,6 +51,7 @@ import {
   Stepper,
   TransportModeRadio,
   type DraftCommitPayload,
+  type DraftReviewSnapshot,
 } from '@/components/ai-plan';
 import { useDeleteTrip, useGenerateItinerary, type AiUsage } from '@/api';
 import { useAiDraftCommit } from '@/hooks/useAiDraftCommit';
@@ -120,6 +121,13 @@ export default function PlanMyTrip() {
   // ONE idempotency key per planning intent (see header comment).
   const intentRef = useRef<{ key: string; signature: string } | null>(null);
   const commitInFlightRef = useRef(false);
+  // Latest DraftReview edit state (per runId). DraftReview unmounts during
+  // 'committing' and on "Edit request"; a failed commit or a replayed run
+  // re-seeds from this so removals, minutes, days and the title survive.
+  const reviewSnapshotRef = useRef<DraftReviewSnapshot | null>(null);
+  const handleSnapshotChange = useCallback((snap: DraftReviewSnapshot) => {
+    reviewSnapshotRef.current = snap;
+  }, []);
   const [successInfo, setSuccessInfo] = useState<{
     tripId: string;
     title: string;
@@ -181,6 +189,7 @@ export default function PlanMyTrip() {
   // ── Stage 2 → 1: start over = fresh form + NEW idempotency key ───────────
   const handleStartOver = useCallback(() => {
     intentRef.current = null;
+    reviewSnapshotRef.current = null;
     generate.reset();
     resetForm(DEFAULT_VALUES);
     setStage('form');
@@ -414,6 +423,9 @@ export default function PlanMyTrip() {
           {showReview && result ? (
             <DraftReview
               key={result.runId}
+              runId={result.runId}
+              initialSnapshot={reviewSnapshotRef.current}
+              onSnapshotChange={handleSnapshotChange}
               draft={result.draft}
               status={result.status}
               defaultTitle={deriveDefaultTitle(getValues('destination'), result.draft.dayCount)}

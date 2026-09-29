@@ -10,6 +10,8 @@
  *   dailySpend              — per-day ACTUAL spend for the spend strip.
  */
 import type { TripExpense, TripExpenseCategory } from '@/api/types';
+import { parseAmount as parseMoneyAmount } from '@/lib/money/parse';
+import type { RowMoney } from '@/lib/money/types';
 
 export interface ExpenseCategoryMeta {
   key: TripExpenseCategory;
@@ -57,12 +59,21 @@ export function applyAmountKey(text: string, key: AmountKey): string {
   return current + key;
 }
 
-/** Parse the amount text; null when empty/invalid/negative. */
-export function parseAmount(text: string): number | null {
-  const trimmed = text.trim().replace(',', '.');
-  if (!trimmed) return null;
-  const n = Number(trimmed);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+/**
+ * Parse the amount text; null when empty/invalid/negative. Delegates to the
+ * locale-aware money parser so a grouping separator is never read as a decimal
+ * point ('1,250' in en → 1250, '10.000' in tr → 10000). A lone separator with
+ * 1–2 trailing digits ('9,5', '12.5' from the keypad) still parses as a decimal.
+ */
+export function parseAmount(
+  text: string,
+  options: { language?: string; currency?: string | null } = {},
+): number | null {
+  const res = parseMoneyAmount(text, {
+    language: options.language ?? 'en',
+    ...(options.currency ? { currency: options.currency } : {}),
+  });
+  return res.ok ? res.value : null;
 }
 
 // ── Trip days ───────────────────────────────────────────────────────────────
@@ -120,6 +131,32 @@ export interface DailySpend {
   max: number;
   /** Mean over days that have any spend (0 when none). */
   averagePerActiveDay: number;
+  /** Actual rows per day whose rate is still pending (NOT in `days`). */
+  pendingDays: number[];
+  /** Pending actual rows not pinned to a day. */
+  pendingUnassigned: number;
+}
+
+export interface DailySpendMoney {
+  /** `useTripMoneySummary().data.rows` — per-row home-currency outcome. */
+  rows?: Readonly<Record<string, RowMoney>>;
+  /** Trip home currency; used only when `rows` is not available yet. */
+  home?: string | null;
+}
+
+/**
+ * Home-currency value of one actual row, or null when it can't be counted
+ * (rate pending / invalid / foreign currency with no summary yet). Pending
+ * rows are NEVER counted 1:1 (0038 CORRECTION).
+ */
+function homeAmount(e: TripExpense, money: DailySpendMoney): number | null {
+  if (money.rows) {
+    const r = money.rows[e.id];
+    if (r) return r.status === 'converted' ? r.home.value : null;
+  }
+  const code = e.currency ?? null;
+  if (code === null || !money.home || code.toUpperCase() === money.home.toUpperCase()) return e.amount;
+  return null;
 }
 
 /**
@@ -127,17 +164,30 @@ export interface DailySpend {
  * excluded. `dayCount` is a floor: an expense pinned beyond it widens the
  * strip rather than being dropped.
  */
-export function dailySpend(expenses: ReadonlyArray<TripExpense>, dayCount: number): DailySpend {
+export function dailySpend(
+  expenses: ReadonlyArray<TripExpense>,
+  dayCount: number,
+  money: DailySpendMoney = {},
+): DailySpend {
   const actual = expenses.filter((e) => e.kind === 'actual' && !e.deleted);
   const maxPinned = actual.reduce(
     (m, e) => (e.day_index !== null && e.day_index > m ? e.day_index : m),
     -1,
   );
   const days = new Array<number>(Math.max(0, dayCount, maxPinned + 1)).fill(0);
+  const pendingDays = new Array<number>(days.length).fill(0);
   let unassigned = 0;
+  let pendingUnassigned = 0;
   for (const e of actual) {
-    if (e.day_index === null || e.day_index < 0) unassigned += e.amount;
-    else days[e.day_index] = (days[e.day_index] ?? 0) + e.amount;
+    const v = homeAmount(e, money);
+    const trip = e.day_index === null || e.day_index < 0;
+    if (v === null) {
+      if (trip) pendingUnassigned += 1;
+      else pendingDays[e.day_index as number] = (pendingDays[e.day_index as number] ?? 0) + 1;
+      continue;
+    }
+    if (trip) unassigned += v;
+    else days[e.day_index as number] = (days[e.day_index as number] ?? 0) + v;
   }
   const active = days.filter((v) => v > 0);
   return {
@@ -145,5 +195,7 @@ export function dailySpend(expenses: ReadonlyArray<TripExpense>, dayCount: numbe
     unassigned,
     max: days.reduce((m, v) => Math.max(m, v), 0),
     averagePerActiveDay: active.length > 0 ? active.reduce((s, v) => s + v, 0) / active.length : 0,
+    pendingDays,
+    pendingUnassigned,
   };
 }

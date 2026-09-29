@@ -1,1 +1,29 @@
-{}
+{
+  "title": "Insights",
+  "empty": {
+    "title": "Take your first trip to see insights here.",
+    "cta": "New trip",
+    "ctaA11y": "Create a new trip"
+  },
+  "noData": "No data yet. Add expenses or rate places to see insights.",
+  "spendingPerTrip": "Spending per trip",
+  "spendingByCategory": "Spending by category",
+  "spendingOverTime": "Spending over time",
+  "totalSpent": "Total: {{amount}}",
+  "pendingNote_one": "{{count}} expense isn't included yet because its exchange rate is pending: {{amounts}}",
+  "pendingNote_other": "{{count}} expenses aren't included yet because their exchange rates are pending: {{amounts}}",
+  "categories": {
+    "accommodation": "Accommodation",
+    "food": "Food",
+    "transport": "Transport",
+    "shopping": "Shopping",
+    "activities": "Activities",
+    "other": "Other"
+  },
+  "reactionsPerTrip": "Liked vs didn't like per trip",
+  "mostLiked": "Most liked places",
+  "didntLike": "Places you didn't like",
+  "unknownPlace": "Unknown place",
+  "unknownTrip": "Unknown trip",
+  "refreshNightly": "Totals refresh nightly."
+}

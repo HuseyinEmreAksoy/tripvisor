@@ -11,7 +11,9 @@ Code: `index.ts` (entry, `Deno.serve`) → `handler.ts` (contract, security, ops
 | `create`          | required, **owner** | `{ tripId, settings? }`                                | `{ token, createdAt, settings }` (v2 clients read `token` only)          |
 | `current`         | required, **owner** | `{ tripId }`                                           | `{ share: { token, createdAt, settings } \| null, meta }`                |
 | `update_settings` | required, **owner** | `{ tripId, token?, settings }`                         | `{ share: { token, createdAt, settings }, updated, meta }`               |
-| `read`            | none                | `{ token }`                                            | `{ trip, places, legs, sections, expenses?, memories?, meta: { contractVersion: 3 } }` |
+| `read`            | none, rate limited  | `{ token }`                                            | `{ trip, places, legs, sections, expenses?, memories?, meta: { contractVersion: 4 } }` |
+| `photo_url`       | none, rate limited  | `{ token, photoId }`                                   | `{ url, expiresAt, meta }` — 1 h signed URL of one public photo's full image |
+| `meta`            | none, rate limited  | `{ token }`                                            | `{ trip: { title, start_date, end_date }, placeCount, meta }` (link previews) |
 | `revoke`          | required, **owner** | `{ tripId, token? }`                                   | `{ revoked: number }`                                                    |
 
 `settings` = `{ showItinerary?, showExpenses?, showMemories? }` (booleans; unknown keys are a 400). Defaults for a new link: itinerary **on**, expenses **off**, memories **off** (columns from migration 0037).
@@ -30,12 +32,13 @@ Code: `index.ts` (entry, `Deno.serve`) → `handler.ts` (contract, security, ops
 - The anonymous `read` returns only the allow-listed fields in [`public-fields.ts`](./public-fields.ts); the same lists build the PostgREST `select` and re-shape the rows, so the two cannot drift:
   - `trip`: `title, start_date, end_date, daily_hours_budget, transport_mode, timezone` — **no `id`, no `user_id`**.
   - `places[]`: `id, google_place_id, user_title, category, lat, lng, visit_duration_minutes, day_index, order_in_day` — **no `notes`**. Empty when the owner hid the itinerary.
-  - `legs[]`: `id, from_place_id, to_place_id, day_index, transport_mode, duration_seconds, distance_meters, polyline, computed_at` (30-day TTL, below). Empty when the itinerary is hidden.
+  - `legs[]`: `id, from_place_id, to_place_id, day_index, transport_mode, duration_seconds, distance_meters, polyline, computed_at, source` (30-day TTL, below). Only legs whose **both** endpoints are live places in `places[]` (a soft-deleted stop keeps its `trip_legs` rows until the next optimize, so a stale leg would draw a route to it). Empty when the itinerary is hidden.
   - `sections`: `{ itinerary, expenses, memories }` — the link's toggles.
   - `expenses` (only when `show_expenses`): a **summary** — `homeCurrency`, `count`, `totals {actual, estimated}` and `byCategory[]` in the home currency, `byCurrency[]` of the original amounts, `pending {count, actualByCurrency, estimatedByCurrency}`. Conversion follows the analytics MV (0038 §1): same currency ×1 → frozen `fx_rate` if `fx_home_currency` is the current home → `fx_rates` on `fx_date` → otherwise **pending** (never converted with a wrong rate, never counted 1:1). No line items, labels, days or ids.
-  - `memories` (only when `show_memories`): `journal[] {id, dayIndex, body, createdAt}`, `reviews[] {id, placeId, placeName, rating, body, createdAt}`, `photos[] {id, dayIndex, placeId, caption, takenAt, width, height, thumbUrl, url}`, `photoUrlExpiresAt`, `truncated`. **Only** rows with `visibility = 'trip' AND deleted = false` (+ `status = 'ready'` for photos): the query filters them and `isPublicMemoryRow` re-checks every row, so `only_me` items are never public. No author ids or names. A review whose place was removed shows the 0038 `place_name_snapshot`. `placeId` only points into a visible itinerary. Caps: 200 journal entries, 300 reviews, 100 photos per read.
+  - `memories` (only when `show_memories`): `journal[] {id, dayIndex, body, createdAt}`, `reviews[] {id, placeId, placeName, rating, body, createdAt}`, `photos[] {id, dayIndex, placeId, caption, takenAt, width, height, thumbUrl, url}`, `photoUrlExpiresAt`, `truncated`. **Only** rows with `visibility = 'trip' AND deleted = false` (+ `status = 'ready'` for photos): the query filters them and `isPublicMemoryRow` re-checks every row, so `only_me` items are never public. **Owner-authored only**: the query filters `author_id = trips.user_id` and the predicate re-checks it, so a collaborator's `trip`-visibility items (shared with members) never reach the public page and their photos are never signed. `author_id` is fetched for that re-check only; no author ids or names are emitted. A review whose place was removed shows the 0038 `place_name_snapshot`. `placeId` only points into a visible itinerary. Caps: 200 journal entries, 300 reviews, 100 photos per read; a cap keeps the **newest** items (`truncated: true`), shown oldest-first.
   - Photos are served through **1 h signed URLs** of the private `trip-memories` bucket, minted here with the service role (anonymous viewers have no Storage identity; the bucket stays private). Only paths of rows that passed the public predicate are signed. A signed URL necessarily contains the object path `<trip_id>/<author_id>/<photo_id>.jpg`. On the local stack the URLs are signed on the docker-internal `http://kong:8000`; `src/api/share.ts` re-bases them onto the app's Supabase URL.
   - Google-ToS-restricted fields (reviews, photos, rating, website, phone, opening_hours) are not stored server-side at all.
+- **Rate limits** (anonymous ops, [`rate-limit.ts`](./rate-limit.ts), migration 0040 `consume_share_read`, service role only): per link per UTC day (`read` 300, `photo_url` 1000, `meta` 200) and per client IP per UTC hour (`read` 60, `photo_url` 300; `meta` none: it is called server-side by the Pages preview function). The link is counted by its `trip_shares.id` after the token lookup (an unknown token creates no counter row); the IP is the first `x-forwarded-for` hop, IPv6 cut to /64, stored only as an HMAC (secret `SHARE_RATE_SECRET`, else the service-role key). Over a cap → `429 rate_limited` + `Retry-After`; counter down → `503` (fails closed). A spoofed header can only move a caller between IP buckets; the per-link cap still holds.
 - DB error text is logged, never echoed to anonymous callers. A Storage signing failure hides the photos and keeps the rest of the page.
 
 ## Contract versions (`read`)
@@ -45,6 +48,7 @@ Code: `index.ts` (entry, `Deno.serve`) → `handler.ts` (contract, security, ops
 | 1 (no `meta`) | original payload incl. `trip.id` and `places[].notes` |
 | 2 | audit #12: `trip.id` and `places[].notes` removed; `meta.contractVersion` added |
 | 3 | M5 Y2.5, additive: `sections`, optional `expenses` and `memories`; `places`/`legs` stay arrays (empty when the itinerary is hidden) |
+| 4 | Wave-2 sweep, shape-compatible: `read` signs **thumbnails only** (`photos[].url` === `thumbUrl`; full size via `photo_url`); new ops `photo_url` and `meta`; `legs` are day legs only (`day_index >= 0`); anonymous ops are rate limited |
 
 v2 removed fields without a parallel version because it was a data-exposure fix. v3 only adds keys, so v2 consumers keep working (`functions/share/[token].ts` reads title/dates/places count; `SharedTimeline` reads places/legs).
 
@@ -58,6 +62,9 @@ v2 removed fields without a parallel version because it was a data-exposure fix.
 | `not_found`         | 404    | Token missing/revoked; trip not visible to caller          |
 | `no_active_link`    | 404    | `update_settings` on a trip without an active link         |
 | `method_not_allowed`| 405    | Non-POST to a non-ping route                               |
+| `rate_limited`      | 429    | Anonymous op over a cap (`Retry-After`, `retryAfterSeconds`, `scope` token or ip) |
+| `photo_unavailable` | 502    | `photo_url`: Storage could not sign the image             |
+| `rate_limit_unavailable` | 503 | The 0040 counter is down (fails closed, `Retry-After: 60`) |
 | `db_error`          | 500    | Supabase query failure                                     |
 | `internal_error`    | 500    | Unexpected exception                                       |
 

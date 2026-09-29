@@ -5,8 +5,11 @@
  * unfurlers (WhatsApp, Facebook, Slack's bot, X, LinkedIn) only ever saw the
  * site-wide baseline tags. This function serves the exported shell and uses
  * HTMLRewriter to swap in per-trip <title>, description, og:* and twitter:*
- * values, read from the public `share-trip` Edge Function (`op: "read"`, the
- * same anonymous call `useSharedTrip` makes in src/api/share.ts).
+ * values, read from the public `share-trip` Edge Function with the light
+ * `op: "meta"` (share-trip contract v4: title, dates and place count only; no
+ * memories, no photo signing, its own per-link rate limit). The full
+ * `op: "read"` is left to the page itself (`useSharedTrip`), so an unfurl
+ * never spends the link's read budget.
  *
  * FAIL OPEN: any error, timeout, missing env or unknown/revoked token returns
  * the unmodified shell, so the page itself always works.
@@ -78,12 +81,18 @@ async function fetchShell(context: PagesContext): Promise<Response | null> {
   return null;
 }
 
-interface SharedTripPayload {
+/** share-trip `op: "meta"` answer (contract v4). */
+interface SharedTripMeta {
   trip?: OgTrip | null;
-  places?: unknown[] | null;
+  placeCount?: number | null;
 }
 
-async function fetchSharedTrip(env: Env, token: string): Promise<SharedTripPayload | null> {
+/**
+ * Title / dates / place count of a live link, or null (unknown or revoked
+ * token, rate limited, server too old for `meta`, timeout, missing env): the
+ * caller then serves the untouched shell.
+ */
+async function fetchShareMeta(env: Env, token: string): Promise<SharedTripMeta | null> {
   const supabaseUrl = env.SUPABASE_URL?.trim().replace(/\/+$/, '');
   const anonKey = env.SUPABASE_ANON_KEY?.trim();
   if (!supabaseUrl || !anonKey) return null;
@@ -98,11 +107,11 @@ async function fetchSharedTrip(env: Env, token: string): Promise<SharedTripPaylo
         apikey: anonKey,
         authorization: `Bearer ${anonKey}`,
       },
-      body: JSON.stringify({ op: 'read', token }),
+      body: JSON.stringify({ op: 'meta', token }),
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    return (await res.json()) as SharedTripPayload;
+    return (await res.json()) as SharedTripMeta;
   } finally {
     clearTimeout(timer);
   }
@@ -187,14 +196,18 @@ export async function onRequestGet(context: PagesContext): Promise<Response> {
     const [shellRes, shared] = await Promise.all([
       fetchShell(context),
       token && TOKEN_RE.test(token)
-        ? fetchSharedTrip(context.env, token).catch(() => null)
+        ? fetchShareMeta(context.env, token).catch(() => null)
         : Promise.resolve(null),
     ]);
     shell = shellRes;
     if (!shell) return withHeaders(await context.next());
     if (!shared?.trip) return withHeaders(shell);
 
-    const meta = buildShareOgMeta(shared.trip, Array.isArray(shared.places) ? shared.places.length : 0);
+    const placeCount =
+      typeof shared.placeCount === 'number' && Number.isInteger(shared.placeCount) && shared.placeCount > 0
+        ? shared.placeCount
+        : 0;
+    const meta = buildShareOgMeta(shared.trip, placeCount);
     const pageUrl = new URL(context.request.url);
     const canonical = `${pageUrl.origin}${pageUrl.pathname}`;
 

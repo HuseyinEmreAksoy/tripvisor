@@ -169,8 +169,12 @@ select tv_test.expect_count('A11 non-member still sees nothing (shared means tri
 select tv_test.act_as('036a0000-0000-4000-8000-00000000000c') \g /dev/null
 select tv_test.expect_count('A12 revoked member sees only their OWN old entry (author always), not the owner''s shared one',
   $$select 1 from public.trip_journal_entries where trip_id = '036b0000-0000-4000-8000-0000000000a1'$$, 1) \g /dev/null
-select tv_test.expect_rows('A13 revoked member can no longer modify their old entry (0031 posture)',
-  $$update public.trip_journal_entries set body = 'edited after revoke' where id = '036e0000-0000-4000-8000-0000000000c1'$$, 0) \g /dev/null
+-- 0040 §4: a revoked author may still RETRACT (tombstone / only_me) their own
+-- rows, so the row is now reachable by the UPDATE and an edit is refused
+-- with not_member instead of matching 0 rows (sweep_fixes_0040.sql R).
+select tv_test.expect_error('A13 revoked member can no longer modify their old entry (0031 posture; 0040: not_member)',
+  $$update public.trip_journal_entries set body = 'edited after revoke' where id = '036e0000-0000-4000-8000-0000000000c1'$$,
+  '42501', 'not_member') \g /dev/null
 
 select tv_test.act_as('036a0000-0000-4000-8000-00000000000a') \g /dev/null
 select tv_test.expect_rows('A14 author tombstones the shared entry',
@@ -554,6 +558,17 @@ insert into public.trip_photos (id, trip_id) values ('036f0000-0000-4000-8000-00
 select tv_test.expect_error('E4 per-trip cap (4) -> quota_exceeded (counts other members'' private photos too)',
   $$insert into public.trip_photos (trip_id) values ('036b0000-0000-4000-8000-0000000000a1')$$,
   'P0001', 'quota_exceeded') \g /dev/null
+-- 0040 §2: un-deleting a READY photo whose files are gone keeps it deleted
+-- (the sweep safety net, sweep_fixes_0040.sql W4/W5). PH-F1's objects were
+-- removed in D31/D33, so give them back for the quota checks below.
+reset role;
+insert into storage.objects (bucket_id, name, owner, metadata) values
+  ('trip-memories', '036b0000-0000-4000-8000-0000000000a1/036a0000-0000-4000-8000-00000000000f/036f0000-0000-4000-8000-0000000000f1.jpg',
+   '036a0000-0000-4000-8000-00000000000f', '{"size": 1000, "mimetype": "image/webp"}'),
+  ('trip-memories', '036b0000-0000-4000-8000-0000000000a1/036a0000-0000-4000-8000-00000000000f/036f0000-0000-4000-8000-0000000000f1_t.jpg',
+   '036a0000-0000-4000-8000-00000000000f', '{"size": 100, "mimetype": "image/webp"}');
+set local role authenticated;
+select tv_test.act_as('036a0000-0000-4000-8000-00000000000f') \g /dev/null
 select tv_test.expect_error('E5 un-deleting a photo re-checks the caps',
   $$update public.trip_photos set deleted = false where id = '036f0000-0000-4000-8000-0000000000f1'$$,
   'P0001', 'quota_exceeded') \g /dev/null

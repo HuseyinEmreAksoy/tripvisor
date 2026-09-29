@@ -12,6 +12,8 @@ import { BottomSheet } from '@/components';
 import { Button } from '@/components/Button';
 import { useTheme } from '@/theme';
 import { useUpdateTripBudget } from '@/api/trips';
+import { appLanguage } from '@/i18n';
+import { parseAmount } from './expenseMath';
 
 export interface BudgetEditSheetProps {
   tripId: string;
@@ -43,8 +45,9 @@ export function BudgetEditSheet({
   function validate(raw: string): number | null {
     const trimmed = raw.trim();
     if (trimmed === '') return null; // allow clearing
-    const n = Number(trimmed.replace(',', '.'));
-    if (!Number.isFinite(n) || n < 0) return undefined as unknown as null;
+    // Locale-aware: '5,000' (en) / '5.000' (tr) is five thousand, not 5.
+    const n = parseAmount(trimmed, { language: appLanguage() });
+    if (n === null) return undefined as unknown as null;
     return n;
   }
 

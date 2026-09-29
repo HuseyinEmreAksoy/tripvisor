@@ -18,11 +18,21 @@
 //        with at least one key. Applies to EVERY active link of the trip (the
 //        toggles are per trip in the UI), or only to `token` when given.
 //        No active link -> 404 no_active_link.
-//   POST { op: "read",   token }                            (anonymous)
+//   POST { op: "read",   token }                            (anonymous, rate limited)
 //     -> { trip, places, legs, sections, expenses?, memories?,
-//          meta: { contractVersion: 3 } } — allow-listed fields only
+//          meta: { contractVersion: 4 } } — allow-listed fields only
 //        (see ./public-fields.ts for the list + version history, and
-//        ./expense-summary.ts for the expenses summary)
+//        ./expense-summary.ts for the expenses summary). v4: photos carry
+//        THUMBNAIL URLs only (`url` === `thumbUrl`); legs are day legs only.
+//   POST { op: "photo_url", token, photoId }                (anonymous, rate limited)
+//     -> { url, expiresAt, meta } — a 1 h signed URL of ONE public photo's
+//        full image (same public predicate as `read`, memories toggle on).
+//   POST { op: "meta", token }                              (anonymous, rate limited)
+//     -> { trip: { title, start_date, end_date }, placeCount, meta } — for
+//        link previews (functions/share/[token].ts); no memories, no signing.
+//   Anonymous ops past their caps (./rate-limit.ts: per link per day, per
+//   client IP per hour) -> 429 `rate_limited` { error, retryAfterSeconds,
+//   scope } + `Retry-After`; counter unavailable -> 503 (fails closed).
 //   POST { op: "revoke", tripId, token? }                   (auth required, OWNER only)
 //     -> { revoked: number }
 //   GET  ?ping
@@ -59,7 +69,8 @@
 //
 // Error codes: invalid_input 400 · not_authenticated 401 · not_owner 403 ·
 //   not_found 404 · no_active_link 404 · method_not_allowed 405 ·
-//   db_error / internal_error 500.
+//   rate_limited 429 · db_error / internal_error 500 ·
+//   rate_limit_unavailable 503.
 
 // @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
@@ -73,9 +84,12 @@ import { log, newRequestId } from '../_shared/logger.ts';
 import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
 import {
   buildPublicMemories,
+  buildPublicShareMeta,
   buildPublicSharePayload,
   DEFAULT_SHARE_SETTINGS,
+  fullPhotoPathToSign,
   LEG_FIELDS,
+  META_TRIP_FIELDS,
   MAX_PUBLIC_JOURNAL,
   MAX_PUBLIC_PHOTOS,
   MAX_PUBLIC_REVIEWS,
@@ -102,6 +116,13 @@ import {
   type PublicExpenseSummary,
   // @ts-ignore -- Deno `.ts`-suffixed import
 } from './expense-summary.ts';
+import {
+  clientIp,
+  consumeShareRead,
+  rateKeys,
+  type ShareOpKind,
+  // @ts-ignore -- Deno `.ts`-suffixed import
+} from './rate-limit.ts';
 
 const SettingsPatchSchema = z
   .object({
@@ -143,16 +164,37 @@ const UpdateSettingsSchema = z.object({
   ),
 });
 
-const BodySchema = z.union([CreateSchema, ReadSchema, RevokeSchema, CurrentSchema, UpdateSettingsSchema]);
+const MetaSchema = z.object({
+  op: z.literal('meta'),
+  token: z.string().min(16).max(128),
+});
+
+const PhotoUrlSchema = z.object({
+  op: z.literal('photo_url'),
+  token: z.string().min(16).max(128),
+  photoId: z.string().uuid(),
+});
+
+const BodySchema = z.union([
+  CreateSchema,
+  ReadSchema,
+  RevokeSchema,
+  CurrentSchema,
+  UpdateSettingsSchema,
+  MetaSchema,
+  PhotoUrlSchema,
+]);
 
 type Body =
   | { op: 'create'; tripId: string; settings?: Partial<ShareSettings> }
   | { op: 'read'; token: string }
+  | { op: 'meta'; token: string }
+  | { op: 'photo_url'; token: string; photoId: string }
   | { op: 'revoke'; tripId: string; token?: string }
   | { op: 'current'; tripId: string }
   | { op: 'update_settings'; tripId: string; token?: string; settings: Partial<ShareSettings> };
 
-type OwnerOp = Exclude<Body['op'], 'read'>;
+type OwnerOp = Exclude<Body['op'], 'read' | 'meta' | 'photo_url'>;
 
 // 30-day TTL on trip_legs. Legs derive from the Google Routes API (polyline,
 // duration, distance) and fall under the 30-day ToS ceiling. Any leg whose
@@ -315,7 +357,9 @@ export async function handler(req: Request): Promise<Response> {
   const body = parsed.data as Body;
 
   try {
-    if (body.op === 'read') return await handleRead(body, requestId, origin);
+    if (body.op === 'read') return await handleRead(body, req, requestId, origin);
+    if (body.op === 'meta') return await handleMeta(body, req, requestId, origin);
+    if (body.op === 'photo_url') return await handlePhotoUrl(body, req, requestId, origin);
 
     const userClient = makeUserClient(req);
     const caller = await authenticate(userClient, req);
@@ -557,20 +601,45 @@ async function fetchMemories(
 ): Promise<ReadSection<PublicMemories>> {
   // The privacy filter is IN THE QUERY (least data fetched) and re-applied
   // by buildPublicMemories / photoPathsToSign (defense in depth).
+  //
+  // OWNER-AUTHORED ONLY: a collaborator's `trip`-visibility items are shared
+  // with the trip's members, not with the public. The owner id is read in
+  // its own query (the main trips select never carries user_id) and is never
+  // emitted. No owner id -> no memories (fail closed).
+  const { data: ownerRow, error: ownerErr } = await admin
+    .from('trips')
+    .select('user_id')
+    .eq('id', tripId)
+    .maybeSingle();
+  if (ownerErr) return { value: null, error: ownerErr };
+  const ownerId = typeof (ownerRow as DbRow | null)?.user_id === 'string'
+    ? String((ownerRow as DbRow).user_id)
+    : null;
+  if (!ownerId) {
+    return {
+      value: { journal: [], reviews: [], photos: [], photoUrlExpiresAt: null, truncated: false },
+      error: null,
+    };
+  }
+
+  // Journal + photos are fetched NEWEST first so the row cap drops the oldest
+  // items (as `truncated` documents), then re-sorted oldest-first below.
   const [journalRes, reviewsRes, photosRes] = await Promise.all([
     admin
       .from('trip_journal_entries')
       .select(PUBLIC_JOURNAL_FIELDS)
       .eq('trip_id', tripId)
+      .eq('author_id', ownerId)
       .eq('visibility', 'trip')
       .eq('deleted', false)
-      .order('day_index', { ascending: true })
-      .order('created_at', { ascending: true })
+      .order('day_index', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(MAX_PUBLIC_JOURNAL + 1),
     admin
       .from('trip_place_reviews')
       .select(PUBLIC_REVIEW_FIELDS)
       .eq('trip_id', tripId)
+      .eq('author_id', ownerId)
       .eq('visibility', 'trip')
       .eq('deleted', false)
       .order('created_at', { ascending: false })
@@ -579,12 +648,13 @@ async function fetchMemories(
       .from('trip_photos')
       .select(PUBLIC_PHOTO_FIELDS)
       .eq('trip_id', tripId)
+      .eq('author_id', ownerId)
       .eq('visibility', 'trip')
       .eq('deleted', false)
       .eq('status', 'ready')
-      .order('day_index', { ascending: true, nullsFirst: false })
-      .order('taken_at', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
+      .order('day_index', { ascending: false, nullsFirst: true })
+      .order('taken_at', { ascending: false, nullsFirst: true })
+      .order('created_at', { ascending: false })
       .limit(MAX_PUBLIC_PHOTOS + 1),
   ]);
   const error = journalRes.error ?? reviewsRes.error ?? photosRes.error;
@@ -595,11 +665,13 @@ async function fetchMemories(
   const photos = ((photosRes.data ?? []) as DbRow[]);
   const truncated =
     journal.length > MAX_PUBLIC_JOURNAL || reviews.length > MAX_PUBLIC_REVIEWS || photos.length > MAX_PUBLIC_PHOTOS;
-  const keptPhotos = photos.slice(0, MAX_PUBLIC_PHOTOS);
+  // Keep the newest N, then show them oldest-first (the pre-cap order).
+  const keptPhotos = photos.slice(0, MAX_PUBLIC_PHOTOS).reverse();
+  const keptJournal = journal.slice(0, MAX_PUBLIC_JOURNAL).reverse();
 
   const signed = new Map<string, string>();
   let photoUrlExpiresAt: string | null = null;
-  const paths = photoPathsToSign(keptPhotos);
+  const paths = photoPathsToSign(keptPhotos, ownerId);
   if (paths.length > 0) {
     photoUrlExpiresAt = new Date(Date.now() + PHOTO_URL_TTL_S * 1000).toISOString();
     const { data, error: signErr } = await admin.storage
@@ -620,11 +692,12 @@ async function fetchMemories(
 
   return {
     value: buildPublicMemories({
-      journal: journal.slice(0, MAX_PUBLIC_JOURNAL),
+      journal: keptJournal,
       reviews: reviews.slice(0, MAX_PUBLIC_REVIEWS),
       photos: keptPhotos,
       places,
       publicPlaceIds,
+      ownerId,
       signed,
       photoUrlExpiresAt,
       truncated,
@@ -633,35 +706,104 @@ async function fetchMemories(
   };
 }
 
+type ActiveShare = { id: string; trip_id: string; revoked_at: string | null } & DbRow;
+
+/**
+ * The live (not revoked) link for `token`, or the Response to send
+ * (404 not_found / 500). Anonymous ops only; the service role is required
+ * because `trip_shares` has no SELECT policy.
+ */
+async function loadActiveShare(
+  admin: AdminClient,
+  token: string,
+  op: ShareOpKind,
+  requestId: string,
+  origin: string | null,
+): Promise<{ share: ActiveShare; response?: undefined } | { share?: undefined; response: Response }> {
+  const { data, error } = await admin
+    .from('trip_shares')
+    .select(`id, trip_id, revoked_at, ${SHARE_SETTINGS_COLUMNS}`)
+    .eq('token', token)
+    .maybeSingle();
+  if (error) {
+    log({ requestId, fn: 'share-trip', op, level: 'error', err: error.message });
+    return { response: errorResponse('db_error', 'Failed to read share link', 500, origin) };
+  }
+  const row = data as ActiveShare | null;
+  if (!row || row.revoked_at) {
+    log({ requestId, fn: 'share-trip', op, level: 'info', result: 'not_found', tokenPrefix: prefix(token) });
+    return { response: errorResponse('not_found', 'Share link not found or revoked', 404, origin) };
+  }
+  return { share: row };
+}
+
+/**
+ * Per-link + per-IP counter (./rate-limit.ts, 0040 consume_share_read).
+ * null = go ahead; otherwise the 429 / 503 to send. Runs after the token
+ * lookup (an unknown token never creates a counter row) and before any
+ * trip data is read or signed.
+ */
+async function enforceShareRateLimit(
+  admin: AdminClient,
+  kind: ShareOpKind,
+  share: ActiveShare,
+  req: Request,
+  token: string,
+  requestId: string,
+  origin: string | null,
+): Promise<Response | null> {
+  // @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
+  const env: { get(key: string): string | undefined } = Deno.env;
+  const secret = env.get('SHARE_RATE_SECRET') ?? env.get('SUPABASE_SERVICE_ROLE_KEY') ?? 'share-trip';
+  const keys = await rateKeys(kind, String(share.id), clientIp(req.headers), secret);
+  const outcome = await consumeShareRead(admin, kind, keys);
+  if (outcome.allowed) return null;
+  log({
+    requestId,
+    fn: 'share-trip',
+    op: kind,
+    level: outcome.scope === 'unavailable' ? 'error' : 'warn',
+    result: outcome.scope === 'unavailable' ? 'rate_limit_unavailable' : 'rate_limited',
+    scope: outcome.scope,
+    tokenPrefix: prefix(token),
+    retryAfter: outcome.retryAfter,
+  });
+  const unavailable = outcome.scope === 'unavailable';
+  return jsonResponse(
+    {
+      error: {
+        code: unavailable ? 'rate_limit_unavailable' : 'rate_limited',
+        message: unavailable
+          ? 'Shared trips are temporarily unavailable. Try again in a minute.'
+          : 'This shared trip was opened too often. Try again later.',
+      },
+      retryAfterSeconds: outcome.retryAfter,
+      ...(unavailable ? {} : { scope: outcome.scope }),
+    },
+    {
+      status: unavailable ? 503 : 429,
+      origin,
+      headers: {
+        'Retry-After': String(outcome.retryAfter),
+        'Access-Control-Expose-Headers': 'Retry-After',
+      },
+    },
+  );
+}
+
 async function handleRead(
   body: { token: string },
+  req: Request,
   requestId: string,
   origin: string | null,
 ): Promise<Response> {
   const admin = makeAdminClient();
 
-  const { data: share, error: shareErr } = await admin
-    .from('trip_shares')
-    .select(`trip_id, revoked_at, ${SHARE_SETTINGS_COLUMNS}`)
-    .eq('token', body.token)
-    .maybeSingle();
-
-  if (shareErr) {
-    log({ requestId, fn: 'share-trip', op: 'read', level: 'error', err: shareErr.message });
-    return errorResponse('db_error', 'Failed to read share link', 500, origin);
-  }
-  const shareRow = share as ({ trip_id: string; revoked_at: string | null } & DbRow) | null;
-  if (!shareRow || shareRow.revoked_at) {
-    log({
-      requestId,
-      fn: 'share-trip',
-      op: 'read',
-      level: 'info',
-      result: 'not_found',
-      tokenPrefix: prefix(body.token),
-    });
-    return errorResponse('not_found', 'Share link not found or revoked', 404, origin);
-  }
+  const loaded = await loadActiveShare(admin, body.token, 'read', requestId, origin);
+  if (loaded.response) return loaded.response;
+  const shareRow = loaded.share;
+  const limited = await enforceShareRateLimit(admin, 'read', shareRow, req, body.token, requestId, origin);
+  if (limited) return limited;
   const tripId = shareRow.trip_id;
   const settings = settingsFromRow(shareRow);
 
@@ -703,6 +845,10 @@ async function handleRead(
         .from('trip_legs')
         .select(LEG_FIELDS)
         .eq('trip_id', tripId)
+        // Day legs only: matrix-cache rows (day_index -1, up to 600 per mode)
+        // are never rendered and would crowd the day legs out of the
+        // 1000-row response cap.
+        .gte('day_index', 0)
         .gte('computed_at', legTtlCutoff)
       : empty,
   ]);
@@ -772,6 +918,112 @@ async function handleRead(
   });
 
   return jsonResponse(payload, { origin });
+}
+
+// ---- meta (anonymous, link previews) ---------------------------------------
+
+async function handleMeta(
+  body: { token: string },
+  req: Request,
+  requestId: string,
+  origin: string | null,
+): Promise<Response> {
+  const admin = makeAdminClient();
+  const loaded = await loadActiveShare(admin, body.token, 'meta', requestId, origin);
+  if (loaded.response) return loaded.response;
+  const share = loaded.share;
+  const limited = await enforceShareRateLimit(admin, 'meta', share, req, body.token, requestId, origin);
+  if (limited) return limited;
+
+  const settings = settingsFromRow(share);
+  const [tripRes, countRes] = await Promise.all([
+    admin.from('trips').select(META_TRIP_FIELDS).eq('id', share.trip_id).maybeSingle(),
+    settings.showItinerary
+      ? admin
+        .from('trip_places')
+        .select('id', { count: 'exact', head: true })
+        .eq('trip_id', share.trip_id)
+        .eq('deleted', false)
+      : Promise.resolve({ count: 0, error: null as DbError }),
+  ]);
+  const dbErr = tripRes.error ?? countRes.error;
+  if (dbErr) {
+    log({ requestId, fn: 'share-trip', op: 'meta', level: 'error', err: dbErr.message });
+    return errorResponse('db_error', 'Failed to load shared trip', 500, origin);
+  }
+  if (!tripRes.data) return errorResponse('not_found', 'Trip no longer exists', 404, origin);
+  const payload = buildPublicShareMeta(tripRes.data as unknown as DbRow, countRes.count ?? 0);
+  log({ requestId, fn: 'share-trip', op: 'meta', level: 'info', tokenPrefix: prefix(body.token), placeCount: payload.placeCount });
+  return jsonResponse(payload, { origin });
+}
+
+// ---- photo_url (anonymous, one full-size photo) -----------------------------
+
+async function handlePhotoUrl(
+  body: { token: string; photoId: string },
+  req: Request,
+  requestId: string,
+  origin: string | null,
+): Promise<Response> {
+  const admin = makeAdminClient();
+  const loaded = await loadActiveShare(admin, body.token, 'photo_url', requestId, origin);
+  if (loaded.response) return loaded.response;
+  const share = loaded.share;
+  // Memories off -> the photo does not exist for this link (same 404 as an
+  // unknown photo: nothing to probe). Checked before counting.
+  if (!settingsFromRow(share).showMemories) {
+    return errorResponse('not_found', 'Photo not found', 404, origin);
+  }
+  const limited = await enforceShareRateLimit(admin, 'photo_url', share, req, body.token, requestId, origin);
+  if (limited) return limited;
+
+  // Owner-authored only (same rule and same fail-closed owner lookup as read).
+  const { data: ownerRow, error: ownerErr } = await admin
+    .from('trips')
+    .select('user_id')
+    .eq('id', share.trip_id)
+    .maybeSingle();
+  if (ownerErr) {
+    log({ requestId, fn: 'share-trip', op: 'photo_url', level: 'error', err: ownerErr.message });
+    return errorResponse('db_error', 'Failed to load photo', 500, origin);
+  }
+  const ownerId = typeof (ownerRow as DbRow | null)?.user_id === 'string' ? String((ownerRow as DbRow).user_id) : null;
+  if (!ownerId) return errorResponse('not_found', 'Photo not found', 404, origin);
+
+  const { data: photo, error: photoErr } = await admin
+    .from('trip_photos')
+    .select(PUBLIC_PHOTO_FIELDS)
+    .eq('id', body.photoId)
+    .eq('trip_id', share.trip_id)
+    .eq('author_id', ownerId)
+    .eq('visibility', 'trip')
+    .eq('deleted', false)
+    .eq('status', 'ready')
+    .maybeSingle();
+  if (photoErr) {
+    log({ requestId, fn: 'share-trip', op: 'photo_url', level: 'error', err: photoErr.message });
+    return errorResponse('db_error', 'Failed to load photo', 500, origin);
+  }
+  // Re-checked in code (defense in depth, as in read).
+  const path = fullPhotoPathToSign(photo as DbRow | null, ownerId);
+  if (!path) return errorResponse('not_found', 'Photo not found', 404, origin);
+
+  const { data: signed, error: signErr } = await admin.storage
+    .from(MEMORIES_BUCKET)
+    .createSignedUrl(path, PHOTO_URL_TTL_S);
+  if (signErr || !signed?.signedUrl) {
+    log({ requestId, fn: 'share-trip', op: 'photo_url', level: 'warn', stage: 'sign', err: signErr?.message ?? 'no url' });
+    return errorResponse('photo_unavailable', 'Photo is not available right now', 502, origin);
+  }
+  log({ requestId, fn: 'share-trip', op: 'photo_url', level: 'info', tokenPrefix: prefix(body.token) });
+  return jsonResponse(
+    {
+      url: signed.signedUrl,
+      expiresAt: new Date(Date.now() + PHOTO_URL_TTL_S * 1000).toISOString(),
+      meta: { contractVersion: SHARE_READ_CONTRACT_VERSION },
+    },
+    { origin },
+  );
 }
 
 // ---- revoke ---------------------------------------------------------------

@@ -25,6 +25,7 @@ import { TripCover } from '@/components/TripCover';
 import { useTheme, type Theme } from '@/theme';
 import { formatDuration, formatNumber, useT } from '@/i18n';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { Trip, TripLeg } from '@/api';
 import { HERO_COLLAPSE_DELTA } from './heroCollapse';
 
@@ -213,6 +214,10 @@ export function RouteChipRow({
 }) {
   const t = useTheme();
   const { t: tx } = useT(['trip', 'common']);
+  // F3 fix: on phones the status pill (e.g. "daily route limit reached") gets
+  // its own line — as the last item of an indicator-less horizontal scroller
+  // it sat off-screen at 375–390px.
+  const pillOnOwnLine = useBreakpoint() === 'mobile';
   const totals = useMemo(() => {
     const routeLegs = legs.filter((l) => l.day_index >= 0);
     if (routeLegs.length === 0) return null;
@@ -244,7 +249,7 @@ export function RouteChipRow({
     );
   }
 
-  return (
+  const row = (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
@@ -269,8 +274,15 @@ export function RouteChipRow({
           <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}>{c.label}</Text>
         </View>
       ))}
-      {statusPill}
+      {pillOnOwnLine ? null : statusPill}
     </ScrollView>
+  );
+  if (!pillOnOwnLine || !statusPill) return row;
+  return (
+    <View style={{ gap: t.spacing.xs }}>
+      {row}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{statusPill}</View>
+    </View>
   );
 }
 

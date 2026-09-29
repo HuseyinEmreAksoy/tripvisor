@@ -47,6 +47,13 @@ import {
   summarizeExpenses,
   // @ts-ignore -- Deno `.ts`-suffixed import
 } from './expense-summary.ts';
+import {
+  clientIp,
+  normaliseIp,
+  rateKeys,
+  SHARE_RATE_LIMITS,
+  // @ts-ignore -- Deno `.ts`-suffixed import
+} from './rate-limit.ts';
 
 // @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
 const D = Deno;
@@ -371,7 +378,7 @@ D.test('op:current by the OWNER returns the newest active link with its toggles'
       createdAt: '2026-09-20T10:00:00Z',
       settings: { showItinerary: true, showExpenses: false, showMemories: true },
     });
-    assertEquals(body.meta.contractVersion, 3);
+    assertEquals(body.meta.contractVersion, 4);
     assert(/revoked_at=is\.null/.test(sharesUrl), `must skip revoked links: ${sharesUrl}`);
     assert(/order=created_at\.desc/.test(sharesUrl), `newest first: ${sharesUrl}`);
     assert(sharesUrl.includes(`trip_id=eq.${VALID_TRIP_ID}`), 'scoped to the trip');
@@ -539,12 +546,20 @@ interface ReadCapture {
   reviewsUrl?: string;
   photosUrl?: string;
   signBodies: Array<{ expiresIn: number; paths: string[] }>;
+  rateCalls: Array<Record<string, unknown>>;
 }
 
-const newCapture = (): ReadCapture => ({ expensesUrls: [], signBodies: [] });
+const newCapture = (): ReadCapture => ({ expensesUrls: [], signBodies: [], rateCalls: [] });
 
-const AUTHOR = '44444444-4444-4444-8444-000000000004';
-const photoPath = (id: string, thumb = false) => `${VALID_TRIP_ID}/${AUTHOR}/${id}${thumb ? '_t' : ''}.jpg`;
+/** trip_shares.id of the fixture link (the per-link counter key). */
+const SHARE_ROW_ID = '99999999-9999-4999-8999-000000000001';
+
+// Memories are public only when authored by the trip OWNER (trips.user_id).
+const AUTHOR = OWNER_ID;
+/** An accepted collaborator: their `trip`-visibility items are for members, never public. */
+const COLLAB_AUTHOR = '55555555-5555-4555-8555-000000000005';
+const photoPath = (id: string, thumb = false, author = AUTHOR) =>
+  `${VALID_TRIP_ID}/${author}/${id}${thumb ? '_t' : ''}.jpg`;
 
 /** Memory rows: one of each private flavour next to the shared ones. */
 const JOURNAL_ROWS = [
@@ -552,16 +567,19 @@ const JOURNAL_ROWS = [
   { id: 'j-private', day_index: 0, body: 'SECRET diary', created_at: '2026-06-01T21:00:00Z', visibility: 'only_me', deleted: false, author_id: AUTHOR },
   { id: 'j-deleted', day_index: 1, body: 'deleted text', created_at: '2026-06-02T21:00:00Z', visibility: 'trip', deleted: true, author_id: AUTHOR },
   { id: 'j-empty', day_index: 1, body: '   ', created_at: '2026-06-02T22:00:00Z', visibility: 'trip', deleted: false, author_id: AUTHOR },
+  { id: 'j-collab', day_index: 0, body: 'COLLAB journal', created_at: '2026-06-01T20:30:00Z', visibility: 'trip', deleted: false, author_id: COLLAB_AUTHOR },
 ];
 const REVIEW_ROWS = [
-  { id: 'r-linked', trip_place_id: 'place-1', rating: 5, body: 'Loved it', created_at: '2026-06-01T12:00:00Z', place_name_snapshot: 'Old name', visibility: 'trip', deleted: false },
-  { id: 'r-detached', trip_place_id: null, rating: 3, body: '', created_at: '2026-06-02T12:00:00Z', place_name_snapshot: 'Removed Cafe', visibility: 'trip', deleted: false },
-  { id: 'r-private', trip_place_id: 'place-1', rating: 1, body: 'SECRET review', created_at: '2026-06-02T13:00:00Z', place_name_snapshot: 'x', visibility: 'only_me', deleted: false },
+  { id: 'r-linked', trip_place_id: 'place-1', rating: 5, body: 'Loved it', created_at: '2026-06-01T12:00:00Z', place_name_snapshot: 'Old name', visibility: 'trip', deleted: false, author_id: AUTHOR },
+  { id: 'r-detached', trip_place_id: null, rating: 3, body: '', created_at: '2026-06-02T12:00:00Z', place_name_snapshot: 'Removed Cafe', visibility: 'trip', deleted: false, author_id: AUTHOR },
+  { id: 'r-private', trip_place_id: 'place-1', rating: 1, body: 'SECRET review', created_at: '2026-06-02T13:00:00Z', place_name_snapshot: 'x', visibility: 'only_me', deleted: false, author_id: AUTHOR },
+  { id: 'r-collab', trip_place_id: 'place-1', rating: 2, body: 'COLLAB review', created_at: '2026-06-02T14:00:00Z', place_name_snapshot: 'x', visibility: 'trip', deleted: false, author_id: COLLAB_AUTHOR },
 ];
 const PHOTO_ROWS = [
   { id: 'ph-shared', day_index: 0, trip_place_id: 'place-1', storage_path: photoPath('ph-shared'), thumb_path: photoPath('ph-shared', true), width: 1600, height: 1200, caption: 'Tower', taken_at: '2026-06-01T18:00:00Z', created_at: '2026-06-01T18:05:00Z', visibility: 'trip', deleted: false, status: 'ready', author_id: AUTHOR },
   { id: 'ph-private', day_index: 0, trip_place_id: null, storage_path: photoPath('ph-private'), thumb_path: photoPath('ph-private', true), width: 1600, height: 1200, caption: 'SECRET photo', taken_at: null, created_at: '2026-06-01T19:00:00Z', visibility: 'only_me', deleted: false, status: 'ready', author_id: AUTHOR },
   { id: 'ph-pending', day_index: 0, trip_place_id: null, storage_path: photoPath('ph-pending'), thumb_path: photoPath('ph-pending', true), width: null, height: null, caption: null, taken_at: null, created_at: '2026-06-01T19:30:00Z', visibility: 'trip', deleted: false, status: 'pending', author_id: AUTHOR },
+  { id: 'ph-collab', day_index: 0, trip_place_id: 'place-1', storage_path: photoPath('ph-collab', false, COLLAB_AUTHOR), thumb_path: photoPath('ph-collab', true, COLLAB_AUTHOR), width: 800, height: 600, caption: 'COLLAB photo', taken_at: null, created_at: '2026-06-01T19:40:00Z', visibility: 'trip', deleted: false, status: 'ready', author_id: COLLAB_AUTHOR },
 ];
 
 /**
@@ -573,10 +591,14 @@ function readRoutes(
   tripId: string,
   captured: Partial<ReadCapture>,
   share: Record<string, unknown> = {},
-  opts: { expenses?: unknown[]; fxRates?: unknown[] } = {},
+  opts: { expenses?: unknown[]; fxRates?: unknown[]; rate?: unknown; rateStatus?: number } = {},
 ) {
   return (url: string, method: string, init?: RequestInit): Response | undefined => {
-    if (url.includes('/trip_shares')) return json([{ trip_id: tripId, revoked_at: null, ...share }]);
+    if (url.includes('/rpc/consume_share_read')) {
+      captured.rateCalls?.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return json(opts.rate ?? { allowed: true, scope: null, retry_after: 0 }, opts.rateStatus ?? 200);
+    }
+    if (url.includes('/trip_shares')) return json([{ id: SHARE_ROW_ID, trip_id: tripId, revoked_at: null, ...share }]);
     if (url.includes('/trip_places')) {
       captured.placesUrl = url;
       return json([{
@@ -654,7 +676,7 @@ const MEMORY_TABLES = ['trip_journal_entries', 'trip_place_reviews', 'trip_photo
 
 // ---- op: read — happy path + audit #12 --------------------------------------
 
-D.test('op:read returns trip + places + legs + meta.contractVersion 3 (no user_id / trip.id / notes)', async () => {
+D.test('op:read returns trip + places + legs + meta.contractVersion 4 (no user_id / trip.id / notes)', async () => {
   const TRIP_ID = '00000000-0000-4000-8000-000000000099';
   const captured = newCapture();
   const mock = stubFetch(readRoutes(TRIP_ID, captured));
@@ -663,7 +685,7 @@ D.test('op:read returns trip + places + legs + meta.contractVersion 3 (no user_i
     assertEquals(res.status, 200);
     const body = (await res.json()) as ReadBody;
     assertEquals(body.trip.title, 'Shared Trip');
-    assertEquals(body.meta.contractVersion, 3);
+    assertEquals(body.meta.contractVersion, 4);
     assert(!('user_id' in body.trip), 'user_id must NOT appear in the response');
     assert(!('id' in body.trip), 'audit #12: trip.id must NOT appear in the response');
     assert(!('currency' in body.trip), 'currency is not on the v2 trip allow-list');
@@ -792,26 +814,34 @@ D.test('op:read — ONLY_ME NEVER PUBLIC: memories carry shared, live, ready row
       assert(u.includes(`trip_id=eq.${VALID_TRIP_ID}`), `trip scope missing: ${u}`);
     }
     assert(/status=eq\.ready/.test(captured.photosUrl!), 'photos must be ready');
-    assert(!(new URL(captured.journalUrl!).searchParams.get('select') ?? '').includes('author_id'));
+    // Owner-authored only (collaborators' shared items are for members).
+    for (const u of [captured.journalUrl!, captured.reviewsUrl!, captured.photosUrl!]) {
+      assert(u.includes(`author_id=eq.${OWNER_ID}`), `owner-author filter missing: ${u}`);
+    }
+    // Row caps keep the NEWEST journal/photos (fetched desc).
+    assert(/order=day_index\.desc/.test(captured.journalUrl!), captured.journalUrl!);
+    assert(/order=day_index\.desc/.test(captured.photosUrl!), captured.photosUrl!);
 
     // 2. …and the payload re-checks every row (the mock ignored the filter).
     assertEquals(m.journal.map((j) => j.id), ['j-shared']);
     assertEquals(m.reviews.map((r) => r.id).sort(), ['r-detached', 'r-linked']);
     assertEquals(m.photos.map((p) => p.id), ['ph-shared']);
-    for (const secret of ['SECRET', 'j-private', 'r-private', 'ph-private', 'ph-pending', 'j-deleted']) {
+    for (const secret of ['SECRET', 'COLLAB', 'j-private', 'r-private', 'ph-private', 'ph-pending', 'j-deleted', 'j-collab', 'r-collab', 'ph-collab', COLLAB_AUTHOR]) {
       assert(!text.includes(secret), `${secret} leaked into the public payload`);
     }
     // (The author uuid is inherent in the signed Storage PATH of a photo, but
     // it is never a payload field or value of its own.)
     assert(!text.includes('author_id') && !text.includes(`"${AUTHOR}"`), 'no author ids as fields');
 
-    // 3. Private photos are never even signed.
+    // 3. Private photos are never even signed; v4: thumbnails only.
     assertEquals(captured.signBodies.length, 1);
     assertEquals(captured.signBodies[0]!.expiresIn, 3600, '1 h signed URLs');
-    assertEquals(captured.signBodies[0]!.paths.sort(), [photoPath('ph-shared'), photoPath('ph-shared', true)].sort());
+    assertEquals(captured.signBodies[0]!.paths, [photoPath('ph-shared', true)], 'a read signs thumbnails only');
+    assert(!captured.signBodies[0]!.paths.some((p) => p.includes(COLLAB_AUTHOR)), 'a collaborator photo is never signed');
     const photo = m.photos[0]!;
     assert(String(photo.url).startsWith('http://127.0.0.1:54321/storage/v1/object/sign/trip-memories/'), String(photo.url));
     assert(String(photo.thumbUrl).includes('_t.jpg'), 'thumb URL signs the thumb object');
+    assertEquals(photo.url, photo.thumbUrl, 'v4: `url` is the thumbnail too (full size via photo_url)');
     assertEquals(photo.placeId, 'place-1');
     assert(m.photoUrlExpiresAt && Date.parse(m.photoUrlExpiresAt) > Date.now());
     assertEquals(m.truncated, false);
@@ -886,11 +916,12 @@ D.test('op:read memories: photo URLs are exactly the Storage-signed URLs (absolu
   try {
     const body = (await (await handler(post({ op: 'read', token: 'validtoken12345678901234' }))).json()) as ReadBody;
     const p = body.memories!.photos[0]!;
-    const path = photoPath('ph-shared');
+    const path = photoPath('ph-shared', true);
     assertEquals(
-      p.url,
+      p.thumbUrl,
       `http://127.0.0.1:54321/storage/v1/object/sign/trip-memories/${path}?token=sig-${path.length}`,
     );
+    assertEquals(p.url, p.thumbUrl);
     assert(!String(p.url).includes('/object/public/'), 'never a public-bucket URL');
   } finally {
     mock.restore();
@@ -924,6 +955,7 @@ D.test('op:read filters trip_legs older than 30 days via computed_at cutoff', as
       capturedLegsUrl = url;
       return json([freshLeg]);
     }
+    if (url.includes('/trip_places')) return json([{ id: 'p1' }, { id: 'p2' }]);
     return base(url, method, init);
   });
   try {
@@ -934,6 +966,7 @@ D.test('op:read filters trip_legs older than 30 days via computed_at cutoff', as
     assertEquals(body.legs[0]?.id, 'leg-fresh');
 
     assert(/computed_at=gte\./.test(capturedLegsUrl), `trip_legs URL must gte-filter computed_at: ${capturedLegsUrl}`);
+    assert(/day_index=gte\.0/.test(capturedLegsUrl), `day legs only (no matrix-cache rows): ${capturedLegsUrl}`);
     const match = capturedLegsUrl.match(/computed_at=gte\.([^&]+)/);
     assert(match && match[1], 'failed to extract cutoff timestamp from URL');
     const cutoffMs = Date.parse(decodeURIComponent(match![1]!));
@@ -948,7 +981,7 @@ D.test('op:read filters trip_legs older than 30 days via computed_at cutoff', as
 // ---- public-fields.ts (pure) ------------------------------------------------
 
 D.test('public-fields: allow-lists exclude private keys and drive the select strings', () => {
-  assertEquals(SHARE_READ_CONTRACT_VERSION, 3);
+  assertEquals(SHARE_READ_CONTRACT_VERSION, 4);
   for (const k of FORBIDDEN_PUBLIC_KEYS) {
     assert(!(PUBLIC_TRIP_KEYS as readonly string[]).includes(k), `trip allow-list must not have ${k}`);
     assert(!(PUBLIC_PLACE_KEYS as readonly string[]).includes(k), `place allow-list must not have ${k}`);
@@ -957,6 +990,42 @@ D.test('public-fields: allow-lists exclude private keys and drive the select str
   assertEquals(TRIP_FIELDS, PUBLIC_TRIP_KEYS.join(', '));
   assertEquals(PLACE_FIELDS, PUBLIC_PLACE_KEYS.join(', '));
   assert(LEG_FIELDS.includes('computed_at'));
+  assert(LEG_FIELDS.split(', ').includes('source'), 'v3 additive: legs carry source (estimate marker)');
+});
+
+D.test('public-fields: legs to a removed / unknown place are never public (no route to a deleted stop)', () => {
+  const out = buildPublicSharePayload({
+    trip: { title: 'T' },
+    places: [{ id: 'p1' }, { id: 'p2' }, { id: 'p3', deleted: true }],
+    legs: [
+      { id: 'ok', from_place_id: 'p1', to_place_id: 'p2', source: 'ors' },
+      { id: 'to-deleted', from_place_id: 'p2', to_place_id: 'p3' },
+      { id: 'to-gone', from_place_id: 'p1', to_place_id: 'home-gone' },
+      { id: 'no-ends' },
+    ],
+  });
+  assertEquals(out.legs, [{ id: 'ok', from_place_id: 'p1', to_place_id: 'p2', source: 'ors' }]);
+});
+
+D.test('op:read drops legs whose endpoints are not live public places', async () => {
+  const base = readRoutes(VALID_TRIP_ID, newCapture());
+  const mock = stubFetch((url, method, init) => {
+    if (url.includes('/trip_legs')) {
+      return json([
+        { id: 'leg-ok', from_place_id: 'place-1', to_place_id: 'place-1', computed_at: new Date().toISOString() },
+        { id: 'leg-stale', from_place_id: 'place-1', to_place_id: 'deleted-home', polyline: 'HOME', computed_at: new Date().toISOString() },
+      ]);
+    }
+    return base(url, method, init);
+  });
+  try {
+    const res = await handler(post({ op: 'read', token: 'validtoken12345678901234' }));
+    const text = await res.text();
+    assertEquals((JSON.parse(text) as ReadBody).legs.map((l) => (l as { id: string }).id), ['leg-ok']);
+    assert(!text.includes('deleted-home') && !text.includes('HOME'));
+  } finally {
+    mock.restore();
+  }
 });
 
 D.test('public-fields: buildPublicSharePayload strips everything off-list', () => {
@@ -969,7 +1038,7 @@ D.test('public-fields: buildPublicSharePayload strips everything off-list', () =
   assertEquals(out.places, [{ id: 'p', user_title: 'A', lat: 1, lng: 2 }]);
   assertEquals(out.legs, []);
   assertEquals(out.sections, { itinerary: true, expenses: false, memories: false });
-  assertEquals(out.meta, { contractVersion: 3 });
+  assertEquals(out.meta, { contractVersion: 4 });
 });
 
 D.test('public-fields: a section is emitted only when its toggle is on (data passed by mistake is dropped)', () => {
@@ -1010,14 +1079,21 @@ D.test('public-fields: settings parse FAIL-CLOSED and map to columns', () => {
 });
 
 D.test('public-fields: isPublicMemoryRow — only_me / deleted / pending / missing columns are private', () => {
-  assert(isPublicMemoryRow({ visibility: 'trip', deleted: false }, 'journal'));
-  assert(!isPublicMemoryRow({ visibility: 'only_me', deleted: false }, 'journal'));
-  assert(!isPublicMemoryRow({ visibility: 'trip', deleted: true }, 'review'));
-  assert(!isPublicMemoryRow({ visibility: 'trip' }, 'review'), 'missing deleted = private');
-  assert(!isPublicMemoryRow({ deleted: false }, 'review'), 'missing visibility = private');
-  assert(!isPublicMemoryRow({ visibility: 'trip', deleted: false, status: 'pending' }, 'photo'));
-  assert(isPublicMemoryRow({ visibility: 'trip', deleted: false, status: 'ready' }, 'photo'));
-  assertEquals(photoPathsToSign(PHOTO_ROWS), [photoPath('ph-shared', true), photoPath('ph-shared')]);
+  const o = { author_id: OWNER_ID };
+  assert(isPublicMemoryRow({ ...o, visibility: 'trip', deleted: false }, 'journal', OWNER_ID));
+  assert(!isPublicMemoryRow({ ...o, visibility: 'only_me', deleted: false }, 'journal', OWNER_ID));
+  assert(!isPublicMemoryRow({ ...o, visibility: 'trip', deleted: true }, 'review', OWNER_ID));
+  assert(!isPublicMemoryRow({ ...o, visibility: 'trip' }, 'review', OWNER_ID), 'missing deleted = private');
+  assert(!isPublicMemoryRow({ ...o, deleted: false }, 'review', OWNER_ID), 'missing visibility = private');
+  assert(!isPublicMemoryRow({ ...o, visibility: 'trip', deleted: false, status: 'pending' }, 'photo', OWNER_ID));
+  assert(isPublicMemoryRow({ ...o, visibility: 'trip', deleted: false, status: 'ready' }, 'photo', OWNER_ID));
+  // Owner-authored only; a missing owner id or author id fails closed.
+  assert(!isPublicMemoryRow({ author_id: COLLAB_AUTHOR, visibility: 'trip', deleted: false }, 'journal', OWNER_ID));
+  assert(!isPublicMemoryRow({ visibility: 'trip', deleted: false }, 'journal', OWNER_ID), 'missing author = private');
+  assert(!isPublicMemoryRow({ ...o, visibility: 'trip', deleted: false }, 'journal', null), 'no owner = private');
+  // v4: thumbnails only (full size via op photo_url).
+  assertEquals(photoPathsToSign(PHOTO_ROWS, OWNER_ID), [photoPath('ph-shared', true)]);
+  assertEquals(photoPathsToSign(PHOTO_ROWS, null), []);
 });
 
 D.test('public-fields: buildPublicMemories drops unsigned photos and empty items', () => {
@@ -1027,6 +1103,7 @@ D.test('public-fields: buildPublicMemories drops unsigned photos and empty items
     photos: PHOTO_ROWS,
     places: [],
     publicPlaceIds: new Set(),
+    ownerId: OWNER_ID,
     signed: new Map([[photoPath('ph-shared'), 'u']]), // thumb missing
     photoUrlExpiresAt: '2030-01-01T00:00:00Z',
     truncated: false,
@@ -1211,4 +1288,251 @@ D.test('revoke-then-create idempotence: second token is distinct; first is 404',
   assertEquals(res5.status, 200, 'Second (active) token must return 200');
   const body5 = (await res5.json()) as { trip: Record<string, unknown> };
   assertEquals(body5.trip.title, 'Shared Trip');
+});
+
+// ---- Wave-2 sweep: rate limits, meta, photo_url -------------------------------
+
+function anonPost(body: unknown, headers: Record<string, string> = {}): Request {
+  return new Request('http://localhost/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+const DB_KEY = /^[a-z]{1,8}:[A-Za-z0-9_-]{1,64}$/; // 0040 share_read_counters.key CHECK
+
+D.test('rate-limit: client IP = first x-forwarded-for hop, IPv6 cut to /64, garbage -> unknown', () => {
+  assertEquals(clientIp(new Headers({ 'x-forwarded-for': '203.0.113.7, 10.0.0.1' })), '203.0.113.7');
+  assertEquals(clientIp(new Headers({ 'x-forwarded-for': 'nonsense', 'cf-connecting-ip': '198.51.100.2' })), '198.51.100.2');
+  assertEquals(clientIp(new Headers({ 'x-real-ip': '198.51.100.3:4431' })), '198.51.100.3');
+  assertEquals(clientIp(new Headers()), 'unknown');
+  assertEquals(normaliseIp('2001:db8:85a3:1:2:8a2e:370:7334'), '2001:db8:85a3:1::/64');
+  assertEquals(normaliseIp('2001:DB8:85A3:0001::1'), '2001:db8:85a3:1::/64', 'same /64, same bucket');
+  assertEquals(normaliseIp('[2001:db8::1]:443'), '2001:db8:0:0::/64');
+  assertEquals(normaliseIp('::ffff:192.0.2.9'), '192.0.2.9');
+  assertEquals(normaliseIp('999.1.1.1'), null);
+  assertEquals(normaliseIp('1:2:3'), null);
+});
+
+D.test('rate-limit: keys fit the 0040 CHECK and never contain the token or the raw IP', async () => {
+  for (const kind of ['read', 'photo_url', 'meta'] as const) {
+    const k = await rateKeys(kind, SHARE_ROW_ID, '203.0.113.7', 'secret-a');
+    assert(DB_KEY.test(k.tokenKey), k.tokenKey);
+    assert(k.tokenKey.endsWith(SHARE_ROW_ID), 'per link = the share row id');
+    if (SHARE_RATE_LIMITS[kind].ipCap === null) {
+      assertEquals(k.ipKey, null, `${kind} has no IP limit`);
+    } else {
+      assert(k.ipKey && DB_KEY.test(k.ipKey), String(k.ipKey));
+      assert(!k.ipKey!.includes('203'), 'the raw IP is never stored');
+      const other = await rateKeys(kind, SHARE_ROW_ID, '203.0.113.7', 'secret-b');
+      assert(other.ipKey !== k.ipKey, 'keyed by a secret (not a plain hash)');
+    }
+  }
+  assertEquals(SHARE_RATE_LIMITS.read.tokenCap, 300);
+  assertEquals(SHARE_RATE_LIMITS.read.ipCap, 60);
+});
+
+D.test('op:read counts the link (per day) and the caller IP (per hour) before reading anything', async () => {
+  const captured = newCapture();
+  const mock = stubFetch(readRoutes(VALID_TRIP_ID, captured));
+  try {
+    const a = await handler(anonPost({ op: 'read', token: 'validtoken12345678901234' }, { 'x-forwarded-for': '203.0.113.7, 10.1.1.1' }));
+    assertEquals(a.status, 200);
+    await a.body?.cancel();
+    const b = await handler(anonPost({ op: 'read', token: 'validtoken12345678901234' }, { 'x-forwarded-for': '203.0.113.7' }));
+    await b.body?.cancel();
+    const c = await handler(anonPost({ op: 'read', token: 'validtoken12345678901234' }, { 'x-forwarded-for': '198.51.100.9' }));
+    await c.body?.cancel();
+    assertEquals(captured.rateCalls.length, 3);
+    const [r1, r2, r3] = captured.rateCalls;
+    assertEquals(r1!.p_token_key, `rt:${SHARE_ROW_ID}`);
+    assertEquals([r1!.p_token_cap, r1!.p_ip_cap], [300, 60]);
+    assertEquals(r1!.p_ip_key, r2!.p_ip_key, 'same first hop, same IP bucket');
+    assert(r1!.p_ip_key !== r3!.p_ip_key, 'another IP, another bucket');
+    assert(!JSON.stringify(captured.rateCalls).includes('validtoken'), 'no token material in counter keys');
+    // The counter runs before the trip is read.
+    const rpcIdx = mock.calls.findIndex((x) => x.url.includes('/rpc/consume_share_read'));
+    const tripIdx = mock.calls.findIndex((x) => /\/rest\/v1\/trips\b/.test(x.url));
+    assert(rpcIdx >= 0 && rpcIdx < tripIdx);
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('op:read over a cap -> 429 rate_limited + Retry-After; no trip data read, nothing signed', async () => {
+  const captured = newCapture();
+  const mock = stubFetch(
+    readRoutes(VALID_TRIP_ID, captured, { show_memories: true }, { rate: { allowed: false, scope: 'ip', retry_after: 1234 } }),
+  );
+  try {
+    const res = await handler(anonPost({ op: 'read', token: 'validtoken12345678901234' }, { origin: 'http://localhost:8081' }));
+    assertEquals(res.status, 429);
+    assertEquals(res.headers.get('Retry-After'), '1234');
+    assert((res.headers.get('Access-Control-Expose-Headers') ?? '').includes('Retry-After'), 'browsers may read it');
+    const body = (await res.json()) as { error: { code: string }; retryAfterSeconds: number; scope: string };
+    assertEquals([body.error.code, body.retryAfterSeconds, body.scope], ['rate_limited', 1234, 'ip']);
+    for (const t of ['trips', 'trip_places', 'trip_legs', ...MEMORY_TABLES]) assertEquals(touched(mock.calls, t).length, 0, t);
+    assert(!mock.calls.some((x) => x.url.includes('/storage/v1/')));
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('op:read with the counter down -> 503 rate_limit_unavailable (fails closed)', async () => {
+  const mock = stubFetch(readRoutes(VALID_TRIP_ID, newCapture(), {}, { rate: { message: 'boom' }, rateStatus: 500 }));
+  try {
+    const res = await handler(anonPost({ op: 'read', token: 'validtoken12345678901234' }));
+    assertEquals(res.status, 503);
+    assertEquals(((await res.json()) as ErrBody).error.code, 'rate_limit_unavailable');
+    assertEquals(touched(mock.calls, 'trips').length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('an unknown token never creates a counter row (404 before counting)', async () => {
+  const mock = stubFetch((url) => (url.includes('/trip_shares') ? json([]) : undefined));
+  try {
+    for (const op of ['read', 'meta'] as const) {
+      const res = await handler(anonPost({ op, token: 'nonexistent-token-value-1234567' }));
+      assertEquals(res.status, 404);
+      await res.body?.cancel();
+    }
+    assert(!mock.calls.some((x) => x.url.includes('consume_share_read')));
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('op:meta: title + dates + place count only (no memories, no legs, no signing), link-only limit', async () => {
+  const captured = newCapture();
+  const base = readRoutes(VALID_TRIP_ID, captured, { show_memories: true, show_expenses: true });
+  const placesReqs: Call[] = [];
+  const mock = stubFetch((url, method, init) => {
+    if (url.includes('/trip_places')) {
+      placesReqs.push({ url, method, body: null });
+      return new Response(null, { status: 200, headers: { 'content-range': '*/3' } });
+    }
+    return base(url, method, init);
+  });
+  try {
+    const res = await handler(anonPost({ op: 'meta', token: 'validtoken12345678901234' }, { 'x-forwarded-for': '203.0.113.7' }));
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    assertEquals(body, {
+      trip: { title: 'Shared Trip', start_date: '2026-06-01', end_date: '2026-06-03' },
+      placeCount: 3,
+      meta: { contractVersion: 4 },
+    });
+    assertEquals(captured.rateCalls[0], { p_token_key: `mt:${SHARE_ROW_ID}`, p_ip_key: null, p_token_cap: 200, p_ip_cap: null });
+    assert(placesReqs.length === 1 && placesReqs[0]!.method === 'HEAD', 'places are counted, not fetched');
+    assert(/deleted=eq\.false/.test(placesReqs[0]!.url), 'tombstones are not counted');
+    const tripSelect = new URL(captured.tripsUrl!).searchParams.get('select') ?? '';
+    assertEquals(tripSelect.split(',').map((s) => s.trim()).sort(), ['end_date', 'start_date', 'title']);
+    for (const t of ['trip_legs', 'trip_expenses', ...MEMORY_TABLES]) assertEquals(touched(mock.calls, t).length, 0, t);
+    assert(!mock.calls.some((x) => x.url.includes('/storage/v1/')));
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('op:meta with the itinerary hidden: placeCount 0, places never queried', async () => {
+  const mock = stubFetch(readRoutes(VALID_TRIP_ID, newCapture(), { show_itinerary: false }));
+  try {
+    const body = (await (await handler(anonPost({ op: 'meta', token: 'validtoken12345678901234' }))).json()) as {
+      placeCount: number;
+    };
+    assertEquals(body.placeCount, 0);
+    assertEquals(touched(mock.calls, 'trip_places').length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+const PHOTO_UUID = '77777777-7777-4777-8777-000000000001';
+
+function photoUrlRoutes(photo: Record<string, unknown> | null, share: Record<string, unknown> = { show_memories: true }) {
+  const captured = newCapture();
+  const signed: string[] = [];
+  let photoUrl = '';
+  const base = readRoutes(VALID_TRIP_ID, captured, share);
+  const route = (url: string, method: string, init?: RequestInit): Response | undefined => {
+    if (url.includes('/trip_photos')) {
+      photoUrl = url;
+      return json(photo ? [photo] : []);
+    }
+    const single = /\/storage\/v1\/object\/sign\/trip-memories\/(.+)$/.exec(url);
+    if (single && method === 'POST') {
+      const path = decodeURIComponent(single[1]!);
+      signed.push(path);
+      return json({ signedURL: `/object/sign/trip-memories/${path}?token=full` });
+    }
+    return base(url, method, init);
+  };
+  return { route, captured, signed, photoUrl: () => photoUrl };
+}
+
+const SHARED_PHOTO = {
+  ...PHOTO_ROWS[0]!,
+  id: PHOTO_UUID,
+  storage_path: photoPath(PHOTO_UUID),
+  thumb_path: photoPath(PHOTO_UUID, true),
+};
+
+D.test('op:photo_url signs ONE public full-size photo (1 h), rate limited per link + IP', async () => {
+  const h = photoUrlRoutes(SHARED_PHOTO);
+  const mock = stubFetch(h.route);
+  try {
+    const res = await handler(anonPost({ op: 'photo_url', token: 'validtoken12345678901234', photoId: PHOTO_UUID }));
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as { url: string; expiresAt: string; meta: { contractVersion: number } };
+    assertEquals(h.signed, [photoPath(PHOTO_UUID)], 'the full image, nothing else');
+    assertEquals(body.url, `http://127.0.0.1:54321/storage/v1/object/sign/trip-memories/${photoPath(PHOTO_UUID)}?token=full`);
+    assert(Date.parse(body.expiresAt) > Date.now() + 50 * 60 * 1000);
+    assertEquals(body.meta.contractVersion, 4);
+    const q = h.photoUrl();
+    for (const f of [`id=eq.${PHOTO_UUID}`, `trip_id=eq.${VALID_TRIP_ID}`, `author_id=eq.${OWNER_ID}`, 'visibility=eq.trip', 'deleted=eq.false', 'status=eq.ready']) {
+      assert(q.includes(f), `photo query must filter ${f}: ${q}`);
+    }
+    const rate = h.captured.rateCalls[0]!;
+    assertEquals([rate.p_token_key, rate.p_token_cap, rate.p_ip_cap], [`pt:${SHARE_ROW_ID}`, 1000, 300]);
+    assert(String(rate.p_ip_key).startsWith('pi:'));
+  } finally {
+    mock.restore();
+  }
+});
+
+for (const [label, photo, share] of [
+  ['an only_me photo (query filter bypassed)', { ...SHARED_PHOTO, visibility: 'only_me' }, { show_memories: true }],
+  ['a collaborator\'s shared photo', { ...SHARED_PHOTO, author_id: '55555555-5555-4555-8555-000000000005' }, { show_memories: true }],
+  ['a pending photo', { ...SHARED_PHOTO, status: 'pending' }, { show_memories: true }],
+  ['an unknown photo', null, { show_memories: true }],
+  ['any photo when the memories toggle is off', SHARED_PHOTO, { show_memories: false }],
+] as const) {
+  D.test(`op:photo_url: ${label} -> 404, nothing signed`, async () => {
+    const h = photoUrlRoutes(photo as Record<string, unknown> | null, share);
+    const mock = stubFetch(h.route);
+    try {
+      const res = await handler(anonPost({ op: 'photo_url', token: 'validtoken12345678901234', photoId: PHOTO_UUID }));
+      assertEquals(res.status, 404);
+      assertEquals(((await res.json()) as ErrBody).error.code, 'not_found');
+      assertEquals(h.signed, []);
+      assert(!mock.calls.some((x) => x.url.includes('/storage/v1/')));
+    } finally {
+      mock.restore();
+    }
+  });
+}
+
+D.test('op:photo_url validates its input (uuid photoId) before any network call', async () => {
+  const mock = stubFetch(() => undefined);
+  try {
+    const res = await handler(anonPost({ op: 'photo_url', token: 'validtoken12345678901234', photoId: 'x' }));
+    assertEquals(res.status, 400);
+    await res.body?.cancel();
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
 });

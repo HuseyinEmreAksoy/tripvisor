@@ -147,8 +147,10 @@ export function HomeHero({ trips, onPlanWithAI, onOpenTrip }: HomeHeroProps) {
             </Text>
           </Pressable>
         ) : null}
-        <Text style={[t.typography.overline, { color: 'rgba(255,255,255,0.85)' }]}>
-          Tripvisor
+        {/* Brand is pre-uppercased with CSS uppercase OFF: under lang=tr the
+            browser maps i→İ ("TRİPVİSOR"). */}
+        <Text style={[t.typography.overline, { color: 'rgba(255,255,255,0.85)', textTransform: 'none' }]}>
+          TRIPVISOR
         </Text>
         <Text
           style={[

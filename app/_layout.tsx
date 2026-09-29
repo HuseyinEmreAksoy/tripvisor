@@ -35,7 +35,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { ThemeProvider } from '@/theme';
+import { ThemeProvider, useTheme } from '@/theme';
 import { shouldDehydrateQuery } from '@/api/offline';
 import { initSentry } from '@/lib/sentry';
 import { useI18nReady, useSystemLanguageSync } from '@/i18n';
@@ -185,11 +185,20 @@ export default function RootLayout() {
           >
             {/* Baseline OG/meta fallback for all routes — web only, no-op on native */}
             <RootHead />
-            <StatusBar style="auto" />
+            <ThemedStatusBar />
             <Stack screenOptions={{ headerShown: false }} />
           </PersistQueryClientProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
+}
+
+/**
+ * Status bar icons follow the IN-APP theme (Settings > Appearance can override
+ * the OS scheme); `style="auto"` would follow the OS and vanish on a forced theme.
+ */
+function ThemedStatusBar() {
+  const t = useTheme();
+  return <StatusBar style={t.name === 'dark' ? 'light' : 'dark'} />;
 }

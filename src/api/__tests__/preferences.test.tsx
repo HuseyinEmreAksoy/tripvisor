@@ -58,6 +58,14 @@ jest.mock('@/sync/hydrate', () => ({
   teardownTier1Sync: jest.fn(),
 }));
 
+// useSession's queryFn starts the per-user auth lifecycle (Tier-1 sync +
+// photo upload pump) once it resolves a session. Keep the real upload queue
+// (NetInfo, AsyncStorage, blob store) out of these preference tests.
+jest.mock('../memories.upload-queue', () => ({
+  startPhotoUploads: jest.fn(),
+  stopPhotoUploads: jest.fn(),
+}));
+
 /* eslint-disable import/first */
 import {
   _resetLanguageMirrorForTests,

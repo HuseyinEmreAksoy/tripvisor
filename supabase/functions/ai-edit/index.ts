@@ -883,7 +883,7 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
 
   // 7. Ground the adds — biased to the trip's first placed coordinates
   // (50km circle) + the destination text (shared loop, _shared/ai.ts).
-  const bias: GroundBias = { destination: trip.title };
+  const bias: GroundBias = { destination: trip.title, lang: body.lang };
   const anchor = context[0];
   if (anchor) bias.near = { lat: anchor.lat, lng: anchor.lng };
   const existingPlaceIds = new Set(context.map((p) => p.google_place_id));
@@ -1202,7 +1202,7 @@ async function handleSuggest(
 
   // 7. Ground — biased to the day's first place, else the trip's first place,
   // else the destination text alone.
-  const bias: GroundBias = { destination: trip.title };
+  const bias: GroundBias = { destination: trip.title, lang: body.lang };
   const anchor = dayPlaces[0] ?? places[0];
   if (anchor) bias.near = { lat: anchor.lat, lng: anchor.lng };
   const existingPlaceIds = new Set(places.map((p) => p.google_place_id));
@@ -1473,7 +1473,7 @@ async function handleGround(
 
   const outcomes = await groundNames(
     names,
-    { destination: body.destination },
+    { destination: body.destination, lang: body.lang },
     googleKey,
     requestId,
     FN,

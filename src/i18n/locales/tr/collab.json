@@ -3,7 +3,7 @@
     "errors": {
       "emailRequired": "E-posta adresi gerekli.",
       "emailInvalid": "Geçerli bir e-posta adresi gir.",
-      "alreadyInvited": "Bu kişinin bu gezi için zaten bir daveti var. Yenisini göndermek için önce onu iptal et.",
+      "alreadyInvited": "Bu kişinin bu gezi için zaten geçerli bir daveti var ya da zaten gezide.",
       "rateLimited": "Bugün çok sayıda davet gönderdin. Yarın tekrar dene.",
       "tripLimit": "Bu gezide bekleyen çok fazla davet var. Önce bazılarını iptal et.",
       "unavailable": "Davetler şu an geçici olarak kullanılamıyor. Daha sonra tekrar dene.",

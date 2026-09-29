@@ -11,7 +11,7 @@
  * The parent remounts it per run (`key={runId}`) so a fresh draft never
  * inherits stale edits. On accept it hands back a `DraftCommitPayload`.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { AiDraft, AiRunStatus } from '@/api';
 import { useTheme } from '@/theme';
@@ -25,7 +25,7 @@ import {
   formatMinutes,
 } from '@/components';
 import { DraftPlaceCard } from './DraftPlaceCard';
-import type { DraftCommitPayload, DraftPlaceEdit } from './types';
+import type { DraftCommitPayload, DraftPlaceEdit, DraftReviewSnapshot } from './types';
 
 export interface DraftReviewProps {
   draft: AiDraft;
@@ -37,6 +37,15 @@ export interface DraftReviewProps {
   /** Back to stage 1 with a NEW idempotency key + cleared form. */
   onStartOver: () => void;
   onCommit: (payload: DraftCommitPayload) => void;
+  /**
+   * The run this draft belongs to. With `initialSnapshot`/`onSnapshotChange`
+   * the parent keeps the edit state across unmounts (committing → failed
+   * commit → review, or Edit request → replayed run) so edits are never lost.
+   */
+  runId?: string;
+  /** Last reported edit state; used as the seed only when its runId matches. */
+  initialSnapshot?: DraftReviewSnapshot | null;
+  onSnapshotChange?: (snapshot: DraftReviewSnapshot) => void;
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -50,12 +59,16 @@ export function DraftReview({
   commitError,
   onStartOver,
   onCommit,
+  runId,
+  initialSnapshot,
+  onSnapshotChange,
 }: DraftReviewProps) {
   const t = useTheme();
   const dayCount = clamp(Math.round(draft.dayCount) || 1, 1, 14);
 
+  const seed = runId && initialSnapshot?.runId === runId ? initialSnapshot : null;
   const [edits, setEdits] = useState<DraftPlaceEdit[]>(() =>
-    draft.places.map((p, i) => ({
+    seed ? seed.edits : draft.places.map((p, i) => ({
       localId: `${i}-${p.googlePlaceId}`,
       name: p.name,
       googlePlaceId: p.googlePlaceId,
@@ -67,7 +80,12 @@ export function DraftReview({
       kept: true,
     })),
   );
-  const [title, setTitle] = useState(defaultTitle);
+  const [title, setTitle] = useState(() => (seed ? seed.title : defaultTitle));
+
+  // Report every edit upward so the parent can re-seed after a remount.
+  useEffect(() => {
+    if (runId && onSnapshotChange) onSnapshotChange({ runId, edits, title });
+  }, [runId, edits, title, onSnapshotChange]);
   const [titleError, setTitleError] = useState<string | null>(null);
 
   // Stable handlers so the memoized cards only re-render when THEIR row changes.

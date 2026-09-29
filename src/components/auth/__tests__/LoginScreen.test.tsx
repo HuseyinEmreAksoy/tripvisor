@@ -14,6 +14,7 @@ const mockMutateAsync = jest.fn<(email: string) => Promise<void>>();
 let mockError: unknown = null;
 
 jest.mock('@/api', () => ({
+  useAuthCallbackError: () => ({ error: null, clear: jest.fn() }),
   useSignInWithMagicLink: () => ({
     mutateAsync: mockMutateAsync,
     isPending: false,

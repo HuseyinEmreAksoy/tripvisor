@@ -260,3 +260,47 @@ Money conversion order (MV + Y2.2 lib):
 - Y3.2 TODO:
   - analytics.tsx still sums raw amounts → switch to useMoneySummaries.
   - createTripSchema (trips.ts) lacks currency → add when flipping TripCurrency, and prefill from preferences.
+
+## Wave-2 gate findings (reviewer, 2026-09-29): fix AFTER the 60-agent sweep; check which ones the sweep already fixed
+1. [critical] share-trip publishes other members' shared memories → add .eq('author_id', ownerId) to the 3 queries plus the re-check in isPublicMemoryRow/photoPathsToSign (handler.ts:560-589, 681-687; public-fields.ts:168), and a Deno test.
+2. [high] Anonymous share reads have no rate limit:
+   - add per-token (≈300/day) and per-IP (≈60/h) counters → 429;
+   - sign thumbnails only; full images via a rate-limited op photo_url;
+   - useSharedTrip: staleTime 40 min, no refetchOnWindowFocus;
+   - the OG Pages function uses a light op 'meta'.
+3. [high ToS] The Google cover (TripCover.tsx:96-104, card + hero) shows no author attribution → overlay "© name" linked to the author's uri, or use generated covers only.
+4. [med] Transit makes N−1 Google calls per day with no global cap → reuse fresh routed legs; global consume_service_usage('google_transit', ~300/day) → estimate.
+5. [med] Matrix cache rows (day_index -1) grow without bound, and useTripLegs' 1000-row cap can drop day legs:
+   - purge stale/re-inserted pairs;
+   - order day legs first;
+   - share read .gte('day_index', 0).
+6. [med] The phone hero chip row hides the route-status pill (TripHero.tsx:246-273) → own line / icon + a11y label.
+7. [med] _shared/ai.ts grounding lacks languageCode → AI place names stay English.
+8. [low] PlaceRow crowding at 390px (44px thumb) → 36px thumb on compact.
+9. [low] "TRİPVİSOR"/"TONİGHT'S STAY" from CSS uppercase in tr → literal brand, textTransform none.
+10. [low] The hero gradient top ~3:1 contrast → full scrim from ~0.55, or test the title's top stop.
+11. [low] Upload-queue start() race: a same-user enqueue before the manifest loads → a ready promise + merge.
+12. [low] Storage remove() returns 200 [] under RLS and counts as success → treat empty as not deleted; server sweep of old tombstones.
+13. [low] Public memories truncation sort contradicts its doc.
+14. [low] Public legs lack `source` → add it to PUBLIC_LEG_KEYS.
+15. [low] pickPoiSuggestion falls back to the first Google suggestion with no name/distance check → no_match unless matched.
+16. [low] FX warm after a home change is limited by the 20/day per-user cap → a range/time-series warm.
+- Nit: tr transport mode "Yürüyerek" is better than "Yürüyüş".
+
+## 60-agent sweep (2026-09-29) — committed with this note
+- 174 findings from 30 hunters. 65 were fixed by 14 file-disjoint fixers, plus 8 backend items and the anonymous share rate limit (migration 0040, share-trip contract v4).
+- tsc is now 811.
+- Idea backlog: docs/v2/ideas-backlog.md (147 ideas, 62 quick wins).
+- UI follow-ups:
+  - Shared-trip lightbox → useSharedPhotoUrl(token, photo.id); grids use thumbUrl.
+  - ShareLinkError rate_limited / rate_limit_unavailable → "try again later" (en/tr).
+  - The share.types SharedMemoryPhoto.url comment is outdated (it is the thumbnail in v4).
+  - Removed members can delete/unshare their own memories (the server allows it) → expose in the UI.
+- Deferred F9 items:
+  - An accepted shared trip doesn't reach the Tier-1 store until a resync helper exists.
+  - Invite URLs use the Supabase host (build them client-side with buildAppUrl).
+  - Non-owners see a People list with only themselves (needs a 'members' action).
+  - A removed collaborator keeps the trip on their device (reconcile on my-roles).
+  - Signed photo URLs contain trip/author UUIDs.
+- DECISION TO CONFIRM: duplicate_trip now copies day/order + trip_days (overrides ADR-0006 1/3/6).
+- Deploy additions: db push 0040 → deploy share-trip, optimize-trip, delete-account → Pages (the OG fn uses op meta). Optional secret SHARE_RATE_SECRET.

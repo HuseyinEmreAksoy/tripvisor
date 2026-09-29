@@ -12,7 +12,7 @@
  * HeroScrollContext, a no-op without a provider) and ticks the row
  * thumbnails' lazy on-screen check (useSeenOnScreen).
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   LayoutChangeEvent,
   NativeScrollEvent,
@@ -27,12 +27,49 @@ import { haptics } from '@/lib/haptics';
 import { buildDayChips, liveDayIndex, sectionAtOffset, type DayChip } from './dayChips';
 import { useCollapsedDays, type CollapsedDays } from './useCollapsedDays';
 
+/**
+ * The scroll-tracked active day lives in a tiny external store instead of
+ * React state: onScroll updates it on every day-boundary crossing, and as
+ * state it re-rendered the WHOLE itinerary (every row + per-day draggable
+ * list) mid-scroll. Only the day strip subscribes (useActiveDay).
+ */
+export interface ActiveDayStore {
+  get: () => number | null;
+  set: (dayIndex: number | null) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+export function createActiveDayStore(initial: number | null = null): ActiveDayStore {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      if (next === value) return;
+      value = next;
+      listeners.forEach((l) => l());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+/** Subscribe a (small) component to the active day. */
+export function useActiveDay(store: ActiveDayStore): number | null {
+  return useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+
 export interface DayNavigation {
   todayIndex: number | null;
   dayChips: DayChip[];
   chipByDay: ReadonlyMap<number, DayChip>;
   collapsedDays: CollapsedDays;
-  activeDay: number | null;
+  /** Read via useActiveDay() in the component that renders the strip. */
+  activeDayStore: ActiveDayStore;
   scrollRef: React.RefObject<ScrollView | null>;
   onJump: (dayIndex: number) => void;
   onSectionLayout: (dayIndex: number) => (e: LayoutChangeEvent) => void;
@@ -67,7 +104,8 @@ export function useDayNavigation(
   const scrollRef = useRef<ScrollView>(null);
   const sectionY = useRef(new Map<number, number>());
   const didAutoScroll = useRef(false);
-  const [activeDay, setActiveDay] = useState<number | null>(null);
+  const [activeDayStore] = useState(() => createActiveDayStore());
+  const setActiveDay = activeDayStore.set;
 
   const { expand } = collapsedDays;
   const onJump = useCallback(
@@ -79,7 +117,7 @@ export function useDayNavigation(
       if (y === undefined) return;
       scrollRef.current?.scrollTo({ y: Math.max(0, y - topGap), animated: !reducedMotion });
     },
-    [expand, reducedMotion, topGap],
+    [expand, reducedMotion, topGap, setActiveDay],
   );
 
   const onSectionLayout = useCallback(
@@ -94,7 +132,7 @@ export function useDayNavigation(
         if (y > 0) scrollRef.current?.scrollTo({ y: Math.max(0, y - topGap), animated: false });
       }
     },
-    [todayIndex, topGap],
+    [todayIndex, topGap, setActiveDay],
   );
 
   const reportHero = useHeroScrollReporter();
@@ -102,11 +140,11 @@ export function useDayNavigation(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsets = [...sectionY.current.entries()].map(([dayIndex, y]) => ({ dayIndex, y }));
       const current = sectionAtOffset(offsets, e.nativeEvent.contentOffset.y);
-      if (current !== null) setActiveDay((prev) => (prev === current ? prev : current));
+      if (current !== null) setActiveDay(current); // no-op when unchanged
       reportHero?.(sampleFromScrollEvent(e));
       notifyViewportChange();
     },
-    [reportHero],
+    [reportHero, setActiveDay],
   );
 
   return {
@@ -114,7 +152,7 @@ export function useDayNavigation(
     dayChips,
     chipByDay,
     collapsedDays,
-    activeDay,
+    activeDayStore,
     scrollRef,
     onJump,
     onSectionLayout,

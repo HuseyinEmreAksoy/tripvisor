@@ -25,6 +25,7 @@ export function DraggableItinerary({
   onReorder,
   onLongPress,
   groupLabel,
+  disabled = false,
 }: DraggableItineraryProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -55,7 +56,12 @@ export function DraggableItinerary({
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {items.map((item) => (
-            <SortableRow key={item.id} item={item} onLongPress={onLongPress} />
+            <SortableRow
+              key={item.id}
+              item={item}
+              onLongPress={disabled ? undefined : onLongPress}
+              disabled={disabled}
+            />
           ))}
         </SortableContext>
       </DndContext>
@@ -66,19 +72,22 @@ export function DraggableItinerary({
 function SortableRow({
   item,
   onLongPress,
+  disabled = false,
 }: {
   item: DraggableItem;
   onLongPress?: (id: string) => void;
+  disabled?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
+    disabled,
   });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
+    cursor: disabled ? 'default' : 'grab',
     userSelect: 'none',
   };
 

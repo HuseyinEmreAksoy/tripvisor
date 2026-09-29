@@ -289,6 +289,13 @@ export async function runLlmWithFallback<T>(
 export interface GroundBias {
   destination?: string;
   near?: { lat: number; lng: number };
+  /**
+   * App language (M5 Y2.5, closed enum validated by the callers). Sent as
+   * Places `languageCode` on BOTH the autocomplete and details calls so the
+   * canonical names shown in review surfaces follow the app language
+   * ("Ayasofya" in TR, "Hagia Sophia" in EN). Omitted = Google default.
+   */
+  lang?: 'en' | 'tr';
 }
 
 /** Max circle radius accepted by Places (New) autocomplete locationBias. */
@@ -318,6 +325,7 @@ export async function groundPlaceName(
   let detailsCalls = 0;
   try {
     const acBody: Record<string, unknown> = { input, sessionToken };
+    if (bias.lang) acBody.languageCode = bias.lang;
     if (bias.near) {
       acBody.locationBias = {
         circle: {
@@ -363,6 +371,7 @@ export async function groundPlaceName(
     // Session token propagation — closes the autocomplete session so the
     // pair bills as one Details session instead of two ad-hoc calls.
     detailsUrl.searchParams.set('sessionToken', sessionToken);
+    if (bias.lang) detailsUrl.searchParams.set('languageCode', bias.lang);
     detailsCalls = 1;
     const detRes = await fetchWithTimeout(
       detailsUrl.toString(),

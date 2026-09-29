@@ -170,5 +170,15 @@
       "endBeforeStart": "Bitiş tarihi başlangıçtan önce olamaz",
       "createFailed": "Gezi oluşturulamadı. Bağlantını kontrol edip tekrar dene."
     }
+  },
+  "list": {
+    "errors": {
+      "archive": "Gezi arşivlenemedi. Bağlantını kontrol edip tekrar dene.",
+      "unarchive": "Gezi arşivden çıkarılamadı. Bağlantını kontrol edip tekrar dene.",
+      "duplicate": "Gezinin kopyası oluşturulamadı. Bağlantını kontrol edip tekrar dene."
+    }
+  },
+  "settingsSheet": {
+    "currencyFxFailed": "Bütçeni çevirmek için döviz kuru alınamadı, bu yüzden para birimi değiştirilmedi. Bağlantını kontrol edip tekrar dene."
   }
 }

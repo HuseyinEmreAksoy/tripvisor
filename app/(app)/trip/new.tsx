@@ -107,6 +107,12 @@ type FormValues = z.infer<typeof Schema>;
 const detectedTz =
   (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || null;
 
+/** Locale-tolerant hours parse: "1,5" and "1.5" → 1.5; junk → 0. */
+export function parseHours(raw: string): number {
+  const n = Number(raw.replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function NewTrip() {
   const t = useTheme();
   const { t: tx } = useT(['trip', 'common']);
@@ -138,6 +144,8 @@ export default function NewTrip() {
   });
 
   const currentCurrency = watch('currency');
+  // Raw daily-hours text while the field is being edited (null = show value).
+  const [hoursText, setHoursText] = useState<string | null>(null);
 
   /** An error code from validation / submit → translated text (else null). */
   const errorText = (message: string | undefined): string | null => {
@@ -149,10 +157,17 @@ export default function NewTrip() {
   // Phase 25 Step 25.11: fire currency patch once we have a real trip id.
   // This useEffect runs after the state update that sets pendingCurrencyPatch,
   // at which point updateCurrency is now bound to the correct tripId.
+  //
+  // F3 fix: navigation happens HERE, after the patch is dispatched. Calling
+  // router.replace in onSubmit unmounted this screen in the same commit as
+  // the state update, so this effect never ran and the trip stayed USD. The
+  // mutation itself outlives the unmount (TanStack runs mutationFn to the
+  // end). Interim until createTripSchema accepts `currency` (backend).
   useEffect(() => {
     if (!pendingCurrencyPatch) return;
     updateCurrency.mutate({ currency: pendingCurrencyPatch.currency });
     setPendingCurrencyPatch(null);
+    router.replace(`/trip/${pendingCurrencyPatch.tripId}`);
     // updateCurrency reference changes each render — intentionally omitted from
     // deps to avoid infinite loop. The effect only fires when pendingCurrencyPatch
     // becomes non-null, which only happens once after trip creation.
@@ -178,10 +193,11 @@ export default function NewTrip() {
       });
       // Patch currency if it differs from the DB default ('USD').
       if (parsed.data.currency !== 'USD') {
+        // The hook is bound to `pendingCurrencyPatch?.tripId ?? 'noop'`, which
+        // hasn't updated yet — the effect above fires the patch and THEN
+        // navigates (navigating here would unmount before the effect runs).
         setPendingCurrencyPatch({ tripId: trip.id, currency: parsed.data.currency });
-        // updateCurrency.mutateAsync can't be awaited here because the hook
-        // is bound to `pendingCurrencyPatch?.tripId ?? 'noop'` which hasn't
-        // updated yet. Navigate immediately; the useEffect below fires the patch.
+        return;
       }
       router.replace(`/trip/${trip.id}`);
     } catch {
@@ -294,9 +310,19 @@ export default function NewTrip() {
               render={({ field: { value, onChange, onBlur } }) => (
                 <TextField
                   label={tx('new.fields.hours')}
-                  value={String(value)}
-                  onChangeText={(s) => onChange(Number(s.replace(/[^0-9.]/g, '')) || 0)}
-                  onBlur={onBlur}
+                  value={hoursText ?? String(value)}
+                  onChangeText={(s) => {
+                    // F3 fix: keep the raw text (a trailing "." or "," survives
+                    // re-render) and accept the Turkish decimal comma — "1,5"
+                    // is 1.5 hours, not 15.
+                    const raw = s.replace(/[^0-9.,]/g, '');
+                    setHoursText(raw);
+                    onChange(parseHours(raw));
+                  }}
+                  onBlur={() => {
+                    setHoursText(null);
+                    onBlur();
+                  }}
                   keyboardType="numeric"
                   inputMode="decimal"
                   hint={tx('new.fields.hoursHint')}

@@ -5,9 +5,11 @@
  *   - Empty markers renders "No places added yet" (or similar)
  *   - 5 pins across 2 days are grouped by day, each day section visible
  *   - No "Google" text rendered anywhere in the output
- *   - accessibilityRole="summary" present on root
+ *   - The card is not a single merged a11y element; the title is a header
+ *   - Place rows are pressable (onMarkerPress) and skip the my-location pin
  */
-import { render } from '@testing-library/react-native';
+import { describe, expect, it, jest } from '@jest/globals';
+import { fireEvent, render } from '@testing-library/react-native';
 import { MapUnavailable } from '../MapUnavailable';
 import { ThemeProvider } from '@/theme';
 import type { MapMarker, MapPolyline } from '../Map/types';
@@ -26,11 +28,38 @@ describe('MapUnavailable', () => {
     expect(getByText('No places added yet.')).toBeTruthy();
   });
 
-  it('applies accessibilityRole="summary" on the root card', () => {
-    const { getByRole } = wrap(
-      <MapUnavailable markers={[]} polylines={noPolylines} />,
+  it('exposes the summary on a header, keeping place rows individually focusable', () => {
+    const markers: MapMarker[] = [
+      { id: 'm1', lat: 38.7, lng: -9.2, title: 'Belem Tower', dayIndex: 0, orderInDay: 0 },
+    ];
+    const { getByRole, getByLabelText } = wrap(
+      <MapUnavailable markers={markers} polylines={noPolylines} />,
     );
-    expect(getByRole('summary')).toBeTruthy();
+    expect(getByLabelText('Map unavailable — list of places')).toBeTruthy();
+    expect(getByRole('button', { name: 'Belem Tower' })).toBeTruthy();
+  });
+
+  it('place rows call onMarkerPress with the marker id', () => {
+    const onMarkerPress = jest.fn();
+    const markers: MapMarker[] = [
+      { id: 'm1', lat: 38.7, lng: -9.2, title: 'Belem Tower', dayIndex: 0, orderInDay: 0 },
+    ];
+    const { getByRole } = wrap(
+      <MapUnavailable markers={markers} polylines={noPolylines} onMarkerPress={onMarkerPress} />,
+    );
+    fireEvent.press(getByRole('button', { name: 'Belem Tower' }));
+    expect(onMarkerPress).toHaveBeenCalledWith('m1');
+  });
+
+  it('does not list the my-location pseudo-marker as a place', () => {
+    const markers: MapMarker[] = [
+      { id: '__my_location__', lat: 38.7, lng: -9.2, title: 'My location', dayIndex: null, orderInDay: null },
+    ];
+    const { queryByText, getByText } = wrap(
+      <MapUnavailable markers={markers} polylines={noPolylines} />,
+    );
+    expect(queryByText('My location')).toBeNull();
+    expect(getByText('No places added yet.')).toBeTruthy();
   });
 
   it('renders place names for non-empty markers', () => {

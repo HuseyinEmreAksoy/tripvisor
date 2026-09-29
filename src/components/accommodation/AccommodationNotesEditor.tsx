@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput } from 'react-native';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { useUpdateTripAccommodation } from '@/api/trip-accommodations';
 import type { TripAccommodation } from '@/api/types';
 import { stripConfirmationLine } from './stayUtils';
@@ -25,18 +26,36 @@ export function AccommodationNotesEditor({
   const updateAcc = useUpdateTripAccommodation();
   const [focused, setFocused] = useState(false);
   const [localText, setLocalText] = useState(accommodation.notes ?? '');
+  // A failed save keeps the typed draft (never silently dropped) and shows a
+  // retry affordance until a save succeeds.
+  const [saveError, setSaveError] = useState(false);
+  const { t: tx } = useT('stays');
 
   useEffect(() => {
     setLocalText(accommodation.notes ?? '');
+    setSaveError(false);
   }, [accommodation.notes]);
+
+  function save() {
+    const trimmed = localText.trim();
+    const next = trimmed.length > 0 ? trimmed : null;
+    if (next === accommodation.notes) {
+      setSaveError(false);
+      return;
+    }
+    setSaveError(false);
+    updateAcc.mutate(
+      { id: accommodation.id, notes: next },
+      {
+        onSuccess: () => setSaveError(false),
+        onError: () => setSaveError(true),
+      },
+    );
+  }
 
   function handleBlur() {
     setFocused(false);
-    const trimmed = localText.trim();
-    const next = trimmed.length > 0 ? trimmed : null;
-    if (next !== accommodation.notes) {
-      updateAcc.mutate({ id: accommodation.id, notes: next });
-    }
+    save();
   }
 
   const displayText = stripConfirmationLine(localText) ?? '';
@@ -78,21 +97,38 @@ export function AccommodationNotesEditor({
   }
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        displayText ? `Notes: ${displayText.slice(0, 60)}. Tap to edit.` : `Add note for ${accommodation.name}`
-      }
-      onPress={() => setFocused(true)}
-      style={styles.tapArea}
-    >
-      <Text
-        style={[t.typography.caption, { color: displayText ? t.colors.textMuted : t.colors.primaryInk }]}
-        numberOfLines={displayText ? 2 : undefined}
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          displayText
+            ? `Notes: ${displayText.slice(0, 60)}. Tap to edit.`
+            : `Add note for ${accommodation.name}`
+        }
+        onPress={() => setFocused(true)}
+        style={styles.tapArea}
       >
-        {displayText || 'Add note…'}
-      </Text>
-    </Pressable>
+        <Text
+          style={[t.typography.caption, { color: displayText ? t.colors.textMuted : t.colors.primaryInk }]}
+          numberOfLines={displayText ? 2 : undefined}
+        >
+          {displayText || 'Add note…'}
+        </Text>
+      </Pressable>
+      {saveError ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLiveRegion="polite"
+          aria-live="polite"
+          accessibilityLabel={tx('notes.saveFailed')}
+          onPress={save}
+          disabled={updateAcc.isPending}
+          style={styles.tapArea}
+        >
+          <Text style={[t.typography.caption, { color: t.colors.danger }]}>{tx('notes.saveFailed')}</Text>
+        </Pressable>
+      ) : null}
+    </>
   );
 }
 

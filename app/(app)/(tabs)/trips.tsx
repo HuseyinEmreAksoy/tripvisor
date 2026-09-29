@@ -85,7 +85,10 @@ import { useEdgeRuntimeHealth } from '@/hooks/useEdgeRuntimeHealth';
 import { useSampleTrip } from '@/hooks/useSampleTrip';
 import { confirmDestructive } from '@/lib/confirm';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
-import { applySearch, applyDateFilter, applySort } from '@/lib/tripsFilters';
+import { applySearch, applyDateFilter, applySort, localISODate } from '@/lib/tripsFilters';
+import { useT } from '@/i18n';
+import { ActionErrorBanner } from '@/components/trip-detail/ActionErrorBanner';
+import { deleteTripErrorKey } from '@/components/trip-detail/TripSettingsSheet';
 import type { SortKey, DateFilter } from '@/lib/tripsFilters';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -122,6 +125,7 @@ const DESKTOP_MAX_WIDTH = 1200;
 
 export default function TripsList() {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   const router = useRouter();
   const bp = useBreakpoint();
   const { width: windowWidth } = useWindowDimensions();
@@ -205,20 +209,34 @@ export default function TripsList() {
   const { byTripId: legsByTripId } = useAllTripLegs(activeTripsIds);
 
   // ── Derived / filtered + sorted list ──────────────────────────────────────
-  const today = new Date().toISOString().slice(0, 10);
+  // Local calendar day (trip dates are local days, not UTC). Recomputed each
+  // render and listed in the memo deps so a list left open past midnight
+  // reclassifies on its next render.
+  const today = localISODate();
 
   const displayedTrips = useMemo(() => {
     const searched = applySearch(ownedTrips, debouncedSearch);
     const dateFilt = applyDateFilter(searched, dateFilter, today);
     return applySort(dateFilt, sortKey, legsByTripId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownedTrips, debouncedSearch, dateFilter, sortKey, legsByTripId]);
+  }, [ownedTrips, debouncedSearch, dateFilter, sortKey, legsByTripId, today]);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
   const archiveMutation = useArchiveTrip();
   const unarchiveMutation = useUnarchiveTrip();
   const duplicateMutation = useDuplicateTrip();
   const deleteMutation = useDeleteTrip();
+  // Failures of list-level actions (the sheet is already closed), shown in an
+  // ActionErrorBanner above the list — same copy as the trip detail screen.
+  const [listError, setListError] = useState<string | null>(null);
+  const handleArchive = (id: string) => {
+    setListError(null);
+    archiveMutation.mutate(id, { onError: () => setListError(tx('list.errors.archive')) });
+  };
+  const handleUnarchive = (id: string) => {
+    setListError(null);
+    unarchiveMutation.mutate(id, { onError: () => setListError(tx('list.errors.unarchive')) });
+  };
 
   // ── v2 N1 1.5: onboarding sample trip ──────────────────────────────────────
   const sampleTrip = useSampleTrip();
@@ -238,17 +256,19 @@ export default function TripsList() {
       confirmLabel: 'Delete',
     });
     if (confirmed) {
-      deleteMutation.mutate(id);
+      setListError(null);
+      deleteMutation.mutate(id, { onError: (e) => setListError(tx(deleteTripErrorKey(e))) });
     }
   };
 
   // Phase 25 Step 25.12: navigate to the newly duplicated trip.
   const handleDuplicate = async (id: string) => {
+    setListError(null);
     try {
       const newTripId = await duplicateMutation.mutateAsync(id);
       router.push(`/trip/${newTripId}`);
     } catch {
-      // Mutation already sets its error state; no additional handling needed.
+      setListError(tx('list.errors.duplicate'));
     }
   };
 
@@ -616,8 +636,8 @@ export default function TripsList() {
             <TripCard
               trip={item}
               onPress={() => router.push(`/trip/${item.id}`)}
-              onArchive={(id) => archiveMutation.mutate(id)}
-              onUnarchive={(id) => unarchiveMutation.mutate(id)}
+              onArchive={handleArchive}
+              onUnarchive={handleUnarchive}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
             />,
@@ -643,8 +663,8 @@ export default function TripsList() {
             <TripCard
               trip={item}
               onPress={() => router.push(`/trip/${item.id}`)}
-              onArchive={(id) => archiveMutation.mutate(id)}
-              onUnarchive={(id) => unarchiveMutation.mutate(id)}
+              onArchive={handleArchive}
+              onUnarchive={handleUnarchive}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
             />,
@@ -671,6 +691,8 @@ export default function TripsList() {
   return (
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       {headerContent}
+
+      <ActionErrorBanner message={listError} onDismiss={() => setListError(null)} />
 
       {listArea}
 

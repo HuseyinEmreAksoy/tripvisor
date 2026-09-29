@@ -9,7 +9,9 @@
  *   - accessibilityRole="summary" on root container
  *   - All four emptyStates variants render without throwing
  */
+import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
+import { Text } from 'react-native';
 import { EmptyState } from '../EmptyState';
 import { ThemeProvider } from '@/theme';
 import { noTrips, noPlaces, noSearchResults, searchPrompt } from '../emptyStates';
@@ -86,6 +88,21 @@ describe('EmptyState', () => {
     const { getByRole } = wrap(<EmptyState title="Empty" />);
     const summary = getByRole('summary');
     expect(summary.props.accessibilityLabel).toBe('Empty');
+  });
+
+  it('keeps the CTA and action outside the grouped a11y element (iOS VoiceOver reachability)', () => {
+    const { getByRole, getByText } = wrap(
+      <EmptyState title="Empty" ctaLabel="Go" onPress={() => {}} action={<Text>Extra</Text>} />,
+    );
+    const summary = getByRole('summary');
+    const cta = getByRole('button', { name: 'Go' });
+    const isInside = (node: { parent: unknown } | null): boolean => {
+      let n = node as { parent: unknown } | null;
+      while (n) { if (n === summary) return true; n = n.parent as { parent: unknown } | null; }
+      return false;
+    };
+    expect(isInside(cta)).toBe(false);
+    expect(isInside(getByText('Extra'))).toBe(false);
   });
 });
 

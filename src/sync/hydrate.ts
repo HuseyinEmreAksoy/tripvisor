@@ -116,6 +116,7 @@ import { createSyncPersistence } from './persistence';
 import type { SyncPersistenceResult } from './persistence.types';
 import { TABLE_FOR_KEY, TIER1_STORE_KEYS, tier1Store$, type Tier1StoreKey } from './store';
 import {
+  clearWriteErrors,
   markSyncDegraded,
   markSyncEnabled,
   markSyncRestartRequired,
@@ -137,6 +138,74 @@ export interface InitTier1SyncResult {
 
 let initializedForUser: string | null = null;
 let persistencePlugin: SyncPersistenceResult['plugin'];
+
+/** Thrown by the gated client while the engine is not ACTIVE for a root's user. */
+export const TIER1_SYNC_INACTIVE_MESSAGE = 'tier1 sync inactive';
+
+/**
+ * F11-2 — the supabase client each root's plugin talks through, gated to the
+ * user the root was attached for. Attachments cannot be detached (beta), and
+ * supabase-js re-authorizes EVERY joined realtime channel and every request
+ * with whoever signs in next. Without this gate, user A's roots kept running
+ * after sign-out: B's rows arrived on A's realtime channels (merged into and
+ * persisted under `tier1/A/…`, advancing A's watermark), and A's queued
+ * offline writes retried under B's JWT.
+ *
+ *   - `from()` throws while inactive: pulls and writes (including in-flight
+ *     retries, which call the plugin's fns directly) reject WITHOUT a network
+ *     call; the plugin's retry keeps the change queued until A resumes.
+ *   - realtime handlers drop every event while inactive (a channel can be
+ *     re-joined by the plugin's "listener-added" middleware even after the
+ *     teardown unsubscribe, so the event boundary is the real backstop).
+ */
+function gatedClientFor(userId: string): unknown {
+  const assertActive = () => {
+    if (initializedForUser !== userId) throw new Error(TIER1_SYNC_INACTIVE_MESSAGE);
+  };
+  return {
+    from: (relation: string) => {
+      assertActive();
+      return supabase.from(relation);
+    },
+    schema: (name: string) => {
+      assertActive();
+      return supabase.schema(name);
+    },
+    channel: (...args: Parameters<typeof supabase.channel>) => {
+      const channel = supabase.channel(...args);
+      const on = channel.on.bind(channel) as (...a: unknown[]) => unknown;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RealtimeChannel.on is a heavily overloaded generic; we only wrap the callback
+      (channel as any).on = (type: unknown, filter: unknown, callback: (payload: unknown) => void) =>
+        on(type, filter, (payload: unknown) => {
+          if (initializedForUser === userId) callback(payload);
+        });
+      return channel;
+    },
+  };
+}
+
+/** Per-root sync state (as returned by syncObservable) — teardown/resume toggle it. */
+const rootSyncStates = new Map<Tier1StoreKey, { peek: () => unknown; isSyncEnabled: { set: (v: boolean) => void } }>();
+
+/**
+ * F11-2 — enable/disable the engine for every attached root. Disabling +
+ * sync() makes Legend-State unsubscribe the root's realtime channel
+ * (sync.js: `isSynced && !isSyncEnabled` → unsubscribe) and stops local
+ * edits from being sent. Best-effort: the gated client is the hard stop.
+ */
+function setAttachedRootsSyncEnabled(enabled: boolean): void {
+  for (const state$ of rootSyncStates.values()) {
+    try {
+      state$.isSyncEnabled.set(enabled);
+      if (!enabled) {
+        const sync = (state$.peek() as { sync?: () => unknown } | undefined)?.sync;
+        if (typeof sync === 'function') void Promise.resolve(sync()).catch(() => {});
+      }
+    } catch {
+      // never let teardown/resume throw
+    }
+  }
+}
 
 /**
  * The C3 boundary: every row the sync engine loads passes through here.
@@ -262,7 +331,8 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
     obs$,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped supabase client vs the plugin's Database-generic inference (see note above)
     (syncedSupabase as any)({
-      supabase,
+      // F11-2: gated to this root's user (see gatedClientFor).
+      supabase: gatedClientFor(userId),
       collection: table,
       // Network half of the C3 firewall: restricted columns are never
       // requested. RLS scopes rows to the JWT (owner + accepted
@@ -325,7 +395,11 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
       ...(table === 'trips' ? {} : { fieldDeleted: 'deleted' }),
       // Offline write queue: keep retrying sets until they land (exponential
       // 1s → 30s cap). See header for the RLS-rejection caveat.
-      ...(writable ? { retry: { infinite: true, backoff: 'exponential', maxDelay: 30000 } } : {}),
+      // F11-4: EVERY root gets it (reads are idempotent). Without a retry a
+      // failed get rejected and sync.js never decremented numPendingGets, so
+      // isGetting stuck at true and the root's lastSyncAt froze for the
+      // session. With it a get always ends in handle() (→ stamp below).
+      retry: { infinite: true, backoff: 'exponential', maxDelay: 30000 },
       transform: {
         load: (row: Record<string, unknown>) => loadRow(table, row, userId),
         ...(writable
@@ -405,6 +479,12 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
   state$.isGetting.onChange(({ value }) => {
     if (value === false && state$.isLoaded.peek() === true) stampHydrated();
   });
+  // F11-3: the write queue drained — every change landed, so earlier failed
+  // attempts no longer mean "Sync issues".
+  state$.numPendingSets.onChange(({ value }) => {
+    if (!value) clearWriteErrors(table);
+  });
+  rootSyncStates.set(key, state$);
 
   // Row-count (+ last-sync once remotely loaded) telemetry. A shallow
   // listener is enough — any hydration/realtime merge fires it; tables are
@@ -566,6 +646,9 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
       // (X1.3: previously a sign-out → sign-in left the pill hidden).
       const wasActive = initializedForUser !== null;
       initializedForUser = opts.userId;
+      // F11-2: teardown disabled the roots (channels unsubscribed); re-enable
+      // before the resync so the pulls re-subscribe realtime.
+      if (!wasActive) setAttachedRootsSyncEnabled(true);
       markSyncRestartRequired(false);
       if (!wasActive) markSyncEnabled();
       resyncTier1();
@@ -635,10 +718,19 @@ export async function initTier1Sync(opts: { userId: string }): Promise<InitTier1
     // attached some roots; re-attaching them would double-subscribe
     // (duplicate pulls, realtime channels and write queues).
     attachBindingUser = opts.userId;
-    for (const key of TIER1_STORE_KEYS) {
-      if (attachedRoots.has(key)) continue;
-      attachEntity(key, opts.userId);
-      attachedRoots.add(key);
+    // F11-2: the gated client only talks to the network while the engine is
+    // active for this user — mark it active BEFORE attaching so the first
+    // pulls are not bounced into a retry backoff. Reset if attach throws.
+    initializedForUser = opts.userId;
+    try {
+      for (const key of TIER1_STORE_KEYS) {
+        if (attachedRoots.has(key)) continue;
+        attachEntity(key, opts.userId);
+        attachedRoots.add(key);
+      }
+    } catch (err) {
+      initializedForUser = null;
+      throw err;
     }
     if (!reconnectListenerAttached) {
       attachReconnectResync();
@@ -741,5 +833,9 @@ export function teardownTier1Sync(): void {
   if (bootInFlight) bootCancelled = true;
   if (initializedForUser === null) return;
   initializedForUser = null;
+  // F11-2: stop the engine, not just the facades — the gated client now
+  // refuses network calls for the torn-down user, and disabling each root
+  // unsubscribes its realtime channel (see gatedClientFor for why both).
+  setAttachedRootsSyncEnabled(false);
   markSyncStopped();
 }

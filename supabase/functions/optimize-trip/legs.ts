@@ -341,6 +341,12 @@ export interface LegResult {
   /** directions-polyline transitSteps, stored verbatim (0023); null otherwise. */
   transitSteps: unknown[] | null;
   source: LegSource;
+  /**
+   * Set only on a leg REUSED from an earlier run (sweep fix): the original
+   * trip_legs.computed_at, kept on re-insert so the Google 30-day ToS clock
+   * never restarts. Absent = computed now.
+   */
+  computedAt?: string;
 }
 
 export function estimatedLegResult(leg: PlannedLeg): LegResult {
@@ -486,6 +492,90 @@ export function countLegSources(results: ReadonlyArray<{ source: LegSource }>): 
   const counts: LegSourceCounts = { ors: 0, google: 0, estimate: 0, user: 0 };
   for (const r of results) counts[r.source] += 1;
   return counts;
+}
+
+// ============================================================================
+// Matrix requests (sweep fix: ask only for the pairs the cache is missing)
+// ============================================================================
+
+/**
+ * One distance-matrix request: every origin x every destination (indexes
+ * into the caller's place list). distance-matrix always answers the full
+ * cross product and bills origins x destinations elements.
+ */
+export interface MatrixRequestPlan {
+  origins: number[];
+  destinations: number[];
+}
+
+/**
+ * Cost of one extra request, in elements. Two calls instead of one only pay
+ * off when they save more than this (ORS counts requests, not elements, and
+ * each call is a round trip).
+ */
+export const MATRIX_CALL_PENALTY_ELEMENTS = 10;
+
+/**
+ * Cover the missing ordered pairs (fromIndex, toIndex) with at most TWO
+ * rectangular requests, minimising the billed elements (+ the call penalty).
+ *
+ * Origins are sorted by how many destinations they miss (most first) and
+ * split at the best point i: the top i origins x their destination union,
+ * plus the rest x theirs. A trip with k new places (all their pairs missing,
+ * plus every old place -> the new ones) costs k*N + (N-k)*k elements instead
+ * of N*N; a first run (everything missing) stays one N x N request. Every
+ * missing pair is covered exactly once (the split partitions the origins).
+ * Pure; deterministic for a given input.
+ */
+export function planMatrixRequests(
+  missing: ReadonlyArray<readonly [number, number]>,
+  callPenalty: number = MATRIX_CALL_PENALTY_ELEMENTS,
+): MatrixRequestPlan[] {
+  if (missing.length === 0) return [];
+  const rows = new Map<number, Set<number>>();
+  for (const [from, to] of missing) {
+    let row = rows.get(from);
+    if (!row) rows.set(from, (row = new Set<number>()));
+    row.add(to);
+  }
+  const origins = [...rows.keys()].sort((a, b) => rows.get(b)!.size - rows.get(a)!.size || a - b);
+  const n = origins.length;
+
+  // prefix[i] = destination union of origins[0..i), suffix[i] = of origins[i..n).
+  const prefix: Array<Set<number>> = [new Set<number>()];
+  for (let i = 0; i < n; i++) {
+    const next = new Set(prefix[i]);
+    for (const d of rows.get(origins[i]!)!) next.add(d);
+    prefix.push(next);
+  }
+  const suffix: Array<Set<number>> = new Array(n + 1);
+  suffix[n] = new Set<number>();
+  for (let i = n - 1; i >= 0; i--) {
+    const next = new Set(suffix[i + 1]);
+    for (const d of rows.get(origins[i]!)!) next.add(d);
+    suffix[i] = next;
+  }
+
+  let best = 0; // 0 = one request with every origin
+  let bestCost = n * suffix[0]!.size;
+  for (let i = 1; i < n; i++) {
+    const cost = i * prefix[i]!.size + (n - i) * suffix[i]!.size + callPenalty;
+    if (cost < bestCost) {
+      best = i;
+      bestCost = cost;
+    }
+  }
+  const sorted = (s: Iterable<number>) => [...s].sort((a, b) => a - b);
+  if (best === 0) return [{ origins: sorted(origins), destinations: sorted(suffix[0]!) }];
+  return [
+    { origins: sorted(origins.slice(0, best)), destinations: sorted(prefix[best]!) },
+    { origins: sorted(origins.slice(best)), destinations: sorted(suffix[best]!) },
+  ];
+}
+
+/** Billed elements of a plan (sum of origins x destinations). */
+export function planElements(plan: ReadonlyArray<MatrixRequestPlan>): number {
+  return plan.reduce((sum, r) => sum + r.origins.length * r.destinations.length, 0);
 }
 
 /** Visit minutes + travel minutes of a day, rounded (response `totalMinutes`). */

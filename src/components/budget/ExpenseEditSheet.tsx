@@ -25,6 +25,7 @@ import { Button } from '@/components/Button';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { useTheme } from '@/theme';
 import { haptics } from '@/lib/haptics';
+import { appLanguage } from '@/i18n';
 import { useCreateTripExpense, useUpdateTripExpense } from '@/api';
 import type { TripExpense, TripExpenseCategory, TripExpenseKind } from '@/api/types';
 import { AmountKeypad } from './AmountKeypad';
@@ -87,7 +88,9 @@ export function ExpenseEditSheet({
   const t = useTheme();
   const createExpense = useCreateTripExpense();
   const updateExpense = useUpdateTripExpense();
-  const currencyPrefix = (currency ?? 'USD').toUpperCase();
+  // Edit mode shows the ROW's own currency (amount is stored in it, never the
+  // trip home); a legacy NULL row is in the home currency.
+  const currencyPrefix = (expense?.currency ?? currency ?? 'USD').toUpperCase();
   const isEdit = expense !== null;
 
   function initialForm(): FormState {
@@ -128,7 +131,8 @@ export function ExpenseEditSheet({
   }
 
   async function handleSave() {
-    const amount = parseAmount(form.amountText);
+    // The native keypad always emits '.' decimals; typed web input follows the app language.
+    const amount = parseAmount(form.amountText, { language: USE_KEYPAD ? 'en' : appLanguage() });
     if (amount === null) {
       setError('Enter a valid amount (e.g. 42 or 9.99).');
       haptics.error();

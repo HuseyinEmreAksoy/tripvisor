@@ -22,16 +22,22 @@
  *   a non-blocking inline note appears and the computed timeline keeps
  *   working off the session value.
  *
- * NOTE on notes preservation: useUpdateTripDay's upsert always writes the
- * `notes` column, so we MUST thread the current notes through or a start-time
- * edit would wipe the day's notes. See `buildPatch()`.
+ * NOTE on notes preservation: useUpdateTripDay has partial-update semantics
+ * (omitted columns are left untouched), so the start-time write sends ONLY
+ * `start_time`. Threading `dayRecord.notes` through would write a possibly
+ * stale cached value and wipe a note another editor (or a just-flushed notes
+ * insert) wrote in the meantime.
+ *
+ * Durability: stepper taps are debounced 500ms; explicit commits (Done, blur,
+ * submit) flush immediately, and a pending write is flushed on unmount
+ * (collapsing the day / leaving the tab) instead of being dropped.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { Icon } from '@/components/Icon';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
-import { useUpdateTripDay, type TripDay, type UpdateTripDayInput } from '@/api';
+import { useUpdateTripDay, type TripDay } from '@/api';
 import {
   formatClockTime,
   minutesToTimeValue,
@@ -71,37 +77,55 @@ export function DayStartTimeControl({
   const [draftText, setDraftText] = useState<string | null>(null);
   const [invalidDraft, setInvalidDraft] = useState(false);
 
-  // Debounced persistence: stepper taps coalesce into one upsert.
-  const debouncedPersist = useDebouncedCallback((minutes: number) => {
-    const patch = {
-      trip_id: tripId,
-      day_index: dayIndex,
-      // Preserve existing notes — the upsert writes the notes column
-      // unconditionally, so omitting this would null them out.
-      notes: dayRecord?.notes ?? null,
-      // v2 0020: start_time lands with migration 0020 + the widened api
-      // schema (backend-specialist, in parallel). Cast keeps tsc strict
-      // without touching src/api from UI code.
-      start_time: minutesToTimeValue(minutes),
-    } as UpdateTripDayInput & { start_time?: string };
-    updateDay.mutate(patch);
-  }, 500);
+  // `dayRecord` stays in the props contract but is intentionally NOT read:
+  // the write is start_time-only (see header).
+  void dayRecord;
 
-  function commit(minutes: number) {
+  // Latest write inputs, readable from the unmount cleanup below.
+  const persistRef = useRef({ tripId, dayIndex, mutate: updateDay.mutate });
+  persistRef.current = { tripId, dayIndex, mutate: updateDay.mutate };
+  /** Minutes waiting on the debounce timer (null = nothing pending). */
+  const pendingRef = useRef<number | null>(null);
+
+  function persistNow(minutes: number) {
+    pendingRef.current = null;
+    const { tripId: tid, dayIndex: di, mutate } = persistRef.current;
+    // Partial upsert — start_time ONLY, never notes.
+    mutate({ trip_id: tid, day_index: di, start_time: minutesToTimeValue(minutes) });
+  }
+
+  // Debounced persistence: stepper taps coalesce into one upsert.
+  const debouncedPersist = useDebouncedCallback(persistNow, 500);
+
+  // useDebouncedCallback cancels (never flushes) on unmount, and the day
+  // header unmounts this control when collapsed — so write a pending value
+  // here instead of silently dropping it.
+  useEffect(() => {
+    return () => {
+      if (pendingRef.current !== null) persistNow(pendingRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function commit(minutes: number, immediate = false) {
     const clamped = Math.min(MAX_START_MINUTES, Math.max(0, minutes));
     setInvalidDraft(false);
     setDraftText(formatClockTime(clamped));
     onChangeMinutes(clamped); // timeline updates instantly
+    pendingRef.current = clamped;
     debouncedPersist(clamped); // server catches up
+    if (immediate) debouncedPersist.flush();
   }
 
-  function commitDraftText(text: string) {
+  /** Explicit commit (Done / blur / submit). False when the draft is invalid. */
+  function commitDraftText(text: string): boolean {
     const parsed = parseStartTime(text, -1);
     if (parsed < 0) {
       setInvalidDraft(true);
-      return;
+      return false;
     }
-    commit(parsed);
+    commit(parsed, true);
+    return true;
   }
 
   const label = formatClockTime(valueMinutes);
@@ -189,8 +213,8 @@ export function DayStartTimeControl({
           accessibilityRole="button"
           accessibilityLabel={`Done editing Day ${dayIndex + 1} start time`}
           onPress={() => {
-            commitDraftText(draftText ?? label);
-            setExpanded(false);
+            // Keep the editor (and its error text) open on a malformed draft.
+            if (commitDraftText(draftText ?? label)) setExpanded(false);
           }}
           style={styles.doneBtn}
         >

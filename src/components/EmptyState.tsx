@@ -84,9 +84,6 @@ export function EmptyState({
   return (
     <View
       style={[styles.root, { padding: t.spacing.xl, gap: t.spacing.lg }]}
-      accessible
-      accessibilityRole="summary"
-      accessibilityLabel={bodyText ? `${title}. ${bodyText}` : title}
     >
       {illustration ? (
         <Animated.View style={{ transform: [{ translateY: floatAnim }] }}>
@@ -112,6 +109,15 @@ export function EmptyState({
         </Animated.View>
       ) : null}
 
+      {/* Only title + body form one grouped a11y element. The CTA and legacy
+          `action` stay siblings outside it: on iOS an `accessible` View hides its
+          children from VoiceOver, so grouping the whole root made buttons unreachable. */}
+      <View
+        style={[styles.textGroup, { gap: t.spacing.lg }]}
+        accessible
+        accessibilityRole="summary"
+        accessibilityLabel={bodyText ? `${title}. ${bodyText}` : title}
+      >
       <Text
         ref={titleRef}
         style={[
@@ -137,6 +143,7 @@ export function EmptyState({
           {bodyText}
         </Text>
       ) : null}
+      </View>
 
       {/* New-style CTA — signature pill */}
       {ctaLabel && onPress ? (
@@ -169,6 +176,7 @@ export function EmptyState({
 
 const styles = StyleSheet.create({
   root: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  textGroup: { alignItems: 'center' },
   iconTile: {
     width: 112,
     height: 112,

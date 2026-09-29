@@ -42,10 +42,13 @@ export function DayNotesEditor({
   // changes from the server (e.g. another device write / optimistic flush).
   const [localText, setLocalText] = useState(persistedNotes ?? '');
 
-  // Keep local text in sync with server state when notes are updated externally.
+  // Keep local text in sync with server state when notes are updated
+  // externally — but never while the editor is open: the echo of our own
+  // (trimmed) save would clobber in-progress typing.
   useEffect(() => {
+    if (expanded) return;
     setLocalText(persistedNotes ?? '');
-  }, [persistedNotes]);
+  }, [persistedNotes, expanded]);
 
   const debouncedSave = useDebouncedCallback((value: string) => {
     const trimmed = value.trim();
@@ -128,7 +131,7 @@ export function DayNotesEditor({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Collapse day notes"
-        onPress={() => setExpanded(false)}
+        onPress={() => { debouncedSave.flush(); setExpanded(false); }}
         style={{ alignSelf: 'flex-end' }}
       >
         <Text style={[t.typography.caption, { color: t.colors.primaryInk }]}>Done</Text>
@@ -157,10 +160,12 @@ export function PlaceNotesEditor({ place, canEdit = true }: { place: TripPlace; 
   const [showMore, setShowMore] = useState(false);
   const [localText, setLocalText] = useState(place.notes ?? '');
 
-  // Sync from server when the notes prop changes (cache invalidation).
+  // Sync from server when the notes prop changes (cache invalidation) — only
+  // while not editing, so our own trimmed save echo never overwrites typing.
   useEffect(() => {
+    if (focused) return;
     setLocalText(place.notes ?? '');
-  }, [place.notes]);
+  }, [place.notes, focused]);
 
   const debouncedSave = useDebouncedCallback((value: string) => {
     const trimmed = value.trim();

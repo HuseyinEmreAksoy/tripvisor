@@ -29,6 +29,9 @@ import { useTheme } from '@/theme';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { confirmDestructive } from '@/lib/confirm';
 import type { TripExpense } from '@/api/types';
+import { useTripMoneySummary } from '@/api/trip-expenses';
+import type { RowMoney } from '@/lib/money/types';
+import { useT } from '@/i18n';
 import { categoryMeta, dailySpend, shortDayLabel, todayDayIndex } from './expenseMath';
 import { DailySpendStrip, type SpendFilter } from './DailySpendStrip';
 
@@ -49,6 +52,7 @@ export interface ExpenseListProps {
 
 export function ExpenseList({
   expenses,
+  tripId,
   currency,
   canEdit,
   onAdd,
@@ -60,7 +64,13 @@ export function ExpenseList({
   const t = useTheme();
   const [filter, setFilter] = useState<SpendFilter>(null);
 
-  const spend = useMemo(() => dailySpend(expenses, tripDayCount ?? 0), [expenses, tripDayCount]);
+  // Per-row home-currency outcome (converted / rate pending). The strip sums
+  // converted home values only — never raw amounts of mixed currencies.
+  const moneyRows = useTripMoneySummary(tripId).data?.rows;
+  const spend = useMemo(
+    () => dailySpend(expenses, tripDayCount ?? 0, { rows: moneyRows, home: currency }),
+    [expenses, tripDayCount, moneyRows, currency],
+  );
   const hasActual = spend.max > 0 || spend.unassigned > 0;
   const todayIndex = todayDayIndex(tripStartDate, spend.days.length, new Date());
 
@@ -145,6 +155,7 @@ export function ExpenseList({
               key={expense.id}
               expense={expense}
               currency={currency}
+              money={moneyRows?.[expense.id]}
               canEdit={canEdit}
               onEdit={() => onEdit(expense)}
               onDelete={() => void confirmDelete(expense, currency, onDelete)}
@@ -159,12 +170,15 @@ export function ExpenseList({
 function ExpenseRow({
   expense,
   currency,
+  money,
   canEdit,
   onEdit,
   onDelete,
 }: {
   expense: TripExpense;
   currency?: string | null;
+  /** This row's outcome from useTripMoneySummary (undefined while loading). */
+  money?: RowMoney;
   canEdit: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -172,7 +186,18 @@ function ExpenseRow({
   const t = useTheme();
   const meta = categoryMeta(expense.category);
   const isActual = expense.kind === 'actual';
-  const fmt = (n: number) => formatCurrency(n, currency);
+  const { t: tx } = useT('money');
+  // `amount` is in the ROW's currency (NULL = legacy home row), never the home.
+  const rowCurrency = expense.currency ?? currency;
+  const fmt = (n: number) => formatCurrency(n, rowCurrency);
+  const isForeign =
+    !!expense.currency && !!currency && expense.currency.toUpperCase() !== currency.toUpperCase();
+  const converted =
+    isForeign && money?.status === 'converted'
+      ? `≈ ${formatCurrency(money.home.value, money.home.currency)}`
+      : isForeign && money?.status === 'pending'
+        ? tx('expenses.ratePending')
+        : null;
 
   return (
     <View
@@ -186,10 +211,14 @@ function ExpenseRow({
           gap: t.spacing.sm,
         },
       ]}
-      accessible
-      accessibilityLabel={`${meta.label}, ${expense.kind}, ${fmt(expense.amount)}${expense.label ? `, ${expense.label}` : ''}`}
     >
-      <View style={[styles.row, { justifyContent: 'space-between' }]}>
+      {/* Only the read-only summary is `accessible`; the Edit/Delete buttons
+          below stay siblings so screen readers can still focus them. */}
+      <View
+        style={[styles.row, { justifyContent: 'space-between' }]}
+        accessible
+        accessibilityLabel={`${meta.label}, ${expense.kind}, ${fmt(expense.amount)}${converted ? `, ${converted}` : ''}${expense.label ? `, ${expense.label}` : ''}`}
+      >
         <View style={[styles.row, { gap: t.spacing.sm, flex: 1 }]}>
           {/* Category icon */}
           <Text
@@ -265,10 +294,13 @@ function ExpenseRow({
           </View>
         </View>
 
-        {/* Amount */}
-        <Text style={[t.typography.bodyStrong, { color: t.colors.text, marginLeft: t.spacing.sm }]}>
-          {fmt(expense.amount)}
-        </Text>
+        {/* Amount (original currency) + converted / rate-pending hint */}
+        <View style={{ alignItems: 'flex-end', marginLeft: t.spacing.sm }}>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.text }]}>{fmt(expense.amount)}</Text>
+          {converted ? (
+            <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{converted}</Text>
+          ) : null}
+        </View>
       </View>
 
       {/* Actions */}
@@ -320,7 +352,7 @@ async function confirmDelete(
   const meta = categoryMeta(expense.category);
   const confirmed = await confirmDestructive({
     title: 'Delete expense?',
-    message: `Remove this ${meta.label} expense of ${formatCurrency(expense.amount, currency)}?`,
+    message: `Remove this ${meta.label} expense of ${formatCurrency(expense.amount, expense.currency ?? currency)}?`,
     confirmLabel: 'Delete',
   });
   if (confirmed) onDelete(expense);

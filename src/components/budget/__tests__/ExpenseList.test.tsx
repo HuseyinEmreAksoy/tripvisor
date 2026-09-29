@@ -9,6 +9,11 @@ jest.mock('@/lib/haptics', () => ({
   haptics: { tap: jest.fn(), select: jest.fn(), success: jest.fn(), impact: jest.fn(), warning: jest.fn(), error: jest.fn() },
 }));
 
+const mockRows: Record<string, unknown> = {};
+jest.mock('@/api/trip-expenses', () => ({
+  useTripMoneySummary: () => ({ data: { rows: mockRows } }),
+}));
+
 function expense(id: string, overrides: Partial<TripExpense>): TripExpense {
   return {
     id,
@@ -74,5 +79,46 @@ describe('ExpenseList (X2.4 spend strip)', () => {
       />,
     );
     expect(queryByLabelText('Filter expenses by day')).toBeNull();
+  });
+
+  it('shows a foreign row in its own currency with the converted home value', () => {
+    mockRows['9'] = {
+      status: 'converted',
+      method: 'stored',
+      original: { currency: 'TRY', exact: '1500', value: 1500 },
+      home: { currency: 'EUR', exact: '30', value: 30 },
+      rate: 0.02,
+    };
+    const { getByText, queryByText } = wrap(
+      <ExpenseList
+        expenses={[expense('9', { amount: 1500, currency: 'TRY', label: 'Dinner' })]}
+        tripId="t1"
+        currency="EUR"
+        canEdit
+        onAdd={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(queryByText('€1,500.00')).toBeNull();
+    expect(getByText(/1,500/)).toBeTruthy();
+    expect(getByText(/≈ €30/)).toBeTruthy();
+    delete mockRows['9'];
+  });
+
+  it('keeps Edit/Delete focusable (the row root is not a single accessible node)', () => {
+    const { getByRole } = wrap(
+      <ExpenseList
+        expenses={[expenses[0]!]}
+        tripId="t1"
+        currency="EUR"
+        canEdit
+        onAdd={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(getByRole('button', { name: /Edit expense/ })).toBeTruthy();
+    expect(getByRole('button', { name: /Delete expense/ })).toBeTruthy();
   });
 });

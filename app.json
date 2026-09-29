@@ -32,7 +32,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-location",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "locationWhenInUsePermission": "Tripvisor uses your location to show where you are on the map and to build a route from your current location to the first place on your itinerary."
+        }
+      ],
       [
         "expo-localization",
         {

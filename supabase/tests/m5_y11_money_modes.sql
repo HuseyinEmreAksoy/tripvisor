@@ -481,9 +481,17 @@ begin
   end if;
   select count(*) into n from public.trip_expenses where trip_id = v_copy;
   if n <> 0 then raise exception 'FAIL 6a: % expenses were cloned (ADR-0006: never)', n; end if;
-  select count(*) into n from public.trip_days where trip_id = v_copy;
-  if n <> 0 then raise exception 'FAIL 6a: trip_days were cloned'; end if;
-  raise notice 'PASS 6a: duplicate keeps the home currency + arrival overrides; no expenses/days/legs cloned';
+  -- 0040 §5 supersedes ADR-0006 #3: live trip_days are user-authored (notes,
+  -- start time, day mode) and ARE copied now (full coverage: sweep_fixes_0040.sql D).
+  select count(*) into n from public.trip_days d
+   where d.trip_id = v_copy
+     and d.day_index = 0
+     and d.transport_mode is not distinct from (select s.transport_mode from public.trip_days s
+                                                 where s.id = '03450000-0000-4000-8000-0000000000a1');
+  if n <> 1 then raise exception 'FAIL 6a: the live trip_day (with its mode) was not copied (0040)'; end if;
+  select count(*) into n from public.trip_legs where trip_id = v_copy;
+  if n <> 0 then raise exception 'FAIL 6a: % legs were cloned (never)', n; end if;
+  raise notice 'PASS 6a: duplicate keeps the home currency + arrival overrides + days; no expenses/legs cloned';
 end $$;
 
 select set_config('request.jwt.claims', '{"sub":"03410000-0000-4000-8000-00000000000e","role":"authenticated"}', true) \g /dev/null

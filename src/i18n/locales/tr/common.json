@@ -6,7 +6,8 @@
     "goBackTo": "Geri dön: {{label}}",
     "next": "İleri",
     "cancel": "Vazgeç",
-    "done": "Tamam"
+    "done": "Tamam",
+    "selectDate": "Tarih seç"
   },
   "language": {
     "system": "Sistem",

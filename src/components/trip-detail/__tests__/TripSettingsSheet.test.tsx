@@ -9,10 +9,21 @@
  * cover sections are mocked.
  */
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import { ThemeProvider } from '@/theme';
 import { i18n, setLanguagePreference } from '@/i18n';
-import { TripSettingsSheet, deleteTripErrorKey, type DeleteTripErrorKey } from '../TripSettingsSheet';
+import {
+  TripSettingsSheet,
+  convertBudget,
+  deleteTripErrorKey,
+  type DeleteTripErrorKey,
+} from '../TripSettingsSheet';
+
+const mockUpdateMutate = jest.fn();
+const mockFetchFxRate = jest.fn<(from: string, to: string, date?: string) => Promise<{ rate: number }>>();
+jest.mock('@/api/fx', () => ({
+  fetchFxRate: (from: string, to: string, date?: string) => mockFetchFxRate(from, to, date),
+}));
 
 jest.mock('@/api', () => {
   class DeleteTripError extends Error {
@@ -24,7 +35,7 @@ jest.mock('@/api', () => {
       this.status = status;
     }
   }
-  return { DeleteTripError, useUpdateTrip: () => ({ mutate: jest.fn() }) };
+  return { DeleteTripError, useUpdateTrip: () => ({ mutate: mockUpdateMutate }) };
 });
 jest.mock('@/api/ics', () => ({ useDownloadTripIcs: () => ({ mutateAsync: jest.fn() }) }));
 jest.mock('../CoverPhotoSection', () => ({ CoverPhotoSection: () => null }));
@@ -97,5 +108,69 @@ describe('TripSettingsSheet — danger zone', () => {
     expect(
       getByText('Gezinin dosyaları kaldırılamadı, bu yüzden hiçbir şey silinmedi. Tekrar dene.').props.accessibilityRole,
     ).toBe('alert');
+  });
+});
+
+describe('TripSettingsSheet — home currency change converts the budget (F3)', () => {
+  function renderSheet(totalBudget: number | null) {
+    return render(
+      <ThemeProvider>
+        <TripSettingsSheet
+          visible
+          onClose={jest.fn()}
+          tripId="trip-1"
+          startDate="2026-10-01"
+          endDate="2026-10-03"
+          dailyHoursBudget={8}
+          transportMode="walking"
+          currency="TRY"
+          totalBudget={totalBudget}
+          hasPlaces
+          canEdit
+          isOwner
+          coverPhotoPlaceId={null}
+          onDelete={jest.fn()}
+          deleting={false}
+        />
+      </ThemeProvider>,
+    );
+  }
+
+  it('rounds to the target currency minor units', () => {
+    expect(convertBudget(50000, 0.02, 'EUR')).toBe(1000);
+    expect(convertBudget(100, 1.23456, 'USD')).toBe(123.46);
+    expect(convertBudget(10, 161.234, 'JPY')).toBe(1612);
+  });
+
+  it('writes the converted budget together with the new currency', async () => {
+    mockUpdateMutate.mockReset();
+    mockFetchFxRate.mockResolvedValue({ rate: 0.02 });
+    const { getByText } = renderSheet(50000);
+    await act(async () => {
+      fireEvent.press(getByText('EUR'));
+    });
+    expect(mockFetchFxRate).toHaveBeenCalledWith('TRY', 'EUR', 'latest');
+    expect(mockUpdateMutate).toHaveBeenCalledWith({ currency: 'EUR', total_budget: 1000 });
+  });
+
+  it('keeps the old currency when no rate is reachable', async () => {
+    mockUpdateMutate.mockReset();
+    mockFetchFxRate.mockRejectedValue(new Error('offline'));
+    const { getByText } = renderSheet(50000);
+    await act(async () => {
+      fireEvent.press(getByText('EUR'));
+    });
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
+  });
+
+  it('without a budget only the currency changes', async () => {
+    mockUpdateMutate.mockReset();
+    mockFetchFxRate.mockReset();
+    const { getByText } = renderSheet(null);
+    await act(async () => {
+      fireEvent.press(getByText('EUR'));
+    });
+    expect(mockFetchFxRate).not.toHaveBeenCalled();
+    expect(mockUpdateMutate).toHaveBeenCalledWith({ currency: 'EUR' });
   });
 });

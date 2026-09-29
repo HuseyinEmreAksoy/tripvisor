@@ -7,14 +7,21 @@
     "rateLimited": "Çok fazla deneme yapıldı. Bir dakika bekleyip tekrar dene.",
     "invalidEmail": "Bu e-posta adresi doğru görünmüyor.",
     "emailRequired": "E-posta adresi gerekli.",
-    "emailInUse": "Bu e-posta adresi zaten kullanılıyor."
+    "emailInUse": "Bu e-posta adresi zaten kullanılıyor.",
+    "callbackFailed": "Bu giriş bağlantısı çalışmadı. Süresi dolmuş ya da daha önce kullanılmış olabilir, lütfen yeni bir bağlantı iste."
   },
   "account": {
     "deleteFailed": "Hesabın silinemedi. Lütfen tekrar dene.",
-    "exportFailed": "Verilerin dışa aktarılamadı. Lütfen tekrar dene."
+    "exportFailed": "Verilerin dışa aktarılamadı. Lütfen tekrar dene.",
+    "signOutFailed": "Çıkış yapılamadı. Bağlantını kontrol edip tekrar dene."
   },
   "places": {
     "quotaExceeded": "Günlük yer arama sınırına ulaşıldı. Yarın tekrar dene.",
-    "detailsFailed": "Bu yer yüklenemedi. İnternet bağlantını kontrol edip tekrar dene."
+    "detailsFailed": "Bu yer yüklenemedi. İnternet bağlantını kontrol edip tekrar dene.",
+    "searchFailed": "Şu anda yer araması yapılamıyor. Lütfen tekrar deneyin.",
+    "searchOffline": "Çevrimdışısınız. Bağlantı gelince yer araması yeniden çalışır.",
+    "detailsOffline": "Çevrimdışı olduğunuz için bu yer yüklenemiyor. Başka bir yer seçin ya da bağlanınca tekrar deneyin.",
+    "retry": "Tekrar dene",
+    "readOnly": "Bu geziyi görüntüleyebilirsiniz ama yer ekleyemezsiniz. Düzenleme izni için gezi sahibine başvurun."
   }
 }

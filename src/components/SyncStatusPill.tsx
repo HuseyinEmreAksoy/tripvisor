@@ -36,6 +36,11 @@
  *     resyncTier1() + invalidate trips/trip-places TanStack queries (covers
  *     the flag-off-fallback read path too), and "Dismiss".
  *
+ * 0. "Restart to enable offline sync" (muted) — shown even while the engine
+ *    is NOT enabled when telemetry says `restartRequired` (a different user
+ *    signed in after the engine attached in this process; hydrate.ts keeps
+ *    the engine off). Its sheet explains the restart; web offers a reload.
+ *
  * The relative age refreshes on a 30 s interval re-render — useSyncStatus
  * recomputes lastSyncAgeMs from Date.now() on every render, so no extra
  * bookkeeping is needed.
@@ -51,6 +56,8 @@ import type { SyncEntityTelemetry } from '@/sync/telemetry';
 import { resyncTier1 } from '@/sync/hydrate';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { reloadApp } from './SyncStatusPillReload';
+import { useT } from '@/i18n';
 
 /** Human labels for the Tier-1 tables (entities keys). Unknown tables — a
  * future write-slice expansion — fall back to the raw table name. */
@@ -117,6 +124,7 @@ function problemSummary(e: SyncEntityTelemetry): string {
 
 export function SyncStatusPill() {
   const t = useTheme();
+  const { t: tx } = useT('shell');
   const status = useSyncStatus();
   const online = useIsOnline();
   const qc = useQueryClient();
@@ -131,6 +139,50 @@ export function SyncStatusPill() {
     const id = setInterval(() => setAgeTick((n) => n + 1), 30_000);
     return () => clearInterval(id);
   }, [status.enabled]);
+
+  // Account switch in the same process: the engine stays off until restart.
+  // Say so instead of silently looking "not synced".
+  if (!status.enabled && status.restartRequired) {
+    return (
+      <>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={tx('syncPill.restart.a11y')}
+          accessibilityLiveRegion="polite"
+          onPress={() => setDetailOpen(true)}
+          hitSlop={6}
+          style={({ pressed }) => [
+            styles.pill,
+            {
+              backgroundColor: t.colors.bgMuted,
+              borderRadius: t.radius.pill,
+              paddingHorizontal: t.spacing.md,
+              opacity: pressed ? 0.6 : 1,
+            },
+            Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
+          ]}
+        >
+          <Text style={[t.typography.small, { color: t.colors.textMuted, fontWeight: '700' }]} numberOfLines={1}>
+            {tx('syncPill.restart.label')}
+          </Text>
+        </Pressable>
+        <BottomSheet
+          visible={detailOpen}
+          onClose={() => setDetailOpen(false)}
+          accessibilityLabel={tx('syncPill.restart.title')}
+        >
+          <Text style={[t.typography.subtitle, { color: t.colors.text }]} accessibilityRole="header">
+            {tx('syncPill.restart.title')}
+          </Text>
+          <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
+            {tx(reloadApp ? 'syncPill.restart.bodyWeb' : 'syncPill.restart.bodyNative')}
+          </Text>
+          {reloadApp ? <Button label={tx('syncPill.restart.reload')} onPress={reloadApp} /> : null}
+          <Button label={tx('syncPill.restart.dismiss')} variant="ghost" onPress={() => setDetailOpen(false)} />
+        </BottomSheet>
+      </>
+    );
+  }
 
   // Flag off / engine torn down → invisible (hooks above ran unconditionally).
   if (!status.enabled) return null;

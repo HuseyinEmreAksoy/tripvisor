@@ -28,6 +28,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useRouter } from 'expo-router';
 import { PRIVACY_HREF, TERMS_HREF } from '@/components/legal/LegalLinks';
 import { ChangeEmailModal } from '@/components/profile/ChangeEmailModal';
+import { isAccountGoneError } from '@/components/profile/deleteAccountOutcome';
 import { LanguagePicker } from '@/components/profile/LanguagePicker';
 import { toLocaleUpper, useT } from '@/i18n';
 
@@ -88,7 +89,10 @@ export default function SettingsScreen() {
         method: 'POST',
       });
 
-      if (error) {
+      // A 401 on retry or "Account removed but data cleanup failed" means the
+      // auth user is already gone: fall through to the wipe + sign-out so the
+      // device never keeps a zombie session and the deleted user's data.
+      if (error && !(await isAccountGoneError(error))) {
         setDeleteError('errors:account.deleteFailed');
         return;
       }
@@ -168,7 +172,7 @@ export default function SettingsScreen() {
               },
             ]}
           >
-            <Text style={styles.avatarText}>{initial}</Text>
+            <Text style={[styles.avatarText, { color: t.colors.primaryText }]}>{initial}</Text>
           </View>
           <View style={{ flex: 1, gap: 2 }}>
             <Text
@@ -348,6 +352,16 @@ export default function SettingsScreen() {
           </Text>
         ) : null}
 
+        {signOut.error && !isDeleting ? (
+          <Text
+            style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            {tx('errors:account.signOutFailed')}
+          </Text>
+        ) : null}
+
         {deleteError ? (
           <Text
             style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
@@ -382,7 +396,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: {
-    color: '#FFFFFF',
     fontSize: 20,
     fontWeight: '700',
   },

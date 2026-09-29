@@ -105,3 +105,49 @@ describe('dailySpend', () => {
     expect(result.days).toEqual([0, 0, 0, 0, 10]);
   });
 });
+
+describe('parseAmount (locale-aware grouping)', () => {
+  it('never reads a thousands separator as a decimal point', () => {
+    expect(parseAmount('1,250', { language: 'en' })).toBe(1250);
+    expect(parseAmount('5,000')).toBe(5000);
+    expect(parseAmount('10.000', { language: 'tr' })).toBe(10000);
+    expect(parseAmount('12,5', { language: 'tr' })).toBe(12.5);
+    expect(parseAmount('1.234,56', { language: 'tr' })).toBe(1234.56);
+  });
+  it('still accepts keypad-style dot decimals in tr', () => {
+    expect(parseAmount('12.5', { language: 'tr' })).toBe(12.5);
+  });
+});
+
+describe('dailySpend (multi-currency)', () => {
+  it('sums converted home values only and counts pending rows separately', () => {
+    const jpy = expense({ id: 'jpy', day_index: 1, amount: 2000, currency: 'JPY' });
+    const eur = expense({ id: 'eur', day_index: 1, amount: 20, currency: 'EUR' });
+    const usd = expense({ id: 'usd', day_index: null, amount: 50, currency: 'USD' });
+    const home = (value: number) => ({ currency: 'EUR', exact: String(value), value });
+    const result = dailySpend([jpy, eur, usd], 2, {
+      home: 'EUR',
+      rows: {
+        jpy: { status: 'converted', method: 'stored', original: { currency: 'JPY', exact: '2000', value: 2000 }, home: home(12.5), rate: 0.00625 },
+        eur: { status: 'converted', method: 'identity', original: home(20), home: home(20), rate: 1 },
+        usd: { status: 'pending', reason: 'no_rate', original: { currency: 'USD', exact: '50', value: 50 } },
+      } as never,
+    });
+    expect(result.days).toEqual([0, 32.5]);
+    expect(result.unassigned).toBe(0);
+    expect(result.pendingUnassigned).toBe(1);
+  });
+  it('without a summary, skips foreign-currency rows instead of adding them 1:1', () => {
+    const result = dailySpend(
+      [
+        expense({ day_index: 0, amount: 2000, currency: 'JPY' }),
+        expense({ day_index: 0, amount: 20, currency: 'EUR' }),
+        expense({ day_index: 0, amount: 5 }),
+      ],
+      1,
+      { home: 'EUR' },
+    );
+    expect(result.days).toEqual([25]);
+    expect(result.pendingDays).toEqual([1]);
+  });
+});

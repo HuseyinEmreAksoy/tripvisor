@@ -44,8 +44,31 @@
 //         private `trip-memories` bucket (never a public bucket).
 //       Notes (`places[].notes`, `trip_days.notes`) stay private: there is
 //       no "show notes" toggle in v3.
+//       - OWNER-AUTHORED ONLY (F9 privacy fix): a collaborator's `trip`-
+//         visibility items are shared with the trip MEMBERS, never with the
+//         public. The query filters `author_id = trips.user_id` and
+//         `isPublicMemoryRow` re-checks it; `author_id` is fetched for that
+//         re-check only and never emitted.
+//       - `legs[].source` ADDED ('ors' | 'google' | 'estimate' | …, 0035) so
+//         the page can mark estimated legs (≈). Legs are returned only when
+//         BOTH endpoints are live places on the public itinerary.
+//       - Row caps keep the NEWEST items (journal/photos are fetched newest
+//         first and re-sorted oldest-first for display).
+//   4 (Wave-2 sweep, 2026-09-29; shape-compatible with v3):
+//       - `read` signs THUMBNAILS only. `memories.photos[].url` now carries
+//         the thumbnail URL too (same value as `thumbUrl`, so a v3 page keeps
+//         rendering, at thumbnail size). The full image comes from the new
+//         op `photo_url` { token, photoId } -> { url, expiresAt } (rate
+//         limited, one photo per call).
+//       - New op `meta` { token } -> { trip: { title, start_date, end_date },
+//         placeCount } for link previews (no memories, no signing).
+//       - Anonymous ops answer 429 `rate_limited` (+ Retry-After) past the
+//         per-link / per-IP caps (./rate-limit.ts), 503 `rate_limit_unavailable`
+//         when the counter is down (fails closed).
+//       - `legs` are day legs only (day_index >= 0): matrix-cache rows never
+//         reach the page.
 
-export const SHARE_READ_CONTRACT_VERSION = 3 as const;
+export const SHARE_READ_CONTRACT_VERSION = 4 as const;
 
 export const PUBLIC_TRIP_KEYS = [
   'title',
@@ -78,6 +101,7 @@ export const PUBLIC_LEG_KEYS = [
   'distance_meters',
   'polyline',
   'computed_at',
+  'source',
 ] as const;
 
 /** Keys that must NEVER appear on the anonymous read payload (regression guard). */
@@ -147,11 +171,12 @@ export function settingsToColumns(patch: Partial<ShareSettings>): Record<string,
 // `visibility` / `deleted` / `status` are fetched only for the re-check.
 // ===========================================================================
 
-export const PUBLIC_JOURNAL_FIELDS = 'id, day_index, body, created_at, visibility, deleted';
+// `author_id` is fetched ONLY for the owner-authored re-check; it is never emitted.
+export const PUBLIC_JOURNAL_FIELDS = 'id, day_index, body, created_at, visibility, deleted, author_id';
 export const PUBLIC_REVIEW_FIELDS =
-  'id, trip_place_id, rating, body, created_at, place_name_snapshot, visibility, deleted';
+  'id, trip_place_id, rating, body, created_at, place_name_snapshot, visibility, deleted, author_id';
 export const PUBLIC_PHOTO_FIELDS =
-  'id, day_index, trip_place_id, storage_path, thumb_path, width, height, caption, taken_at, created_at, visibility, deleted, status';
+  'id, day_index, trip_place_id, storage_path, thumb_path, width, height, caption, taken_at, created_at, visibility, deleted, status, author_id';
 
 /** Row caps per section (payload size + signing work per anonymous read). */
 export const MAX_PUBLIC_JOURNAL = 200;
@@ -162,10 +187,13 @@ export type MemoryKind = 'journal' | 'review' | 'photo';
 
 /**
  * THE public-memory predicate (0036 visibility model). Only shared, live
- * rows; photos also need status = 'ready'. Anything else (`only_me`,
- * tombstones, pending uploads, a missing column) is private.
+ * rows AUTHORED BY THE TRIP OWNER; photos also need status = 'ready'.
+ * Anything else (`only_me`, a collaborator's item, tombstones, pending
+ * uploads, a missing column or owner id) is private.
  */
-export function isPublicMemoryRow(row: Row, kind: MemoryKind): boolean {
+export function isPublicMemoryRow(row: Row, kind: MemoryKind, ownerId: string | null | undefined): boolean {
+  if (typeof ownerId !== 'string' || ownerId === '') return false;
+  if (row.author_id !== ownerId) return false;
   if (row.visibility !== 'trip') return false;
   if (row.deleted !== false) return false;
   if (kind === 'photo' && row.status !== 'ready') return false;
@@ -203,7 +231,10 @@ export interface PublicPhoto {
   height: number | null;
   /** Signed URL of the ~400 px thumbnail (expires at `memories.photoUrlExpiresAt`). */
   thumbUrl: string;
-  /** Signed URL of the full image (same expiry). */
+  /**
+   * v4: the THUMBNAIL URL again (kept so v3 pages still render). The full
+   * image is fetched on demand with op `photo_url`.
+   */
   url: string;
 }
 
@@ -229,18 +260,50 @@ function intOrNull(v: unknown): number | null {
 export type SignedUrlMap = ReadonlyMap<string, string>;
 
 /**
- * Photo rows -> the storage paths to sign. Runs the public predicate first:
- * an `only_me` / tombstoned / pending photo's path is never even signed.
+ * Photo rows -> the storage paths a `read` signs: THUMBNAILS only (v4; the
+ * full image goes through the rate-limited `photo_url` op). Runs the public
+ * predicate first: an `only_me` / tombstoned / pending photo's path is never
+ * even signed.
  */
-export function photoPathsToSign(photos: readonly Row[]): string[] {
+export function photoPathsToSign(photos: readonly Row[], ownerId: string | null | undefined): string[] {
   const out: string[] = [];
   for (const p of photos) {
-    if (!isPublicMemoryRow(p, 'photo')) continue;
-    const full = str(p.storage_path);
+    if (!isPublicMemoryRow(p, 'photo', ownerId)) continue;
     const thumb = str(p.thumb_path);
-    if (full && thumb) out.push(thumb, full);
+    if (thumb && str(p.storage_path)) out.push(thumb);
   }
   return out;
+}
+
+/**
+ * The storage path `photo_url` signs for ONE photo row: its full image, only
+ * when the row passes the public predicate. null = not public.
+ */
+export function fullPhotoPathToSign(photo: Row | null | undefined, ownerId: string | null | undefined): string | null {
+  if (!photo || !isPublicMemoryRow(photo, 'photo', ownerId)) return null;
+  return str(photo.storage_path);
+}
+
+// ===========================================================================
+// `meta` (link previews): title + dates + place count, nothing else
+// ===========================================================================
+
+export const PUBLIC_META_TRIP_KEYS = ['title', 'start_date', 'end_date'] as const;
+export const META_TRIP_FIELDS = PUBLIC_META_TRIP_KEYS.join(', ');
+
+export interface PublicShareMeta {
+  trip: Partial<Record<(typeof PUBLIC_META_TRIP_KEYS)[number], unknown>>;
+  /** Live places on the public itinerary (0 when the owner hid it). */
+  placeCount: number;
+  meta: { contractVersion: typeof SHARE_READ_CONTRACT_VERSION };
+}
+
+export function buildPublicShareMeta(trip: Row, placeCount: number): PublicShareMeta {
+  return {
+    trip: pickPublic(trip, PUBLIC_META_TRIP_KEYS),
+    placeCount: Number.isInteger(placeCount) && placeCount > 0 ? placeCount : 0,
+    meta: { contractVersion: SHARE_READ_CONTRACT_VERSION },
+  };
 }
 
 /**
@@ -255,6 +318,8 @@ export function buildPublicMemories(input: {
   photos: readonly Row[];
   places: readonly Row[];
   publicPlaceIds: ReadonlySet<string>;
+  /** trips.user_id — only the owner's own items are ever public. */
+  ownerId: string | null | undefined;
   signed: SignedUrlMap;
   photoUrlExpiresAt: string | null;
   truncated: boolean;
@@ -271,7 +336,7 @@ export function buildPublicMemories(input: {
 
   const journal: PublicJournalEntry[] = [];
   for (const j of input.journal) {
-    if (!isPublicMemoryRow(j, 'journal')) continue;
+    if (!isPublicMemoryRow(j, 'journal', input.ownerId)) continue;
     const id = str(j.id);
     const dayIndex = intOrNull(j.day_index);
     const body = str(j.body) ?? '';
@@ -282,7 +347,7 @@ export function buildPublicMemories(input: {
 
   const reviews: PublicReview[] = [];
   for (const r of input.reviews) {
-    if (!isPublicMemoryRow(r, 'review')) continue;
+    if (!isPublicMemoryRow(r, 'review', input.ownerId)) continue;
     const id = str(r.id);
     if (!id) continue;
     const rating = intOrNull(r.rating);
@@ -304,14 +369,14 @@ export function buildPublicMemories(input: {
 
   const photos: PublicPhoto[] = [];
   for (const p of input.photos) {
-    if (!isPublicMemoryRow(p, 'photo')) continue;
+    if (!isPublicMemoryRow(p, 'photo', input.ownerId)) continue;
     const id = str(p.id);
-    const full = str(p.storage_path);
     const thumb = str(p.thumb_path);
-    const url = full ? input.signed.get(full) : undefined;
     const thumbUrl = thumb ? input.signed.get(thumb) : undefined;
+    // v4: `url` is the thumbnail too (full size via op `photo_url`).
+    const url = thumbUrl;
     // No URL = nothing to show (signing failed for this object).
-    if (!id || !url || !thumbUrl) continue;
+    if (!id || !url || !thumbUrl || !str(p.storage_path)) continue;
     photos.push({
       id,
       dayIndex: intOrNull(p.day_index),
@@ -349,6 +414,28 @@ export interface PublicSharePayload<E = unknown> {
 }
 
 /**
+ * Only legs whose BOTH endpoints are live places on the public itinerary.
+ * trip_legs has no tombstone (a soft-deleted place keeps its legs until the
+ * next optimize), so a stale leg would draw a route to a removed stop.
+ */
+export function publicLegs(
+  legs: readonly Row[] | null | undefined,
+  places: readonly Row[] | null | undefined,
+): Row[] {
+  const ids = new Set<string>();
+  for (const p of places ?? []) {
+    if (p.deleted === true) continue;
+    const id = str(p.id);
+    if (id) ids.add(id);
+  }
+  return (legs ?? []).filter((l) => {
+    const from = str(l.from_place_id);
+    const to = str(l.to_place_id);
+    return !!from && !!to && ids.has(from) && ids.has(to);
+  });
+}
+
+/**
  * Shape the anonymous read response from raw DB rows (allow-list only).
  * `settings` defaults to the pre-M5 behavior (itinerary only). A section's
  * key is present ONLY when its toggle is on AND the caller supplied it, so a
@@ -366,7 +453,7 @@ export function buildPublicSharePayload<E = unknown>(input: {
   const payload: PublicSharePayload<E> = {
     trip: pickPublic(input.trip, PUBLIC_TRIP_KEYS),
     places: settings.showItinerary ? (input.places ?? []).map((p) => pickPublic(p, PUBLIC_PLACE_KEYS)) : [],
-    legs: settings.showItinerary ? (input.legs ?? []).map((l) => pickPublic(l, PUBLIC_LEG_KEYS)) : [],
+    legs: settings.showItinerary ? publicLegs(input.legs, input.places).map((l) => pickPublic(l, PUBLIC_LEG_KEYS)) : [],
     sections: {
       itinerary: settings.showItinerary,
       expenses: settings.showExpenses,

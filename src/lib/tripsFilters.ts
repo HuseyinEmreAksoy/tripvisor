@@ -50,6 +50,17 @@ const collator = new Intl.Collator(undefined, { sensitivity: 'base' });
 // ── Exported helpers ──────────────────────────────────────────────────────────
 
 /**
+ * Today's LOCAL calendar date as YYYY-MM-DD. Trip dates are local calendar
+ * days, so `toISOString()` (UTC) would misclassify trips near midnight.
+ */
+export function localISODate(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
  * Case-insensitive substring match on `trip.title`.
  * Trims leading/trailing whitespace from the query before comparing.
  */

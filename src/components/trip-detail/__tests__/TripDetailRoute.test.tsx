@@ -17,7 +17,9 @@ import type { ReactElement, ReactNode } from 'react';
 import { ThemeProvider } from '@/theme';
 import TripDetail from '../../../../app/(app)/trip/[id]/index';
 
-const mockOptimize = jest.fn();
+type OptimizeCallbacks = { onSuccess?: () => void; onError?: (e: unknown) => void };
+const mockOptimize = jest.fn<(input: unknown, cbs?: OptimizeCallbacks) => void>();
+let mockOptimizePending = false;
 const mockDeleteMutateAsync = jest.fn<(id: string) => Promise<string>>();
 let mockRole: { role: 'owner' | 'editor' | 'viewer' | null; canEditTrip: boolean } = {
   role: 'owner',
@@ -57,7 +59,7 @@ jest.mock('@/api', () => ({
   useTrip: () => ({ data: mockTrip, isLoading: false, error: null, refetch: jest.fn() }),
   useTripPlaces: () => ({ data: mockPlaces, isLoading: false }),
   useTripLegs: () => ({ data: [] }),
-  useOptimizeTrip: () => ({ mutate: mockOptimize, isPending: false, error: null }),
+  useOptimizeTrip: () => ({ mutate: mockOptimize, isPending: mockOptimizePending, error: null }),
   useDeleteTrip: () => ({ mutateAsync: mockDeleteMutateAsync, isPending: false }),
   useDuplicateTrip: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
@@ -141,6 +143,7 @@ function wrap(node: ReactElement) {
 beforeEach(() => {
   jest.useFakeTimers();
   mockOptimize.mockReset();
+  mockOptimizePending = false;
   mockDeleteMutateAsync.mockReset();
   mockRole = { role: 'owner', canEditTrip: true };
 });
@@ -159,7 +162,10 @@ describe('TripDetail — auto-optimize role gate', () => {
     wrap(<TripDetail />);
     flushDebounce();
     expect(mockOptimize).toHaveBeenCalledTimes(1);
-    expect(mockOptimize).toHaveBeenCalledWith({ tripId: 'trip-1', mode: 'optimized' });
+    expect(mockOptimize).toHaveBeenCalledWith(
+      { tripId: 'trip-1', mode: 'optimized' },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it('never auto-optimizes for a viewer (server would 403 not_editor)', () => {
@@ -181,6 +187,48 @@ describe('TripDetail — auto-optimize role gate', () => {
       </ThemeProvider>,
     );
     flushDebounce();
+    expect(mockOptimize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TripDetail — auto-optimize retry (F3)', () => {
+  const rerender = (utils: ReturnType<typeof wrap>) =>
+    utils.rerender(
+      <ThemeProvider>
+        <TripDetail />
+      </ThemeProvider>,
+    );
+
+  it('retries after a 409 already_optimizing once the in-flight call settles', () => {
+    const utils = wrap(<TripDetail />);
+    flushDebounce();
+    expect(mockOptimize).toHaveBeenCalledTimes(1);
+    mockOptimizePending = true;
+    rerender(utils);
+    act(() => {
+      mockOptimize.mock.calls[0]![1]!.onError!({ code: 'already_optimizing' });
+    });
+    mockOptimizePending = false;
+    rerender(utils);
+    act(() => {
+      jest.advanceTimersByTime(3100);
+    });
+    expect(mockOptimize).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hot-loop on a non-transient error for the same state', () => {
+    const utils = wrap(<TripDetail />);
+    flushDebounce();
+    mockOptimizePending = true;
+    rerender(utils);
+    act(() => {
+      mockOptimize.mock.calls[0]![1]!.onError!({ code: 'routes_api_error' });
+    });
+    mockOptimizePending = false;
+    rerender(utils);
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
     expect(mockOptimize).toHaveBeenCalledTimes(1);
   });
 });

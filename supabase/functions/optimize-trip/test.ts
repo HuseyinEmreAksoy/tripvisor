@@ -87,6 +87,9 @@ let editorRoleResult: unknown = true;
 let tripDayRows: unknown[] = [];
 let tripDaysStatus = 200;
 let appConfigRows: unknown[] = [];
+// Sweep fix: every Google transit call takes one unit of the global daily
+// budget (consume_service_usage). true = granted; the budget tests flip it.
+let transitBudget: { status: number; body: unknown } = { status: 200, body: true };
 
 interface FetchCall {
   url: string;
@@ -120,6 +123,7 @@ function captureFetch(
         : jsonResp({ message: 'boom', code: 'XX000' }, tripDaysStatus);
     }
     if (url.includes('/rest/v1/app_config') && method === 'GET') return jsonResp(appConfigRows);
+    if (url.includes('/rest/v1/rpc/consume_service_usage')) return jsonResp(transitBudget.body, transitBudget.status);
     if (url.includes('/rest/v1/trip_legs') && method === 'DELETE') return jsonResp(null, 204);
     return await Promise.resolve(handle(call));
   }) as typeof fetch;
@@ -907,6 +911,7 @@ interface InsertedLeg {
   polyline: string | null;
   transit_steps: unknown[] | null;
   source: string;
+  computed_at?: string;
 }
 interface Assignment {
   id: string;
@@ -1193,9 +1198,12 @@ test('Y2.3 optimized: a flight/ferry day keeps its manual_rank order; only its l
   const lastCacheRow = out.inserted.map((r) => r.day_index < 0).lastIndexOf(true);
   assert(firstDayLeg > lastCacheRow, 'cache rows are written before day legs (last-wins for pre-Y2.3 clients)');
 
-  // Day legs are replaced, the matrix cache is kept.
-  assertEquals(out.deletes.length, 1);
-  assertStringIncludes(out.deletes[0]!, 'day_index=gte.0');
+  // Day legs are replaced, the matrix cache is kept (only purged: sweep fix).
+  const dayLegDeletes = out.deletes.filter((d) => d.includes('day_index=gte.0'));
+  assertEquals(dayLegDeletes.length, 1);
+  for (const d of out.deletes.filter((d) => !d.includes('day_index=gte.0'))) {
+    assertStringIncludes(d, 'day_index=lt.0', 'any other delete is a matrix-cache purge');
+  }
   assertEquals(out.body.legSources, { ors: 2, google: 0, estimate: 1, user: 1 });
   assertEquals(out.body.meta.contractVersion, 2);
   assertEquals(out.body.stateHash.length, 64, 'layout-aware hash when a day was kept');
@@ -1445,3 +1453,273 @@ test('Y2.3: a failed trip_days read fails closed (500), no writes and no routing
     tripDaysStatus = 200;
   }
 });
+
+// ============================================================================
+// Sweep fixes: missing-pairs-only matrix, negative cache, cache purge,
+// transit reuse + global transit budget
+// ============================================================================
+
+/** Answers every requested cell except same-spot cells and `skip(from, to)`. */
+function pairMatrix(seconds: number, skip: (a: LatLngReq, b: LatLngReq) => boolean = () => false, provider = 'ors') {
+  return (b: MatrixReq): Response => {
+    const legs: Array<{ fromIndex: number; toIndex: number; durationSeconds: number; distanceMeters: number }> = [];
+    b.origins.forEach((o, i) =>
+      b.destinations.forEach((d, j) => {
+        if (sameSpot(o, d) || skip(o, d)) return;
+        legs.push({ fromIndex: i, toIndex: j, durationSeconds: seconds, distanceMeters: 1000 });
+      }),
+    );
+    return jsonResp({ legs, provider });
+  };
+}
+
+function cacheRow(
+  from: Y23Place,
+  to: Y23Place,
+  extra: Partial<{ id: string; source: string; computed_at: string; transport_mode: string; duration_seconds: number }> = {},
+) {
+  return {
+    id: `c-${from.id.slice(-4)}-${to.id.slice(-4)}`,
+    from_place_id: from.id,
+    to_place_id: to.id,
+    duration_seconds: 600,
+    distance_meters: 5000,
+    computed_at: new Date(Date.now() - 24 * 60 * 60 * 1000 * 2).toISOString(),
+    transport_mode: 'driving',
+    source: 'ors',
+    day_index: -1,
+    ...extra,
+  };
+}
+
+const elements = (calls: MatrixReq[]) => calls.reduce((n, c) => n + c.origins.length * c.destinations.length, 0);
+
+test('sweep: one new place -> only its pairs are requested (two small requests, not N x N)', async () => {
+  const old = Array.from({ length: 6 }, (_, i) => y23Place(100 + i, 38.7 + i * 0.01, -9.2));
+  const added = y23Place(110, 38.8, -9.1);
+  const cachedLegs = old.flatMap((a) => old.filter((b) => b.id !== a.id).map((b) => cacheRow(a, b)));
+  const out = await runY23({
+    trip: y23Trip('driving', 24),
+    places: [...old, added],
+    mode: 'optimized',
+    cachedLegs,
+    matrix: pairMatrix(500),
+    directions: routedRun('ors'),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.matrixCalls.length, 2);
+  assertEquals(elements(out.matrixCalls), 12, '6 + 6 elements instead of 7 x 7 = 49');
+  for (const c of out.matrixCalls) {
+    const touchesNew = [...c.origins, ...c.destinations].some((p) => sameSpot(p, added));
+    assert(touchesNew, 'every request involves the new place');
+  }
+  const cache = out.inserted.filter((r) => r.day_index < 0);
+  assertEquals(cache.length, 12, 'only the 12 new pairs are written');
+  for (const r of cache) assert(r.from_place_id === added.id || r.to_place_id === added.id);
+  assertEquals(out.body.cacheHit, false);
+});
+
+test('sweep: a pair answered without a route is negative-cached, then not asked again', async () => {
+  const A = y23Place(120, 38.70, -9.20);
+  const B = y23Place(121, 38.71, -9.19);
+  const C = y23Place(122, 38.72, -9.18);
+  const noRoute = (a: LatLngReq, b: LatLngReq) => sameSpot(a, A) && sameSpot(b, C);
+
+  // Run 1: no cache. A -> C comes back empty.
+  const first = await runY23({
+    trip: y23Trip('driving', 24),
+    places: [A, B, C],
+    mode: 'optimized',
+    matrix: pairMatrix(500, noRoute),
+    directions: routedRun('ors'),
+  });
+  assertEquals(first.res.status, 200);
+  const cache1 = first.inserted.filter((r) => r.day_index < 0);
+  assertEquals(cache1.length, 6);
+  const neg = cache1.find((r) => r.from_place_id === A.id && r.to_place_id === C.id)!;
+  assertEquals([neg.source, neg.transport_mode, neg.polyline], ['estimate', 'driving', null]);
+  assertEquals(neg.duration_seconds, estimateLeg('driving', A, C).durationSeconds);
+  for (const r of cache1.filter((r) => r !== neg)) assertEquals(r.source, 'ors');
+
+  // Run 2: the rows of run 1 (fresh): nothing is asked, the negative row included.
+  const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const cachedLegs = cache1.map((r, i) => ({ ...r, id: `row-${i}`, computed_at: fresh }));
+  const second = await runY23({
+    trip: y23Trip('driving', 24),
+    places: [A, B, C],
+    mode: 'optimized',
+    cachedLegs,
+    matrix: () => jsonResp({ error: 'must not be called' }, 500),
+    directions: routedRun('ors'),
+  });
+  assertEquals(second.res.status, 200);
+  assertEquals(second.matrixCalls.length, 0, 'a known-unroutable pair is not re-requested');
+  assertEquals(second.body.cacheHit, true);
+  assertEquals(second.inserted.filter((r) => r.day_index < 0).length, 0);
+
+  // Run 3: the negative row expired (25 h): only that pair is asked (1 x 1),
+  // and the old row is purged by id before the new one is inserted.
+  const expired = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+  const negIdx = cache1.indexOf(neg);
+  const third = await runY23({
+    trip: y23Trip('driving', 24),
+    places: [A, B, C],
+    mode: 'optimized',
+    cachedLegs: cachedLegs.map((r, i) => (i === negIdx ? { ...r, computed_at: expired } : r)),
+    matrix: pairMatrix(700),
+    directions: routedRun('ors'),
+  });
+  assertEquals(third.res.status, 200);
+  assertEquals(third.matrixCalls.length, 1);
+  assertEquals(elements(third.matrixCalls), 1);
+  assert(sameSpot(third.matrixCalls[0]!.origins[0]!, A) && sameSpot(third.matrixCalls[0]!.destinations[0]!, C));
+  const cache3 = third.inserted.filter((r) => r.day_index < 0);
+  assertEquals(cache3.map((r) => [r.from_place_id, r.to_place_id, r.source, r.duration_seconds]), [[A.id, C.id, 'ors', 700]]);
+  const byId = third.deletes.find((d) => d.includes('id=in.'));
+  assert(byId, 'the superseded row is deleted');
+  assertStringIncludes(byId!, `id=in.(row-${negIdx})`);
+  assertStringIncludes(byId!, 'day_index=lt.0');
+  const insertIdx = third.calls.findIndex((c) => c.url.includes('/rest/v1/trip_legs') && c.method === 'POST');
+  const purgeIdx = third.calls.findIndex(
+    (c) => c.url.includes('/rest/v1/trip_legs') && c.method === 'DELETE' && decodeURIComponent(c.url).includes('id=in.'),
+  );
+  assert(purgeIdx >= 0 && purgeIdx < insertIdx, 'purge runs before the insert');
+});
+
+test('sweep: a transit pair without a connection is negative-cached and fed to the optimizer as an estimate', async () => {
+  const A = y23Place(130, 38.70, -9.20);
+  const B = y23Place(131, 38.71, -9.19);
+  const out = await runY23({
+    trip: y23Trip('transit', 24),
+    places: [A, B],
+    mode: 'optimized',
+    matrix: pairMatrix(900, (a, b) => sameSpot(a, B) && sameSpot(b, A), 'google'),
+    directions: () =>
+      jsonResp({ polyline: null, durationSeconds: 900, distanceMeters: 2000, transitSteps: [], provider: 'google' }),
+  });
+  assertEquals(out.res.status, 200);
+  const cache = out.inserted.filter((r) => r.day_index < 0);
+  assertEquals(
+    cache.map((r) => [r.from_place_id, r.to_place_id, r.source]).sort(),
+    [[A.id, B.id, 'google'], [B.id, A.id, 'estimate']].sort(),
+  );
+});
+
+test('sweep: every optimized run purges expired / orphaned matrix-cache rows (never day legs)', async () => {
+  const A = y23Place(140, 38.70, -9.20);
+  const B = y23Place(141, 38.71, -9.19);
+  const out = await runY23({
+    trip: y23Trip('driving', 24),
+    places: [A, B],
+    mode: 'optimized',
+    matrix: pairMatrix(300),
+    directions: routedRun('ors'),
+  });
+  assertEquals(out.res.status, 200);
+  const purge = out.deletes.find((d) => d.includes('or=('));
+  assert(purge, `a filter purge ran: ${out.deletes.join(' | ')}`);
+  assertStringIncludes(purge!, `trip_id=eq.${TRIP_ID}`);
+  assertStringIncludes(purge!, 'day_index=lt.0');
+  assertStringIncludes(purge!, 'computed_at.lt.');
+  assertStringIncludes(purge!, 'and(source.eq.estimate,computed_at.lt.');
+  assertStringIncludes(purge!, `from_place_id.not.in.(${A.id},${B.id})`);
+  assertStringIncludes(purge!, `to_place_id.not.in.(${A.id},${B.id})`);
+  // Manual mode keeps wiping everything in one delete (no extra purge).
+  const manual = await runY23({
+    trip: y23Trip('driving'),
+    places: [{ ...A, day_index: 0, order_in_day: 0 }, { ...B, day_index: 0, order_in_day: 1 }],
+    mode: 'manual',
+    directions: routedRun('ors'),
+  });
+  assertEquals(manual.deletes.length, 1);
+});
+
+test('sweep: a fresh routed transit day leg is reused (no call, no budget, original computed_at)', async () => {
+  const p0 = y23Place(150, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+  const p1 = y23Place(151, 38.73, -9.15, { day_index: 0, order_in_day: 1 });
+  const p2 = y23Place(152, 38.76, -9.1, { day_index: 0, order_in_day: 2 });
+  const steps = [{ polyline: 'old', travelMode: 'TRANSIT', lineName: 'T1', vehicleType: 'TRAM' }];
+  const at = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const staleAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const out = await runY23({
+    trip: y23Trip('transit'),
+    places: [p0, p1, p2],
+    mode: 'manual',
+    cachedLegs: [
+      {
+        from_place_id: p0.id,
+        to_place_id: p1.id,
+        day_index: 0,
+        transport_mode: 'transit',
+        source: 'google',
+        duration_seconds: 1234,
+        distance_meters: 4321,
+        transit_steps: steps,
+        computed_at: at,
+      },
+      // Too old to reuse (the ToS window): routed again.
+      {
+        from_place_id: p1.id,
+        to_place_id: p2.id,
+        day_index: 0,
+        transport_mode: 'transit',
+        source: 'google',
+        duration_seconds: 1,
+        distance_meters: 1,
+        transit_steps: steps,
+        computed_at: staleAt,
+      },
+    ],
+    directions: () =>
+      jsonResp({ polyline: null, durationSeconds: 800, distanceMeters: 2500, transitSteps: [{ polyline: 'new' }], provider: 'google' }),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.directionsCalls.length, 1, 'only the stale pair is routed');
+  assert(sameSpot(out.directionsCalls[0]!.origin, p1));
+  const [reused, routed] = out.inserted;
+  assertEquals([reused!.source, reused!.duration_seconds, reused!.distance_meters], ['google', 1234, 4321]);
+  assertEquals(reused!.transit_steps, steps);
+  assertEquals(reused!.computed_at, at, 'the ToS clock is not restarted');
+  assertEquals([routed!.source, routed!.duration_seconds], ['google', 800]);
+  assert(Date.parse(routed!.computed_at!) > Date.parse(at), 'a routed leg is stamped now');
+  const budget = out.calls.filter((c) => c.url.includes('/rest/v1/rpc/consume_service_usage'));
+  assertEquals(budget.length, 1, 'one budget unit, for the routed call only');
+  assertEquals(JSON.parse(budget[0]!.body ?? '{}'), { p_service: 'google_transit', p_units: 1, p_cap: 300 });
+  assertEquals(new Headers(budget[0]!.init.headers).get('Authorization'), 'Bearer test-service-role-key', 'service role only');
+  const reuseRead = out.calls.find((c) => c.url.includes('/rest/v1/trip_legs') && c.method === 'GET')!;
+  const u = decodeURIComponent(reuseRead.url);
+  for (const f of ['day_index=gte.0', 'transport_mode=eq.transit', 'source=eq.google', 'computed_at=gte.']) {
+    assertStringIncludes(u, f);
+  }
+  assertEquals(new Headers(reuseRead.init.headers).get('Authorization'), FAKE_JWT, 'read as the caller (RLS)');
+});
+
+for (const [label, budget] of [
+  ['the global daily transit budget is spent', { status: 200, body: false }],
+  ['the budget counter fails (fails closed)', { status: 500, body: { message: 'db down', code: 'XX000' } }],
+] as const) {
+  test(`sweep: ${label} -> transit legs are estimates, no Google call`, async () => {
+    transitBudget = budget;
+    try {
+      const p0 = y23Place(160, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+      const p1 = y23Place(161, 38.73, -9.15, { day_index: 0, order_in_day: 1 });
+      const p2 = y23Place(162, 38.76, -9.1, { day_index: 0, order_in_day: 2 });
+      const out = await runY23({
+        trip: y23Trip('transit'),
+        places: [p0, p1, p2],
+        mode: 'manual',
+        directions: () => jsonResp({ error: 'must not be called' }, 500),
+      });
+      assertEquals(out.res.status, 200);
+      assertEquals(out.directionsCalls.length, 0);
+      assertEquals(out.inserted.map((r) => r.source), ['estimate', 'estimate']);
+      assertEquals(
+        out.calls.filter((c) => c.url.includes('consume_service_usage')).length,
+        1,
+        'once refused, the rest of the run stops asking',
+      );
+    } finally {
+      transitBudget = { status: 200, body: true };
+    }
+  });
+}

@@ -32,6 +32,7 @@ import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import { useT } from '@/i18n';
 import { useSafeBack } from '@/hooks/useSafeBack';
+import { useTripRole } from '@/hooks/useTripRole';
 import {
   PlacesError,
   isPlacesQuotaExceeded,
@@ -102,7 +103,9 @@ export default function AddPlace() {
   const {
     data: suggestions = [],
     isFetching,
+    fetchStatus: autocompleteFetchStatus,
     error: autocompleteError,
+    refetch: refetchAutocomplete,
   } = usePlacesAutocomplete({
     input: debounced,
     sessionToken,
@@ -112,7 +115,9 @@ export default function AddPlace() {
   const {
     data: picked,
     isLoading: loadingDetails,
+    fetchStatus: detailsFetchStatus,
     error: detailsError,
+    refetch: refetchDetails,
   } = usePlaceDetails({
     placeId: pickedId ?? undefined,
     sessionToken,
@@ -125,6 +130,18 @@ export default function AddPlace() {
   // Audit #2: a spent per-user daily quota is not a setup problem and not
   // "no results" — it gets its own notice (details has the lower cap).
   const placesQuotaHit = isPlacesQuotaExceeded(autocompleteError) || isPlacesQuotaExceeded(detailsError);
+  // Any other autocomplete failure (upstream 5xx/timeout, auth, network) or a
+  // query paused offline must not read as "No results" — offer a retry.
+  const autocompletePaused = autocompleteFetchStatus === 'paused';
+  const autocompleteFailed =
+    !mapsSetupError && !placesQuotaHit && (!!autocompleteError || autocompletePaused);
+  // A details query paused offline has no data and no error — without this
+  // it would spin forever.
+  const detailsPaused = detailsFetchStatus === 'paused';
+
+  // Only owners/editors may insert trip_places (RLS). Viewers reaching this
+  // screen via a direct URL get a read-only notice instead of a phantom add.
+  const { canEditTrip, isLoading: roleLoading } = useTripRole(tripId);
 
   const { data: existingPlaces = [] } = useTripPlaces(tripId);
   const { data: trip } = useTrip(tripId);
@@ -190,7 +207,7 @@ export default function AddPlace() {
   }
 
   async function handleConfirm() {
-    if (!picked || !tripId || saving) return;
+    if (!picked || !tripId || saving || !canEditTrip) return;
     const targetDay = effectiveDayIndex;
     const defaults = inferCategoryDefault(picked.types);
     setAddError(null);
@@ -255,6 +272,17 @@ export default function AddPlace() {
   // M5 Y2.4: the shared 640 px form column (a no-op below that width).
   const desktopWrap = screenColumnStyle('form');
 
+  if (!roleLoading && !canEditTrip) {
+    return (
+      <Screen padded={false} width="form">
+        <View style={[{ padding: t.spacing.lg, gap: t.spacing.sm }, desktopWrap]}>
+          <BackButton onPress={goBack} />
+          <Notice alert>{tx('places.readOnly')}</Notice>
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen padded={false} width="form">
       <KeyboardAvoid>
@@ -285,7 +313,14 @@ export default function AddPlace() {
             autoCapitalize="none"
             placeholder="Restaurant, museum, viewpoint…"
             value={query}
-            onChangeText={setQuery}
+            onChangeText={(text) => {
+              setQuery(text);
+              // Typing a new query leaves the details view.
+              if (pickedId) {
+                setAddError(null);
+                setPickedId(null);
+              }
+            }}
           />
 
           {/* ── Toast notification (Step 23.7) ───────────────────────────── */}
@@ -345,8 +380,22 @@ export default function AddPlace() {
 
         {pickedId ? (
           <View style={[{ flex: 1, padding: t.spacing.lg, gap: t.spacing.md }, desktopWrap]}>
-            {loadingDetails || (!picked && !detailsError) ? (
-              <ActivityIndicator />
+            {detailsPaused && !picked ? (
+              <>
+                <Text
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={[t.typography.caption, { color: t.colors.danger }]}
+                >
+                  {tx('places.detailsOffline')}
+                </Text>
+                <Button variant="ghost" label="Pick a different place" onPress={() => setPickedId(null)} />
+              </>
+            ) : loadingDetails || (!picked && !detailsError) ? (
+              <>
+                <ActivityIndicator />
+                <Button variant="ghost" label="Pick a different place" onPress={() => setPickedId(null)} />
+              </>
             ) : !picked ? (
               // Details failed (quota / setup are explained in the banner
               // above) — offer a way out instead of an endless spinner.
@@ -359,6 +408,15 @@ export default function AddPlace() {
                   >
                     {tx('places.detailsFailed')}
                   </Text>
+                )}
+                {placesQuotaHit || mapsSetupError ? null : (
+                  <Button
+                    variant="secondary"
+                    label={tx('places.retry')}
+                    onPress={() => {
+                      void refetchDetails();
+                    }}
+                  />
                 )}
                 <Button variant="ghost" label="Pick a different place" onPress={() => setPickedId(null)} />
               </>
@@ -401,7 +459,7 @@ export default function AddPlace() {
                       ? 'Add anyway, this place is already in your trip'
                       : undefined
                   }
-                  loading={saving}
+                  loading={saving || roleLoading}
                   onPress={handleConfirm}
                 />
                 {addError ? (
@@ -495,7 +553,24 @@ export default function AddPlace() {
                 // The setup / quota banner above already explains why nothing
                 // came back — a "No results" state under it would contradict it.
                 mapsSetupError || placesQuotaHit ? null : debounced.length >= 2 ? (
-                  isFetching ? (
+                  autocompleteFailed && !isFetching ? (
+                    <View
+                      style={{ padding: t.spacing.xl, alignItems: 'center', gap: t.spacing.sm }}
+                      accessibilityRole="alert"
+                      accessibilityLiveRegion="polite"
+                    >
+                      <Text style={[t.typography.body, { color: t.colors.text, textAlign: 'center' }]}>
+                        {autocompletePaused ? tx('places.searchOffline') : tx('places.searchFailed')}
+                      </Text>
+                      <Button
+                        variant="secondary"
+                        label={tx('places.retry')}
+                        onPress={() => {
+                          void refetchAutocomplete();
+                        }}
+                      />
+                    </View>
+                  ) : isFetching ? (
                     <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
                       <ActivityIndicator />
                     </View>

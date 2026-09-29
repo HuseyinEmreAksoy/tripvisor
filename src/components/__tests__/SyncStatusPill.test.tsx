@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 import { ThemeProvider } from '@/theme';
 
 const mockStatus: { current: Record<string, unknown> } = { current: {} };
@@ -96,5 +96,23 @@ describe('SyncStatusPill', () => {
     mockStatus.current = baseStatus({ degraded: true, degradedReason: 'SharedArrayBuffer unavailable' });
     const { getByText } = renderPill();
     expect(getByText('Local-only mode')).toBeTruthy();
+  });
+
+  it('renders nothing when the engine is off and no restart is needed', () => {
+    mockStatus.current = baseStatus({ enabled: false, restartRequired: false });
+    const { toJSON } = renderPill();
+    expect(toJSON()).toBeNull();
+  });
+
+  it('says a restart is required after an in-process account switch', () => {
+    mockStatus.current = baseStatus({ enabled: false, restartRequired: true });
+    const { getByText, getAllByText, queryByText } = renderPill();
+    // shell:syncPill.restart.* copy (en). Native has no in-app reload, so the
+    // sheet asks the user to close and reopen instead of offering a button.
+    const pill = getByText('Restart to enable offline sync');
+    fireEvent.press(pill);
+    expect(getAllByText('Restart required').length).toBeGreaterThan(0);
+    expect(getByText(/Close and reopen Tripvisor/)).toBeTruthy();
+    expect(queryByText('Reload now')).toBeNull();
   });
 });
