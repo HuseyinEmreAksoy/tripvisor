@@ -116,10 +116,7 @@ Money conversion order (MV + Y2.2 lib):
 - TODO: a service-role Edge Function sweeping orphan trip-memories objects via trip_memories_sweep_candidates() plus a cron schedule.
 
 ## RESUME CHECKLIST (session ended at the usage limit, 2026-09-29)
-1. In-flight when the session stopped (check `git status`; their edits may be uncommitted):
-   - Wave-1 fix round, functions: export-account completeness, fx-rates storage, poi log, upstream stream cap.
-   - Wave-1 fix round, UI: TR hydration, COPY → i18n, splash, TR copy, privacy processors.
-   - Dev-server OOM investigation (metro/babel).
+1. (DONE) Wave-1 fix rounds and the dev-server OOM fix are committed (da12fb4, c5d8c46, 061adfd).
 2. When they're done: run the gates (tsc, jest, i18n:check, sync:validate, supabase/tests/*.sql, Deno via docker), then commit, EXCLUDING supabase/config.toml (a temporary local port change to 553xx; revert with `git checkout supabase/config.toml` and set .env back to 54321 after `net stop winnat; net start winnat` as admin).
 3. Next: M5 Wave 2 (Y2.1–Y2.5 in BUILD-LOG §M5), then Waves 3 and 4. Pass this file's contracts into each brief.
 4. The user must do these before any web deploy or APK build:
@@ -139,3 +136,9 @@ Money conversion order (MV + Y2.2 lib):
 - API: pillForOptimizeError returns {tone,labelKey}; deleteTripErrorKey; inviteError returns {key,field}; TripHeader requires canEdit.
 - The privacy policy promises EXIF/GPS stripping, so Y2.1 MUST re-encode photos and never upload the original.
 - Minor: "TRİPVİSOR" shows under lang=tr because of CSS uppercase.
+
+## Wave 2 file-ownership rules (orchestrator, 2026-09-29)
+- New types go in NEW per-feature files (src/api/memories.types.ts, src/lib/money/types.ts, …). Do NOT edit src/api/types.ts in Wave 2 except where a step explicitly owns a block; re-read it before editing and re-grep afterwards.
+- Only Y2.1 edits src/sync/** (allowlist/hydrate/mutations) for the memory roots. user_preferences stays Tier-2 (TanStack), owned by Y2.2.
+- Orphan trip-memories sweep function + cron → Y2.1.
+- Dev server: NetInfo HEAD probes are answered by metro.config.js; start it with BROWSER=none NODE_OPTIONS=--max-old-space-size=4096 npx expo start --web --port 8081.
