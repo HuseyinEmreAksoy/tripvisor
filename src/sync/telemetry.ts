@@ -207,6 +207,40 @@ export function recordHydrationFailure(table: Tier1Table, error: unknown): void 
   refreshSyncStatus();
 }
 
+/**
+ * A persisted Tier-1 table could not be read/parsed from disk, or was
+ * empty while its last-sync watermark was set (persistGuard.ts). The guard
+ * drops the watermark so the next pull is a FULL pull. `table` is the table
+ * segment of the persist key only (the userId never leaves the device).
+ */
+export function recordPersistWatermarkReset(
+  table: string,
+  reason: 'unreadable' | 'unparseable' | 'empty',
+  detail?: string,
+): void {
+  breadcrumb('tier-1 persisted table unusable — last-sync watermark cleared (full pull)', {
+    table,
+    reason,
+    detail,
+  });
+  if (typeof __DEV__ !== 'undefined' && __DEV__ && reason !== 'empty') {
+    console.warn(`[sync] persisted ${table} ${reason}${detail ? ` (${detail})` : ''}; forcing a full pull`);
+  }
+}
+
+/**
+ * A persisted Tier-1 table value crossed the size warning threshold
+ * (persistGuard.ts). The whole table lives in ONE kv value; on web the
+ * expo-sqlite synchronous channel caps a read at 1 MiB, above which the
+ * cold-start load fails and the guard falls back to a full pull.
+ */
+export function recordPersistValueLarge(table: string, bytes: number, limitBytes: number): void {
+  breadcrumb('tier-1 persisted table value is large', { table, bytes, limitBytes });
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.warn(`[sync] persisted ${table} is ${bytes} bytes (web sync-read ceiling ${limitBytes})`);
+  }
+}
+
 export function recordWriteFailure(table: Tier1Table, error: unknown): void {
   state.entities[table].writeErrorCount += 1;
   breadcrumb('sync write failure', {

@@ -53,7 +53,11 @@ describe('createSyncPersistence (web)', () => {
     resolveWarmup(null);
     const result = await p;
     expect(mockCalls).toEqual(['async', 'sync']);
-    expect(result).toEqual({ plugin: { __plugin: true }, degraded: false, reason: null });
+    expect(result.degraded).toBe(false);
+    expect(result.reason).toBeNull();
+    // The upstream plugin is wrapped by persistGuard (watermark-reset guard).
+    expect(typeof result.plugin?.getTable).toBe('function');
+    expect(typeof result.plugin?.getMetadata).toBe('function');
   });
 
   it('degrades with a clear reason when the warm-up never finishes', async () => {

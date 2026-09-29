@@ -1,0 +1,40 @@
+diff --git a/node_modules/expo-sqlite/web/WorkerChannel.ts b/node_modules/expo-sqlite/web/WorkerChannel.ts
+index 7fba380..376ba1f 100644
+--- a/node_modules/expo-sqlite/web/WorkerChannel.ts
++++ b/node_modules/expo-sqlite/web/WorkerChannel.ts
+@@ -37,10 +37,23 @@ export function sendWorkerResult({
+     const { lockBuffer, resultBuffer } = syncTrait;
+     const lock = new Int32Array(lockBuffer);
+     const resultArray = new Uint8Array(resultBuffer);
+-    const resultJson = error != null ? serialize({ error }) : serialize({ result });
+-    const resultBytes = new TextEncoder().encode(resultJson);
++    // Tripvisor patch: serialize the error message (an Error object JSON-serializes to `{}`).
++    const resultJson =
++      error != null ? serialize({ error: error.message || String(error) }) : serialize({ result });
++    let resultBytes = new TextEncoder().encode(resultJson);
++    if (resultBytes.length + 4 > resultBuffer.byteLength) {
++      // Tripvisor patch: never silently truncate; surface an error to the caller instead.
++      resultBytes = new TextEncoder().encode(
++        serialize({
++          error: `result too large for sync channel (${resultBytes.length} bytes > ${resultBuffer.byteLength - 4})`,
++        })
++      );
++    }
+     const length = resultBytes.length;
+-    resultArray.set(new Uint32Array([length]), 0);
++    // Tripvisor patch: write a real 32-bit little-endian length. Upstream's
++    // `resultArray.set(new Uint32Array([length]), 0)` copies element-wise into a
++    // Uint8Array, truncating the length to one byte (length & 0xFF).
++    new DataView(resultBuffer).setUint32(0, length, true);
+     resultArray.set(resultBytes, 4);
+     Atomics.store(lock, 0, RESOLVED);
+   } else {
+@@ -137,7 +150,7 @@ export function invokeWorkerSync<T extends SQLiteWorkerMessageType & keyof Resul
+     }
+   }
+ 
+-  const length = new Uint32Array(resultArray.buffer, 0, 1)[0];
++  const length = new DataView(resultBuffer).getUint32(0, true);
+   const resultCopy = new Uint8Array(length);
+   resultCopy.set(new Uint8Array(resultArray.buffer, 4, length));
+   const resultJson = new TextDecoder().decode(resultCopy);

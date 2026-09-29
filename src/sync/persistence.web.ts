@@ -37,6 +37,7 @@
  * the node path never reaches the await.
  */
 
+import { guardPersistPlugin, guardStorage } from './persistGuard';
 import type { SyncPersistenceResult } from './persistence.types';
 
 const SYNC_DB_NAME = 'tripvisor-sync.db';
@@ -104,7 +105,17 @@ export async function createSyncPersistence(): Promise<SyncPersistenceResult> {
     // rather than racing the worker boot.
     storage.getItemSync('__sync_probe__');
 
-    return { plugin: observablePersistSqlite(storage), degraded: false, reason: null };
+    // persistGuard: a table that fails to load (or loads empty) never keeps
+    // its incremental last-sync watermark, and oversized values leave a
+    // breadcrumb. See persistGuard.ts.
+    const guardedStorage = guardStorage(storage);
+    const plugin = guardPersistPlugin(
+      // observablePersistSqlite only calls get/set/removeItemSync. The cast
+      // bridges its nominal SQLiteStorage parameter type.
+      observablePersistSqlite(guardedStorage as unknown as typeof storage),
+      guardedStorage,
+    );
+    return { plugin, degraded: false, reason: null };
   } catch (e) {
     return {
       plugin: undefined,
