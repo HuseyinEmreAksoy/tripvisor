@@ -31,7 +31,11 @@ const SUPABASE_ANON_KEY =
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     storage: storageAdapter,
-    autoRefreshToken: true,
+    // No window = server render (static web export / every page request on the
+    // dev server). auth-js would start a never-ending 30 s refresh interval that
+    // keeps each request's app instance alive (dev-server memory leak). Browsers
+    // and native (RN defines window) keep auto-refresh.
+    autoRefreshToken: typeof window !== 'undefined',
     persistSession: true,
     detectSessionInUrl: true,
     flowType: 'pkce',

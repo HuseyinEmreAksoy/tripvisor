@@ -9,14 +9,16 @@
 //   2. The QueryClient + persister are configured below. The persister uses
 //      the Phase 4 allowlist (`shouldDehydrateQuery`) so only durable,
 //      ToS-safe query keys reach disk. Google Places content is never
-//      persisted — it stays in-memory only.
+//      persisted — it stays in-memory only. On the server (static web
+//      rendering) TanStack gets a no-op timer provider, the only
+//      module-scope call on the server (see the note above `queryClient`).
 //   3. i18n (ADR-0011): importing `@/i18n` initialises i18next synchronously
 //      (bundled resources, no network), so the first render is already
 //      translated. On native the persisted Profile → Language choice is read
 //      from AsyncStorage; `useI18nReady` keeps the splash up until then
 //      (bounded by a short timeout) so there's no flash of the device language.
 //      That needs `SplashScreen.preventAutoHideAsync()` at module scope (the
-//      one deliberate module-scope call; a native no-op flag, no I/O).
+//      one deliberate module-scope call on native; a no-op flag, no I/O).
 //      Otherwise the splash auto-hides on the first frame and the `null`
 //      render below shows as a blank screen. On a statically exported web
 //      page, `useSystemLanguageSync` also switches from the prerendered
@@ -26,7 +28,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, isServer, timeoutManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -102,6 +104,24 @@ function RootHead() {
       <meta name="twitter:image" content={`${SITE_ORIGIN}/og-image.jpg`} />
     </Head>
   );
+}
+
+// Server render only (web static rendering: once per route in `expo export`,
+// but on EVERY page request in the `expo start` dev server, which evaluates a
+// fresh copy of the app each time). The 24 h gcTime below, and the per-query
+// ones in src/api, would give every query rendered on the server a 24 h Node
+// timer, and each timer keeps that request's whole app instance alive: the
+// dev server grew ~10 MB per page load until it ran out of heap. A server
+// render is discarded once its HTML is sent, so it needs no gc or refetch
+// timers. `isServer` is false in browsers and on native, which keep the
+// default provider.
+if (isServer) {
+  timeoutManager.setTimeoutProvider({
+    setTimeout: () => 0,
+    clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+  });
 }
 
 const queryClient = new QueryClient({
