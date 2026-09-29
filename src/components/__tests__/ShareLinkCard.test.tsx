@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { ShareLinkCard } from '../ShareLinkCard';
 import { ThemeProvider } from '@/theme';
+import { i18n } from '@/i18n';
 
 const mockCreateMutateAsync = jest.fn<() => Promise<{ token: string }>>();
 const mockRevokeMutateAsync = jest.fn<(input?: { token?: string }) => Promise<{ revoked: number }>>();
@@ -122,14 +123,14 @@ describe('ShareLinkCard — create failures', () => {
     expect(
       getByText('Only the trip owner can create a share link. Ask them to send you one.'),
     ).toBeTruthy();
-    expect(queryByText(/could not create link/i)).toBeNull();
+    expect(queryByText(i18n.t('share:link.createFailed'))).toBeNull();
     expect(getByRole('button', CREATE).props.accessibilityState).toMatchObject({ disabled: true });
   });
 
   it('keeps the generic retry message for other failures', () => {
     mockCreateError = new MockShareLinkError('db_error', 'db down', 500);
     const { getByRole, getByText } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
-    expect(getByText('Could not create link — try again.')).toBeTruthy();
+    expect(getByText(i18n.t('share:link.createFailed'))).toBeTruthy();
     expect(getByRole('button', CREATE).props.accessibilityState).toMatchObject({ disabled: false });
   });
 });

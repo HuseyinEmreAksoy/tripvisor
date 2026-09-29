@@ -29,6 +29,7 @@ import {
 import { DayPicker, dayLabel, tripDayCount } from '@/components/add-place/DayPicker';
 import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useSafeBack } from '@/hooks/useSafeBack';
 import {
@@ -51,13 +52,6 @@ import {
   getRecentPlaces,
   type RecentPlace,
 } from '@/lib/recentPlaces';
-
-// Copy added in the 2026-09-29 security follow-up (per-user Places quota).
-// Plain strings until the i18n step lands (then these move to `t()` keys).
-const COPY = {
-  placesQuota: 'Daily place search limit reached — try again tomorrow',
-  detailsFailed: "Couldn't load this place. Check your connection and try again.",
-} as const;
 
 function useDebounced<T>(value: T, ms = 250): T {
   const [debounced, setDebounced] = useState(value);
@@ -101,6 +95,7 @@ export default function AddPlace() {
   const { id: tripId, day: dayParam } = useLocalSearchParams<{ id: string; day?: string }>();
   const goBack = useSafeBack(`/trip/${tripId}`);
   const t = useTheme();
+  const { t: tx } = useT('errors');
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
   const { sessionToken, rotate: rotateSessionToken } = useAutocompleteSession();
@@ -318,7 +313,7 @@ export default function AddPlace() {
           ) : null}
 
           {placesQuotaHit ? (
-            <Notice alert>{COPY.placesQuota}</Notice>
+            <Notice alert>{tx('places.quotaExceeded')}</Notice>
           ) : mapsSetupError ? (
             <View
               style={[
@@ -367,7 +362,7 @@ export default function AddPlace() {
                     accessibilityLiveRegion="polite"
                     style={[t.typography.caption, { color: t.colors.danger }]}
                   >
-                    {COPY.detailsFailed}
+                    {tx('places.detailsFailed')}
                   </Text>
                 )}
                 <Button variant="ghost" label="Pick a different place" onPress={() => setPickedId(null)} />

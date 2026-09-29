@@ -27,7 +27,7 @@
   "data": {
     "export": "Verilerimi dışa aktar",
     "exportA11y": "Verilerimi JSON olarak dışa aktar",
-    "exportHint": "Tüm gezilerini ve yerlerini içeren bir JSON dosyası indirir.",
+    "exportHint": "Girdiğin her şeyi (geziler, yerler, harcamalar, anılar ve daha fazlası) içeren bir JSON dosyası indirir.",
     "signOut": "Çıkış yap"
   },
   "legal": {

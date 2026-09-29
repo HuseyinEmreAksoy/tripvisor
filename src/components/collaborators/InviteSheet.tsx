@@ -17,6 +17,7 @@ import { copyToClipboard } from '@/lib/clipboard';
 import { CollaboratorError, type useInviteCollaborator } from '@/api/trip-collaborators';
 import type { TripCollaboratorRole } from '@/api/types';
 import { useShareAction } from '@/components/share';
+import { useT } from '@/i18n';
 import { ROLE_COPY } from './collaboratorModel';
 
 const ROLE_OPTIONS: Array<{ value: TripCollaboratorRole; label: string }> = [
@@ -26,35 +27,49 @@ const ROLE_OPTIONS: Array<{ value: TripCollaboratorRole; label: string }> = [
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Invite-failure copy (2026-09-29 security follow-up, audit #14 quotas).
-// Plain strings until the i18n step lands (then these move to `t()` keys).
-const COPY = {
-  alreadyInvited: 'This person already has an invite for this trip. Cancel it first to send a new one.',
-  inviteRateLimited: "You've sent a lot of invites today — try again tomorrow",
-  tripInviteLimit: 'This trip has too many pending invites — cancel some first',
-  quotaUnavailable: 'Invites are temporarily unavailable',
-  generic: 'Could not send invite. Please try again.',
-} as const;
+/** `collab` namespace keys for invite failures (translated at render). */
+export type InviteErrorKey =
+  | 'invite.errors.emailRequired'
+  | 'invite.errors.emailInvalid'
+  | 'invite.errors.alreadyInvited'
+  | 'invite.errors.rateLimited'
+  | 'invite.errors.tripLimit'
+  | 'invite.errors.unavailable'
+  | 'invite.errors.notOwner'
+  | 'invite.errors.generic';
 
-const INVITE_ERROR_COPY: Readonly<Record<string, string>> = {
-  already_invited: COPY.alreadyInvited,
-  invite_rate_limited: COPY.inviteRateLimited,
-  trip_invite_limit: COPY.tripInviteLimit,
-  quota_unavailable: COPY.quotaUnavailable,
+export interface InviteError {
+  key: InviteErrorKey;
+  /**
+   * True when the email itself is the problem, so the field turns red.
+   * Quota, permission and server failures are about the invite, not what
+   * was typed, so they show as a form-level alert instead.
+   */
+  field: boolean;
+}
+
+const INVITE_ERRORS: Readonly<Record<string, InviteError>> = {
+  already_invited: { key: 'invite.errors.alreadyInvited', field: true },
+  // Audit #14 quotas (429/503).
+  invite_rate_limited: { key: 'invite.errors.rateLimited', field: false },
+  trip_invite_limit: { key: 'invite.errors.tripLimit', field: false },
+  quota_unavailable: { key: 'invite.errors.unavailable', field: false },
+  not_owner: { key: 'invite.errors.notOwner', field: false },
 };
 
+const GENERIC_ERROR: InviteError = { key: 'invite.errors.generic', field: false };
+
 /**
- * Map an invite failure to the inline error. Known `CollaboratorError`
- * codes get our copy (the server's 429/503 messages are English-only);
- * anything else falls back to the error's own message, then a generic line.
+ * Map an invite failure to its inline error. Known `CollaboratorError` codes
+ * get our copy. Anything else (network, 5xx) gets a generic line, because the
+ * server's messages are English-only.
  */
-export function inviteErrorMessage(err: unknown): string {
+export function inviteError(err: unknown): InviteError {
   if (err instanceof CollaboratorError) {
-    const known = INVITE_ERROR_COPY[err.code];
+    const known = INVITE_ERRORS[err.code];
     if (known) return known;
   }
-  if (err instanceof Error && err.message) return err.message;
-  return COPY.generic;
+  return GENERIC_ERROR;
 }
 
 interface InviteResult {
@@ -73,9 +88,11 @@ export interface InviteSheetProps {
 
 export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutation }: InviteSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('collab');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<TripCollaboratorRole>('viewer');
-  const [error, setError] = useState<string | null>(null);
+  // A key, not a string, so a language switch re-translates it.
+  const [error, setError] = useState<InviteError | null>(null);
   const [result, setResult] = useState<InviteResult | null>(null);
   const [copied, setCopied] = useState(false);
   const { share, sharing, feedback } = useShareAction();
@@ -92,11 +109,11 @@ export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutatio
   async function handleInvite() {
     const normalized = email.trim().toLowerCase();
     if (!normalized) {
-      setError('Email address is required.');
+      setError({ key: 'invite.errors.emailRequired', field: true });
       return;
     }
     if (!EMAIL_RE.test(normalized)) {
-      setError('Enter a valid email address.');
+      setError({ key: 'invite.errors.emailInvalid', field: true });
       return;
     }
     setError(null);
@@ -104,7 +121,7 @@ export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutatio
       const res = await inviteMutation.mutateAsync({ tripId, inviteeEmail: normalized, role });
       setResult({ url: res.inviteUrl, email: normalized, emailSent: res.emailSent });
     } catch (err) {
-      setError(inviteErrorMessage(err));
+      setError(inviteError(err));
     }
   }
 
@@ -194,7 +211,7 @@ export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutatio
               style={[
                 styles.input,
                 {
-                  borderColor: error ? t.colors.danger : t.colors.border,
+                  borderColor: error?.field ? t.colors.danger : t.colors.border,
                   borderRadius: t.radius.md,
                   backgroundColor: t.colors.bgElevated,
                   color: t.colors.text,
@@ -203,15 +220,22 @@ export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutatio
                 },
               ]}
             />
-            {error ? (
+            {error?.field ? (
               <Text style={[t.typography.caption, { color: t.colors.danger }]} accessibilityLiveRegion="polite" accessibilityRole="alert">
-                {error}
+                {tx(error.key)}
               </Text>
             ) : null}
           </View>
 
           <SegmentedControl<TripCollaboratorRole> label="Role" value={role} onChange={setRole} options={ROLE_OPTIONS} />
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{ROLE_COPY[role].hint}.</Text>
+
+          {/* Quota / permission / server failures: about the invite, not the email. */}
+          {error && !error.field ? (
+            <Text style={[t.typography.caption, { color: t.colors.danger }]} accessibilityLiveRegion="polite" accessibilityRole="alert">
+              {tx(error.key)}
+            </Text>
+          ) : null}
 
           <Button
             label="Send invite"

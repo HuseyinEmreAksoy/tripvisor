@@ -1,1 +1,8 @@
-{}
+{
+  "link": {
+    "ownerOnly": "Only the trip owner can create a share link. Ask them to send you one.",
+    "createFailed": "Couldn’t create the link. Try again.",
+    "revokeFailed": "Couldn’t revoke the link. Try again."
+  },
+  "hubSummary": "Read-only public link or invite by email"
+}

@@ -11,7 +11,7 @@
   },
   "privacy": {
     "title": "Gizlilik politikası",
-    "intro": "Bu politika, Tripvisor’ın hangi verileri neden topladığını, bunları kimlerin işlediğini ve verilerini nasıl dışa aktarabileceğini ya da silebileceğini açıklar. Kısacası: yalnızca uygulamanın gezilerini planlamak ve senkronize etmek için ihtiyaç duyduğu verileri tutarız ve bunları asla satmayız.",
+    "intro": "Bu politika, Tripvisor’ın hangi verileri neden topladığını, bunları kimlerin işlediğini ve verilerini nasıl dışa aktarabileceğini ya da silebileceğini açıklar. Kısacası: yalnızca uygulamanın gezilerini planlamak, senkronize etmek ve hatırlamak için ihtiyaç duyduğu verileri tutarız ve bunları asla satmayız.",
     "related": "Kullanım koşullarını oku",
     "sections": [
       {
@@ -24,10 +24,13 @@
         "heading": "Topladığımız veriler",
         "bullets": [
           "Hesap: Giriş yapmanı sağlamak (e-posta bağlantısıyla ya da Google ile) ve hesabınla ilgili seninle iletişime geçmek için kullanılan e-posta adresin. Google ile giriş yaparsan e-posta adresini ve temel profil adını alırız, başka hiçbir şey almayız.",
-          "Girdiğin içerik: geziler, tarihler, yerler, notlar, sabitlenmiş saatler, bavul listeleri, konaklamalar, bütçeler ve harcamalar.",
+          "Girdiğin içerik: geziler, tarihler, yerler, notlar, sabitlenmiş saatler, duraklar arasındaki ulaşım tercihlerin, bavul listeleri, konaklamalar, bütçeler ve harcamalar. Her harcamada girdiğin tutar ve para birimi, ayrıca onu gezinin ana para birimine çevirmek için kullanılan döviz kuru ve tarih saklanır.",
+          "Anılar: günlük kayıtları, yerlere verdiğin 1–5 arası kişisel puanlar ve yorumlar ile eklediğin fotoğraflar. Anılar varsayılan olarak yalnızca sana özeldir. Diğer gezi üyeleri yalnızca geziyle paylaşmayı seçtiklerini görür; herkese açık bir bağlantıda ise ancak gezinin sahibi bunu açarsa görünürler.",
+          "Anı fotoğrafları: dosya depolama alanımızda (Supabase Storage) gizli olarak saklanır. Uygulama her fotoğrafı yüklemeden önce sıkıştırır ve konum bilgilerini (GPS koordinatları gibi) fotoğraftan kaldırır.",
           "Yerler: Eklediğin her yer için Google yer kimliğini (place ID) ve koordinatlarını saklarız. Google’dan gelen adlar, fotoğraflar, puanlar ve yorumlar sen görüntülediğinde getirilir ve sunucularımızda saklanmaz.",
           "Geziye yüklediğin belgeler: bilet ya da rezervasyon onayı gibi PDF’ler ve görseller. Dosya depolama alanımızda gizli olarak saklanır ve yalnızca o gezinin üyeleri tarafından görülebilir.",
-          "Ortak kullanım: Bir geziyi kimlerle paylaştığın, bu kişilerin rolleri ve oluşturduğun paylaşım bağlantıları.",
+          "Ortak kullanım: Bir geziyi kimlerle paylaştığın, bu kişilerin rolleri, oluşturduğun paylaşım bağlantıları ve her bağlantının neleri gösterdiği.",
+          "Tercihler: uygulama dilin, varsayılan ana para birimin ve öneriler için seçtiğin ilgi alanları.",
           "Çökme raporları ve performans verileri: Uygulama çökerse hatayı, cihaz türünü, işletim sistemini ve uygulama sürümünü içeren bir rapor, küçük bir performans ölçümü örneğiyle (ekranların ve isteklerin ne kadar sürdüğü) birlikte Sentry’ye gönderilir. Bu rapor gezi içeriğini kapsamaz."
         ],
         "paragraphs": [
@@ -37,14 +40,14 @@
       {
         "heading": "Konumun",
         "paragraphs": [
-          "Uygulama, yalnızca sen istediğinde (Bugün ekranındaki “Ne kadar uzaktayım?” ya da haritadaki “Konumumdan” seçeneği) mesafeyi tahmin etmek veya ilk durağına bir çizgi çizmek için cihazındaki anlık konumunu okur. Konumun hesabına kaydedilmez ve sunucularımıza gönderilmez. Konum erişimini telefonunun ya da tarayıcının ayarlarından istediğin zaman kapatabilirsin."
+          "Uygulama, yalnızca sen istediğinde (Bugün ekranındaki “Ne kadar uzaktayım?” ya da haritadaki “Konumumdan” seçeneği) mesafeyi tahmin etmek veya ilk durağına bir çizgi çizmek için cihazındaki anlık konumunu okur. Bu konum hesabına kaydedilmez ve sunucularımıza gönderilmez. Bulunduğun yerin çevresinde öneri ararsan konumun, yalnızca o aramanın merkezi olarak bir kez sunucumuza gönderilir ve hesabına kaydedilmez. Konum erişimini telefonunun ya da tarayıcının ayarlarından istediğin zaman kapatabilirsin."
         ]
       },
       {
         "heading": "Verilerini nasıl kullanırız",
         "bullets": [
           "Uygulamayı çalıştırmak için: gezilerini saklamak, cihazların arasında senkronize etmek ve davet ettiğin kişilerle paylaşmak.",
-          "Rota ve öneri hazırlamak için: yer adları, koordinatlar ve yazdığın metinler aşağıda listelenen hizmetlere gönderilir.",
+          "Rota planlamak, yer önermek ve para birimlerini çevirmek için: yer adları, koordinatlar, arama alanları, para birimi kodları, tarihler ve yazdığın metinler aşağıda listelenen hizmetlere gönderilir.",
           "Hataları düzeltmek için: çökme raporları sorunları bulup düzeltmemize yardımcı olur."
         ],
         "paragraphs": [
@@ -54,11 +57,14 @@
       {
         "heading": "Verileri bizim adımıza işleyen hizmetler",
         "bullets": [
-          "Supabase: veritabanı, giriş ve sunucu fonksiyonları. Hesap ve gezi verilerini saklar.",
+          "Supabase: veritabanı, giriş, sunucu fonksiyonları ve gizli dosya depolama (gezi belgeleri ve anı fotoğrafları). Hesap ve gezi verilerini saklar.",
           "Google Maps Platform: yer arama, yer ayrıntıları ve rota süreleri. Arama metnini, yer kimliklerini ve koordinatları alır. Sonuçlar, yer kimlikleri ve koordinatlar dışında saklanmaz.",
           "Google Gemini ve Groq: yapay zekâyla gezi planlama ve düzenleme. Yalnızca yapay zekâ planlayıcısına yazdığın metni ve gezideki yerlerin adlarını alırlar; e-posta adresini asla almazlar.",
           "OpenRouteService: rota optimizasyonu ve yolculuk süreleri. Koordinatları alır.",
           "Open-Meteo: hava durumu tahminleri. Koordinatları ve tarihleri alır.",
+          "OpenStreetMap Overpass API (overpass-api.de gibi herkese açık sunucular): ilgi alanlarına göre öneriler için yer bulur. Sunucumuz yalnızca arama alanını (koordinatlar ve yarıçap) ve ilgilendiğin yer türlerini gönderir. IP adresin ve hesabın paylaşılmaz.",
+          "Wikipedia ve Wikidata (Wikimedia Vakfı): öneriler için adlar, kısa açıklamalar ve görseller. Sunucumuz yer adlarını, Wikidata kimliklerini ve OpenStreetMap’e ulaşılamadığında arama alanını gönderir. Öneri kartlarındaki görseller doğrudan Wikimedia’dan yüklenir; Wikimedia bu sırada IP adresini görür.",
+          "Frankfurter (Avrupa Merkez Bankası referans kurları) ve jsDelivr üzerinden sunulan açık currency-api: harcamaların için döviz kurları. Sunucumuz yalnızca tarihleri ve para birimi kodlarını gönderir.",
           "OpenFreeMap / OpenStreetMap: web haritası için harita karoları. Karo sunucuları IP adresini ve görüntülediğin harita alanını alır.",
           "Google Maps SDK: Android uygulamasında haritayı çizer. Google, cihaz ve harita kullanım verilerini kendi koşulları ve gizlilik politikası kapsamında alır.",
           "Cloudflare Pages: web uygulamasını barındırır; sayfaları sunmak için IP adresi gibi standart istek verilerini işler.",
@@ -71,15 +77,15 @@
       {
         "heading": "Verileri ne kadar süre saklarız",
         "paragraphs": [
-          "Verilerin, hesabın olduğu sürece saklanır. Hesabını sildiğinde hesabın ve gezilerin (yerleri, harcamaları, paylaşım bağlantıları ve yüklenen belge ve dosyalar dahil) hemen silinir; yedekler 30 gün içinde yenilenir. Cihazına kaydedilen veriler hesabını sildiğinde temizlenir; bunları uygulamayı kaldırarak ya da site verilerini temizleyerek de silebilirsin."
+          "Verilerin, hesabın olduğu sürece saklanır. Hesabını sildiğinde hesabın ve gezilerin (yerleri, harcamaları, paylaşım bağlantıları ve yüklenen belge ve dosyalar dahil), başkalarının gezilerine eklediklerin de dahil olmak üzere tüm anılarınla (günlük kayıtları, puanlar, yorumlar ve fotoğraflar) birlikte hemen silinir; yedekler 30 gün içinde yenilenir. Bir gezinin sahibi geziyi sildiğinde, üyelerin anıları dahil gezideki her şey de silinir. Tamamlanmayan fotoğraf yüklemeleri otomatik olarak temizlenir. Öneri sonuçları (en fazla 30 gün) ve döviz kurları, seninle hiçbir bağlantısı olmadan sunucumuzda önbelleğe alınır. Cihazına kaydedilen veriler hesabını sildiğinde temizlenir; bunları uygulamayı kaldırarak ya da site verilerini temizleyerek de silebilirsin."
         ]
       },
       {
         "heading": "Seçeneklerin ve hakların",
         "bullets": [
-          "Dışa aktarma: Profil ve ayarlar → Verilerin → Verilerimi dışa aktar seçeneği her şeyi bir JSON dosyası olarak indirir.",
+          "Dışa aktarma: Profil ve ayarlar → Verilerin → Verilerimi dışa aktar seçeneği, girdiğin her şeyi (geziler, yerler, harcamalar, konaklamalar, bavul listeleri, anılar ve tercihler dahil) bir JSON dosyası olarak indirir. Fotoğraflar ve belgeler ayrıntılarıyla listelenir, ancak görsel ve belge dosyalarının kendisi JSON’a eklenmez.",
           "Silme: Profil ve ayarlar → Hesabı sil seçeneği hesabını ve tüm gezilerini kalıcı olarak kaldırır. Silme talebini bize e-postayla da iletebilirsin.",
-          "Düzeltme: Uygulamadaki her geziyi, yeri ya da harcamayı istediğin zaman düzenleyebilir veya silebilirsin.",
+          "Düzeltme: Uygulamadaki her geziyi, yeri, harcamayı ya da anıyı istediğin zaman düzenleyebilir veya silebilirsin.",
           "Talep: {{email}} adresine e-posta göndererek verilerinin bir kopyasını, düzeltilmesini ya da silinmesini isteyebilirsin. Yaşadığın yere bağlı olarak (örneğin AB’de veya Birleşik Krallık’ta GDPR kapsamında) veri koruma otoritesine şikâyette de bulunabilirsin."
         ]
       },
@@ -142,7 +148,7 @@
       {
         "heading": "Haritalar, rotalar ve yapay zekâ önerileri",
         "paragraphs": [
-          "Yolculuk süreleri, açılış saatleri, rotalar, hava durumu ve yapay zekâyla hazırlanan planlar, üçüncü taraf hizmetlerden (Google Maps, OpenFreeMap/OpenStreetMap, OpenRouteService, Open-Meteo, Gemini ve Groq dahil) gelen tahminlerdir. Yanlış ya da güncelliğini yitirmiş olabilirler. Açılış saatlerini, yerel koşulları ve güvenlik bilgilerini her zaman kendin kontrol et; seyahat ederken yol işaretlerine ve yerel kurallara uy. Harita verileri ve yer bilgileri, Google Maps Hizmet Şartları ve OpenStreetMap lisansı dahil olmak üzere sağlayıcıların kendi koşullarına tabidir."
+          "Yolculuk süreleri, açılış saatleri, rotalar, hava durumu, döviz kurları, yer önerileri ve yapay zekâyla hazırlanan planlar, üçüncü taraf hizmetlerden (Google Maps, OpenFreeMap/OpenStreetMap, OpenRouteService, Open-Meteo, Wikipedia, Frankfurter, Gemini ve Groq dahil) gelen tahminlerdir. Yanlış ya da güncelliğini yitirmiş olabilirler. Açılış saatlerini, fiyatları, yerel koşulları ve güvenlik bilgilerini her zaman kendin kontrol et; seyahat ederken yol işaretlerine ve yerel kurallara uy. Harita verileri ve yer bilgileri, Google Maps Hizmet Şartları, OpenStreetMap lisansı ve Wikipedia’nın CC BY-SA lisansı dahil olmak üzere sağlayıcıların kendi koşullarına tabidir."
         ]
       },
       {

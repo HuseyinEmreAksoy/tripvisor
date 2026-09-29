@@ -11,11 +11,23 @@ import { useEffect, useSyncExternalStore } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocales } from 'expo-localization';
 import { useTranslation } from 'react-i18next';
-import { deviceLocaleFrom } from './device';
-import { appLocale, bootPreference, currentLanguage, getDeviceLocale, i18n, setDeviceLocale } from './instance';
+import { useIsHydrating } from '@/hooks/useIsHydrating';
+import { deviceLocaleFrom, readDeviceLocale, type DeviceLocale } from './device';
+import {
+  STATIC_RENDER_LANGUAGE,
+  appLocale,
+  bootPreference,
+  currentLanguage,
+  endStaticHydration,
+  getDeviceLocale,
+  i18n,
+  isStaticHydrationPending,
+  setDeviceLocale,
+} from './instance';
 import {
   FALLBACK_LANGUAGE,
   LOCALE_STORAGE_KEY,
+  intlLocaleFor,
   isAppLanguage,
   parsePreference,
   resolveLanguage,
@@ -96,8 +108,15 @@ export function hydrateLanguagePreference(): Promise<void> {
 
 void hydrateLanguagePreference();
 
+/**
+ * What the static web export rendered with: it has no storage, so always
+ * System. React uses this for the server render and for hydration, then
+ * re-renders with the real choice.
+ */
+const getStaticRenderPreference = (): LanguagePreference => 'system';
+
 export function useLanguagePreference(): LanguagePreference {
-  return useSyncExternalStore(subscribe, getLanguagePreference, getLanguagePreference);
+  return useSyncExternalStore(subscribe, getLanguagePreference, getStaticRenderPreference);
 }
 
 /** False on native until the stored choice is applied (or the timeout hits). */
@@ -115,23 +134,58 @@ export function deviceLanguage(): AppLanguage {
 }
 
 /**
+ * Web static export only. The first client render reused the prerendered
+ * English markup so hydration matches (see `instance.ts`). Once the root has
+ * mounted, adopt the real device locale and switch to the visitor's language
+ * (their stored choice, else the browser's). A no-op everywhere else and
+ * after the first call.
+ */
+export async function finishStaticHydration(locale: DeviceLocale = readDeviceLocale()): Promise<void> {
+  if (!endStaticHydration()) return;
+  const renderedLocale = appLocale();
+  setDeviceLocale(locale);
+  const target = resolveLanguage(preference, locale.tags);
+  // Same language in another region (en-GB vs the prerender's en-US) still
+  // re-renders, so dates and numbers pick up the visitor's format.
+  if (target === currentLanguage() && appLocale(target) === renderedLocale) return;
+  await i18n.changeLanguage(target);
+}
+
+/**
  * Mount once at the root: in System mode, follow OS language changes
- * (Android per-app language, iOS Settings, browser `languagechange`).
+ * (Android per-app language, iOS Settings, browser `languagechange`). On a
+ * statically exported web page it also makes the post-hydration switch into
+ * the visitor's language (`finishStaticHydration`).
  */
 export function useSystemLanguageSync(): void {
   const locales = useLocales();
   const current = useLanguagePreference();
   useEffect(() => {
-    setDeviceLocale(deviceLocaleFrom(locales));
-    if (current !== 'system') return;
+    const next = deviceLocaleFrom(locales);
+    if (isStaticHydrationPending()) {
+      void finishStaticHydration(next);
+      return;
+    }
+    setDeviceLocale(next);
+    // `current` only re-runs this effect; read the live value, because right
+    // after hydration `current` still holds the static-render snapshot.
+    if (getLanguagePreference() !== 'system') return;
     const target = resolveLanguage('system', getDeviceLocale().tags);
     if (target !== currentLanguage()) void i18n.changeLanguage(target);
   }, [locales, current]);
 }
 
-/** Active language + its Intl tag; re-renders the caller on a switch. */
+/** The Intl tag the static web export prerendered with (no device region). */
+const STATIC_RENDER_LOCALE = intlLocaleFor(STATIC_RENDER_LANGUAGE, null);
+
+/**
+ * Active language + its Intl tag; re-renders the caller on a switch. While
+ * hydrating static web HTML it reports the prerender's (see `useT`).
+ */
 export function useAppLocale(): { language: AppLanguage; locale: string } {
   const { i18n: instance } = useTranslation();
+  const hydrating = useIsHydrating();
+  if (hydrating) return { language: STATIC_RENDER_LANGUAGE, locale: STATIC_RENDER_LOCALE };
   const lng = instance.resolvedLanguage ?? instance.language;
   const language = isAppLanguage(lng) ? lng : FALLBACK_LANGUAGE;
   return { language, locale: appLocale(language) };

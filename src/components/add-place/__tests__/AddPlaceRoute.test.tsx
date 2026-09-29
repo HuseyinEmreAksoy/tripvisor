@@ -12,9 +12,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/theme';
+import { i18n } from '@/i18n';
 import AddPlace from '../../../../app/(app)/trip/[id]/add';
 
-const QUOTA_COPY = 'Daily place search limit reached — try again tomorrow';
+const QUOTA_COPY = i18n.t('errors:places.quotaExceeded');
 
 let mockAutocomplete: { data: unknown[]; error: Error | null } = { data: [], error: null };
 let mockDetailsError: Error | null = null;

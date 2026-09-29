@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { ThemeProvider } from '@/theme';
+import { i18n, setLanguagePreference } from '@/i18n';
 import type { Trip, TripLeg } from '@/api';
 import { TripHeader, TripMenuSheet, pillForOptimizeError } from '../TripHeader';
 import { IOS_MODAL_HANDOFF_MS } from '../modalHandoff';
@@ -58,6 +59,7 @@ describe('TripHeader — compact', () => {
         trip={trip}
         legs={legs}
         placesCount={5}
+        canEdit
         optimizePending={false}
         optimizeError={null}
         onBack={jest.fn()}
@@ -84,6 +86,7 @@ describe('TripHeader — compact', () => {
         trip={trip}
         legs={[]}
         placesCount={0}
+        canEdit
         optimizePending={false}
         optimizeError={null}
         onBack={jest.fn()}
@@ -104,6 +107,7 @@ describe('optimize status pill', () => {
         trip={trip}
         legs={legs}
         placesCount={5}
+        canEdit
         optimizePending={false}
         optimizeError={optimizeError}
         onBack={jest.fn()}
@@ -114,33 +118,75 @@ describe('optimize status pill', () => {
     );
   }
 
+  afterEach(async () => {
+    await act(async () => {
+      await setLanguagePreference('system');
+    });
+  });
+
   // Security audit #6: viewers get 403 not_editor — never a red failure pill.
   it('not_editor shows a neutral "View only" pill, not a failure', () => {
     expect(pillForOptimizeError(new MockOptimizeError('not_editor'))).toEqual({
       tone: 'info',
-      label: 'View only',
+      labelKey: 'optimize.viewOnly',
     });
     const { getByText, queryByText } = renderWithError(new MockOptimizeError('not_editor'));
     expect(getByText('View only')).toBeTruthy();
-    expect(queryByText(/optimize failed/i)).toBeNull();
+    expect(queryByText(i18n.t('trip:optimize.failed'))).toBeNull();
   });
 
   // Audit #2: the per-user daily routing quota resets tomorrow.
   it('quota_exceeded says the daily route limit is reached', () => {
     expect(pillForOptimizeError(new MockOptimizeError('quota_exceeded'))).toEqual({
       tone: 'info',
-      label: 'Daily route limit reached — try again tomorrow',
+      labelKey: 'optimize.quotaExceeded',
     });
     const { getByText } = renderWithError(new MockOptimizeError('quota_exceeded'));
-    expect(getByText('Daily route limit reached — try again tomorrow')).toBeTruthy();
+    expect(getByText('Daily route limit reached. Try again tomorrow.')).toBeTruthy();
   });
 
   it('other failures keep the generic danger pill', () => {
     expect(pillForOptimizeError(new MockOptimizeError('db_error'))).toEqual({
       tone: 'danger',
-      label: 'Optimize failed',
+      labelKey: 'optimize.failed',
     });
-    expect(pillForOptimizeError(new Error('network'))).toEqual({ tone: 'danger', label: 'Optimize failed' });
+    expect(pillForOptimizeError(new Error('network'))).toEqual({ tone: 'danger', labelKey: 'optimize.failed' });
+  });
+
+  it('follows the app language', async () => {
+    const { getByText } = renderWithError(new MockOptimizeError('quota_exceeded'));
+    await act(async () => {
+      await setLanguagePreference('tr');
+    });
+    expect(getByText('Günlük rota sınırına ulaşıldı. Yarın tekrar dene.')).toBeTruthy();
+  });
+});
+
+describe('"Add places to optimize" nudge', () => {
+  function renderFewPlaces(canEdit: boolean) {
+    return wrap(
+      <TripHeader
+        trip={trip}
+        legs={[]}
+        placesCount={1}
+        canEdit={canEdit}
+        optimizePending={false}
+        optimizeError={null}
+        onBack={jest.fn()}
+        onPrint={jest.fn()}
+        onOpenMenu={jest.fn()}
+        compact
+      />,
+    );
+  }
+
+  it('shows for owners and editors with fewer than two places', () => {
+    expect(renderFewPlaces(true).getByText('Add places to optimize')).toBeTruthy();
+  });
+
+  // Viewers can't add places, so the nudge would be a dead end.
+  it('is hidden from viewers', () => {
+    expect(renderFewPlaces(false).queryByText('Add places to optimize')).toBeNull();
   });
 });
 

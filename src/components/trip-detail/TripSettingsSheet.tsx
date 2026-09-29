@@ -17,6 +17,7 @@ import { useState } from 'react';
 import { Alert, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { BottomSheet, Button, Heading, SegmentedControl, Slider } from '@/components';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
@@ -25,25 +26,24 @@ import { CoverPhotoSection } from './CoverPhotoSection';
 import { CoverPickerModal } from './CoverPickerModal';
 import { SectionHeading } from './TripHubCards';
 
-// User-facing copy for delete failures. Plain strings until the i18n step
-// lands (then these move to `t()` keys).
-const COPY = {
-  deleteStorageCleanupFailed: "Couldn't remove the trip's files — nothing was deleted. Try again.",
-  deleteNotOwner: 'Only the trip owner can delete this trip.',
-  deleteGeneric: "Couldn't delete this trip. Check your connection and try again.",
-} as const;
+/** `trip` namespace keys for delete failures (translated by the sheet). */
+export type DeleteTripErrorKey =
+  | 'delete.errors.storageCleanupFailed'
+  | 'delete.errors.notOwner'
+  | 'delete.errors.generic';
 
 /**
- * Map a `useDeleteTrip` failure to the message shown under the Delete button.
- * `storage_cleanup_failed` is atomic server-side (the row is kept when the
- * trip's Storage files can't be removed), so the copy says nothing was lost.
+ * Map a `useDeleteTrip` failure to the message key shown under the Delete
+ * button. `storage_cleanup_failed` is atomic server-side (the row is kept
+ * when the trip's Storage files can't be removed), so the copy says nothing
+ * was lost.
  */
-export function deleteTripErrorMessage(err: unknown): string {
+export function deleteTripErrorKey(err: unknown): DeleteTripErrorKey {
   if (err instanceof DeleteTripError) {
-    if (err.code === 'storage_cleanup_failed') return COPY.deleteStorageCleanupFailed;
-    if (err.code === 'not_owner') return COPY.deleteNotOwner;
+    if (err.code === 'storage_cleanup_failed') return 'delete.errors.storageCleanupFailed';
+    if (err.code === 'not_owner') return 'delete.errors.notOwner';
   }
-  return COPY.deleteGeneric;
+  return 'delete.errors.generic';
 }
 
 const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
@@ -65,9 +65,9 @@ export interface TripSettingsSheetProps {
   deleting: boolean;
   /**
    * Shown under the Delete button when the last delete attempt failed.
-   * Build it with {@link deleteTripErrorMessage} so typed codes get their copy.
+   * Build it with {@link deleteTripErrorKey} so typed codes get their copy.
    */
-  deleteError?: string | null;
+  deleteError?: DeleteTripErrorKey | null;
 }
 
 export function TripSettingsSheet(props: TripSettingsSheetProps) {
@@ -112,6 +112,7 @@ function TripSettingsBody({
   deleteError = null,
 }: TripSettingsSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   const [budget, setBudget] = useState(dailyHoursBudget);
   const [mode, setMode] = useState<TransportMode>(transportMode);
 
@@ -297,7 +298,7 @@ function TripSettingsBody({
               accessibilityLiveRegion="polite"
               accessibilityRole="alert"
             >
-              {deleteError}
+              {tx(deleteError)}
             </Text>
           ) : null}
         </>

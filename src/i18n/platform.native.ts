@@ -11,6 +11,11 @@ export function isStaticRender(): boolean {
   return false;
 }
 
+/** Native never hydrates server HTML. */
+export function isHydratingStaticHtml(): boolean {
+  return false;
+}
+
 export function readStoredPreferenceSync(): string | null {
   return null;
 }

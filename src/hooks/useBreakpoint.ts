@@ -17,6 +17,7 @@
  *   if (bp === 'desktop') { ... }
  */
 import { useWindowDimensions } from 'react-native';
+import { useIsHydrating } from './useIsHydrating';
 
 export type Breakpoint = 'mobile' | 'tablet' | 'desktop';
 
@@ -27,7 +28,11 @@ export const BREAKPOINTS = {
 } as const;
 
 export function useBreakpoint(): Breakpoint {
-  const { width } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  // Web static export: pages are prerendered with no window (width 0), so
+  // hydrate with that layout and take the real width right after. Otherwise
+  // a desktop visit throws React #418 and discards the prerendered HTML.
+  const width = useIsHydrating() ? 0 : windowWidth;
   if (width >= BREAKPOINTS.desktop) return 'desktop';
   if (width >= BREAKPOINTS.tablet) return 'tablet';
   return 'mobile';

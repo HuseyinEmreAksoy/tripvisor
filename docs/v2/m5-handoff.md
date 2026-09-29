@@ -133,3 +133,9 @@ Money conversion order (MV + Y2.2 lib):
 - export-account now covers expenses, stays, packing, documents, shares (no token) and collaborators (no invite_token), plus own comments/reactions. Paged in 1000s; id filters chunked by 100.
 - fx past dates store ECB + requested codes only; per-user cap 20/day; quota/upstream failure returns 429/503, never 422.
 - poi logs a geohash-4, never userId+coords. upstream.ts stream-caps the body.
+
+## UI fix round (done)
+- Prerendered screens (auth, legal, onboarding): read language via useT/useAppLocale; use useIsHydrating for any browser-only value during render. The Y1.4 note "hydration mismatch is recoverable" is WRONG and superseded.
+- API: pillForOptimizeError returns {tone,labelKey}; deleteTripErrorKey; inviteError returns {key,field}; TripHeader requires canEdit.
+- The privacy policy promises EXIF/GPS stripping, so Y2.1 MUST re-encode photos and never upload the original.
+- Minor: "TRİPVİSOR" shows under lang=tr because of CSS uppercase.

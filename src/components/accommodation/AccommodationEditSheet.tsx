@@ -51,13 +51,7 @@ import {
 } from '@/api/places';
 import type { TripAccommodation } from '@/api/types';
 import type { PlaceAutocompleteSuggestion } from '@/api/types';
-
-// Copy added in the 2026-09-29 security follow-up (per-user Places quota).
-// Plain strings until the i18n step lands (then these move to `t()` keys).
-const COPY = {
-  placesQuota: 'Daily place search limit reached — try again tomorrow',
-  manualFallback: 'Use the manual address field below.',
-} as const;
+import { useT } from '@/i18n';
 
 // ─── Session token per edit session ──────────────────────────────────────────
 // crypto.randomUUID() is available in Expo SDK 52+ (Hermes ships it via the
@@ -143,6 +137,7 @@ export function AccommodationEditSheet({
   onClose,
 }: AccommodationEditSheetProps) {
   const t = useTheme();
+  const { t: tx } = useT('stays');
   const createAccommodation = useCreateTripAccommodation();
   const updateAccommodation = useUpdateTripAccommodation();
 
@@ -376,7 +371,7 @@ export function AccommodationEditSheet({
               >
                 {placesQuotaHit ? (
                   <Text style={[t.typography.caption, { color: t.colors.text }]}>
-                    {`${COPY.placesQuota}. ${COPY.manualFallback}`}
+                    {tx('edit.placesQuota')}
                   </Text>
                 ) : (
                   <Text style={[t.typography.caption, { color: t.colors.text }]}>

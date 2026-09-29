@@ -86,9 +86,14 @@ jest.mock('@/components', () => ({
     visible ? children : null,
 }));
 jest.mock('@/components/ShareLinkCard', () => ({ ShareLinkCard: () => mockText('stub:ShareLinkCard') }));
-// Header → a "⋯" button; the menu → Share / Settings rows.
+// Header → a "⋯" button (+ the role it was given); the menu → Share / Settings rows.
 jest.mock('@/components/trip-detail/TripHeader', () => ({
-  TripHeader: ({ onOpenMenu }: { onOpenMenu: () => void }) => mockButton('header:menu', onOpenMenu),
+  TripHeader: ({ onOpenMenu, canEdit }: { onOpenMenu: () => void; canEdit: boolean }) => (
+    <>
+      {mockButton('header:menu', onOpenMenu)}
+      {mockText(`header:canEdit=${String(canEdit)}`)}
+    </>
+  ),
   TripMenuSheet: ({ visible, onShare, onOpenSettings }: {
     visible: boolean;
     onShare: () => void;
@@ -105,7 +110,7 @@ jest.mock('@/components/trip-detail/MapTab', () => ({ MapTab: () => null }));
 jest.mock('@/components/trip-detail/ItineraryTab', () => ({ ItineraryTab: () => null }));
 jest.mock('@/components/trip-detail/TripHubTab', () => ({ TripHubTab: () => null }));
 jest.mock('@/components/trip-detail/TripSettingsSheet', () => ({
-  deleteTripErrorMessage: (err: unknown) =>
+  deleteTripErrorKey: (err: unknown) =>
     `mapped:${(err as { code?: string }).code ?? 'unknown'}`,
   TripSettingsSheet: ({ visible, onDelete, deleteError }: {
     visible: boolean;
@@ -180,6 +185,19 @@ describe('TripDetail — auto-optimize role gate', () => {
   });
 });
 
+describe('TripDetail — header role', () => {
+  // Viewers can't add places, so the header must not nudge them to.
+  it.each([
+    ['owner', { role: 'owner' as const, canEditTrip: true }, 'true'],
+    ['editor', { role: 'editor' as const, canEditTrip: true }, 'true'],
+    ['viewer', { role: 'viewer' as const, canEditTrip: false }, 'false'],
+  ])('passes canEdit for a %s', (_who, role, expected) => {
+    mockRole = role;
+    const { getByText } = wrap(<TripDetail />);
+    expect(getByText(`header:canEdit=${expected}`)).toBeTruthy();
+  });
+});
+
 describe('TripDetail — share sheet owner gate', () => {
   function openShare() {
     const utils = wrap(<TripDetail />);
@@ -208,7 +226,7 @@ describe('TripDetail — share sheet owner gate', () => {
 });
 
 describe('TripDetail — delete failure copy', () => {
-  it('passes the typed delete error through deleteTripErrorMessage', async () => {
+  it('passes the typed delete error through deleteTripErrorKey', async () => {
     mockDeleteMutateAsync.mockRejectedValue(
       Object.assign(new Error('files'), { code: 'storage_cleanup_failed' }),
     );

@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { ThemeProvider } from '@/theme';
+import { i18n } from '@/i18n';
 import { AccommodationEditSheet } from '../AccommodationEditSheet';
 
 let mockAutocompleteError: Error | null = null;
@@ -72,9 +73,7 @@ describe('AccommodationEditSheet — Places notices', () => {
     mockAutocompleteError = new MockPlacesError('quota_exceeded', 'Daily limit', 429);
     const utils = renderSheet();
     search(utils);
-    const notice = utils.getByText(
-      'Daily place search limit reached — try again tomorrow. Use the manual address field below.',
-    );
+    const notice = utils.getByText(i18n.t('stays:edit.placesQuota'));
     expect(notice).toBeTruthy();
     expect(utils.queryByText(/not configured/i)).toBeNull();
     expect(utils.queryByRole('button', { name: /choose/i })).toBeNull();

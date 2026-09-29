@@ -25,6 +25,7 @@ import { ScrollView, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { formatCurrency } from '@/lib/formatCurrency';
 import { toLocalDateString } from '@/lib/tripToday';
 import { useDeleteTripExpense, useTripPlaces, type TripCurrency, type TripPlace } from '@/api';
@@ -45,13 +46,6 @@ import { AccommodationList } from '@/components/accommodation/AccommodationList'
 import { AccommodationEditSheet } from '@/components/accommodation/AccommodationEditSheet';
 import { DocumentsSection } from './DocumentsSection';
 import { HubCard, ProgressBar, ReactionCatalogSection } from './TripHubCards';
-
-// Copy added in the 2026-09-29 security follow-up. Plain strings until the
-// i18n step lands (then these move to `t()` keys).
-const COPY = {
-  shareOwnerSummary: 'Read-only public link or invite by email',
-  shareOwnerOnly: 'Only the trip owner can create a share link. Ask them to send you one.',
-} as const;
 
 export type HubSection = 'budget' | 'stays' | 'docs' | 'share';
 
@@ -85,6 +79,7 @@ export function TripHubTab({
   bottomInset = 0,
 }: TripHubTabProps) {
   const t = useTheme();
+  const { t: tx } = useT('share');
   const router = useRouter();
   const [open, setOpen] = useState<ReadonlySet<HubSection>>(() => new Set(initialExpanded));
   const toggle = (s: HubSection) =>
@@ -270,7 +265,7 @@ export function TripHubTab({
       <HubCard
         icon="share-2"
         title="Share"
-        summary={isOwner ? COPY.shareOwnerSummary : COPY.shareOwnerOnly}
+        summary={isOwner ? tx('hubSummary') : tx('link.ownerOnly')}
         expanded={isOwner ? open.has('share') : undefined}
         onPress={() => (isOwner ? toggle('share') : router.push(`/trip/${tripId}/collaborators`))}
       >

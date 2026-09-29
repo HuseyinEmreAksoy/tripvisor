@@ -12,5 +12,9 @@
   "account": {
     "deleteFailed": "Hesabın silinemedi. Lütfen tekrar dene.",
     "exportFailed": "Verilerin dışa aktarılamadı. Lütfen tekrar dene."
+  },
+  "places": {
+    "quotaExceeded": "Günlük yer arama sınırına ulaşıldı. Yarın tekrar dene.",
+    "detailsFailed": "Bu yer yüklenemedi. İnternet bağlantını kontrol edip tekrar dene."
   }
 }

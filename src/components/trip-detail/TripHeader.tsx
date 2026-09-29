@@ -29,21 +29,20 @@ import {
 } from '@/components';
 import { humanizeDuration } from '@/components/TripCostRollup';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { OptimizeError, type Trip, type TripLeg } from '@/api';
 import { IOS_MODAL_HANDOFF_MS } from './modalHandoff';
-
-// Optimize-pill copy added in the 2026-09-29 security follow-up. Plain
-// strings until the i18n step lands (then these move to `t()` keys).
-const COPY = {
-  viewOnly: 'View only',
-  routeQuotaExceeded: 'Daily route limit reached — try again tomorrow',
-} as const;
 
 export interface TripHeaderProps {
   trip: Trip;
   legs: TripLeg[];
   /** Number of places in the trip — drives the "Add places to optimize" pill. */
   placesCount: number;
+  /**
+   * Whether the viewer may edit the trip (owner or editor). Viewers can't
+   * add places, so they never get the "Add places to optimize" nudge.
+   */
+  canEdit: boolean;
   /** Auto-optimize mutation state (owned by the route shell). */
   optimizePending: boolean;
   optimizeError: unknown;
@@ -59,6 +58,7 @@ export function TripHeader({
   trip,
   legs,
   placesCount,
+  canEdit,
   optimizePending,
   optimizeError,
   onBack,
@@ -67,16 +67,17 @@ export function TripHeader({
   compact = false,
 }: TripHeaderProps) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
 
   const statusPill = optimizePending ? (
-    <StatusPill tone="info" label="Optimizing…" loading />
+    <StatusPill tone="info" label={tx('optimize.running')} loading />
   ) : optimizeError ? (
     (() => {
-      const { tone, label } = pillForOptimizeError(optimizeError);
-      return <StatusPill tone={tone} label={label} />;
+      const { tone, labelKey } = pillForOptimizeError(optimizeError);
+      return <StatusPill tone={tone} label={tx(labelKey)} />;
     })()
-  ) : placesCount < 2 ? (
-    <StatusPill tone="info" label="Add places to optimize" />
+  ) : placesCount < 2 && canEdit ? (
+    <StatusPill tone="info" label={tx('optimize.addPlaces')} />
   ) : null;
 
   const menuButton = (
@@ -392,32 +393,43 @@ function MenuRow({
  * - All other known codes map to danger tone with a code-specific label.
  * - Unknown codes / non-OptimizeError (network failures, parse fallthrough)
  *   fall back to the generic "Optimize failed" label.
+ *
+ * Returns a `trip` namespace key (translated at render), not a string.
  */
+export type OptimizePillKey =
+  | 'optimize.inProgress'
+  | 'optimize.viewOnly'
+  | 'optimize.quotaExceeded'
+  | 'optimize.tooManyPlaces'
+  | 'optimize.routingUnavailable'
+  | 'optimize.notFound'
+  | 'optimize.failed';
+
 export function pillForOptimizeError(
   err: unknown,
-): { tone: 'info' | 'success' | 'danger'; label: string } {
+): { tone: 'info' | 'success' | 'danger'; labelKey: OptimizePillKey } {
   if (err instanceof OptimizeError) {
     switch (err.code) {
       case 'already_optimizing':
-        return { tone: 'info', label: 'Optimizing in progress…' };
+        return { tone: 'info', labelKey: 'optimize.inProgress' };
       case 'not_editor':
-        return { tone: 'info', label: COPY.viewOnly };
+        return { tone: 'info', labelKey: 'optimize.viewOnly' };
       case 'quota_exceeded':
-        return { tone: 'info', label: COPY.routeQuotaExceeded };
+        return { tone: 'info', labelKey: 'optimize.quotaExceeded' };
       case 'too_many_places':
-        return { tone: 'danger', label: 'Trip is too large' };
+        return { tone: 'danger', labelKey: 'optimize.tooManyPlaces' };
       case 'matrix_failed':
-        return { tone: 'danger', label: 'Routing service unavailable' };
+        return { tone: 'danger', labelKey: 'optimize.routingUnavailable' };
       case 'not_found':
-        return { tone: 'danger', label: 'Trip not found' };
+        return { tone: 'danger', labelKey: 'optimize.notFound' };
       case 'rpc_failed':
       case 'db_error':
       case 'invalid_input':
       default:
-        return { tone: 'danger', label: 'Optimize failed' };
+        return { tone: 'danger', labelKey: 'optimize.failed' };
     }
   }
-  return { tone: 'danger', label: 'Optimize failed' };
+  return { tone: 'danger', labelKey: 'optimize.failed' };
 }
 
 function formatRange(start: string | null, end: string | null): string {

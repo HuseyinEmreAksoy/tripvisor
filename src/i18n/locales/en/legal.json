@@ -11,7 +11,7 @@
   },
   "privacy": {
     "title": "Privacy policy",
-    "intro": "This policy explains what Tripvisor collects, why, who processes it, and how you can export or delete it. The short version: we keep only what the app needs to plan and sync your trips, and we never sell it.",
+    "intro": "This policy explains what Tripvisor collects, why, who processes it, and how you can export or delete it. The short version: we keep only what the app needs to plan, sync and remember your trips, and we never sell it.",
     "related": "Read the terms of use",
     "sections": [
       {
@@ -24,10 +24,13 @@
         "heading": "What we collect",
         "bullets": [
           "Account: your email address, used to sign you in (by email link or Google sign-in) and to contact you about your account. If you sign in with Google we receive your email and basic profile name, nothing else.",
-          "Content you enter: trips, dates, places, notes, pinned times, packing lists, accommodation, budgets and expenses.",
+          "Content you enter: trips, dates, places, notes, pinned times, how you travel between stops, packing lists, accommodation, budgets and expenses. Each expense keeps the amount and currency you entered, plus the exchange rate and date used to convert it to the trip’s home currency.",
+          "Memories: journal entries, your own 1–5 ratings and reviews of places, and the photos you add. Memories are private to you by default. Other trip members see only the ones you choose to share with the trip, and a public link shows them only if the trip owner turns that on.",
+          "Memory photos: stored privately in our file storage (Supabase Storage). The app compresses each photo and removes its location metadata (such as GPS coordinates) before upload.",
           "Places: for each place you add we store its Google place ID and its coordinates. Names, photos, ratings and reviews from Google are fetched when you view them and are not stored on our servers.",
           "Documents you upload to a trip: PDFs and images such as tickets or booking confirmations. They are stored privately in our file storage and are visible only to that trip’s members.",
-          "Collaboration: who you share a trip with, their role, and share links you create.",
+          "Collaboration: who you share a trip with, their role, the share links you create and what each link shows.",
+          "Preferences: your app language, your default home currency and the interests you pick for suggestions.",
           "Crash reports and performance data: if the app crashes, a report with the error, device type, OS and app version is sent to Sentry, along with a small sample of performance traces (how long screens and requests take). It doesn’t include your trip content."
         ],
         "paragraphs": [
@@ -37,14 +40,14 @@
       {
         "heading": "Your location",
         "paragraphs": [
-          "Only if you ask for it (“How far am I?” on Today, or “From my location” on the map), the app reads your current position on your device to estimate distance or draw a line to your first stop. Your location is not saved to your account or sent to our servers. You can turn location access off at any time in your phone or browser settings."
+          "Only if you ask for it (“How far am I?” on Today, or “From my location” on the map), the app reads your current position on your device to estimate distance or draw a line to your first stop. That position is not saved to your account or sent to our servers. If you look for suggestions around where you are, your position is sent to our server once, as the centre of that search, and isn’t saved to your account. You can turn location access off at any time in your phone or browser settings."
         ]
       },
       {
         "heading": "How we use your data",
         "bullets": [
           "To run the app: store and sync your trips across your devices, and share them with the people you invite.",
-          "To plan routes and suggestions: place names, coordinates and the text you type are sent to the services listed below.",
+          "To plan routes, suggest places and convert currencies: place names, coordinates, search areas, currency codes, dates and the text you type are sent to the services listed below.",
           "To fix bugs: crash reports help us find and fix problems."
         ],
         "paragraphs": [
@@ -54,11 +57,14 @@
       {
         "heading": "Services that process data for us",
         "bullets": [
-          "Supabase: database, sign-in and server functions. Stores your account and trip data.",
+          "Supabase: database, sign-in, server functions and private file storage (trip documents and memory photos). Stores your account and trip data.",
           "Google Maps Platform: place search, place details and route times. Receives search text, place IDs and coordinates. Results aren’t stored beyond place IDs and coordinates.",
           "Google Gemini and Groq: AI trip planning and editing. They receive only the text you write in the AI planner and the names of places in the trip, never your email.",
           "OpenRouteService: route optimisation and travel times. Receives coordinates.",
           "Open-Meteo: weather forecasts. Receives coordinates and dates.",
+          "OpenStreetMap Overpass API (public servers such as overpass-api.de): finds places for interest-based suggestions. Our server sends only the search area (coordinates and radius) and the kinds of places you’re interested in. Your IP address and account aren’t shared.",
+          "Wikipedia and Wikidata (Wikimedia Foundation): names, short descriptions and pictures for suggestions. Our server sends place names, Wikidata IDs and, when OpenStreetMap is unavailable, the search area. Pictures on suggestion cards load directly from Wikimedia, which sees your IP address.",
+          "Frankfurter (European Central Bank reference rates) and the open currency-api served by jsDelivr: exchange rates for your expenses. Our server sends only dates and currency codes.",
           "OpenFreeMap / OpenStreetMap: map tiles for the web map. The tile servers receive your IP address and the map area you are viewing.",
           "Google Maps SDK: draws the map in the Android app. Google receives device and map-usage data under its own terms and privacy policy.",
           "Cloudflare Pages: hosts the web app; processes standard request data such as IP address to serve pages.",
@@ -71,15 +77,15 @@
       {
         "heading": "How long we keep it",
         "paragraphs": [
-          "Your data is kept for as long as you have an account. When you delete your account, your account and your trips, including their places, expenses, share links and the documents and files uploaded to them, are deleted straight away; backups roll over within 30 days. Data saved on your device is wiped when you delete your account, or you can remove it by uninstalling the app or clearing site data."
+          "Your data is kept for as long as you have an account. When you delete your account, your account and your trips, including their places, expenses, share links and the documents and files uploaded to them, are deleted straight away, together with all your memories (journal entries, ratings, reviews and photos), including those on other people’s trips; backups roll over within 30 days. When an owner deletes a trip, everything on it is deleted too, including members’ memories. Photo uploads that never finish are cleaned up automatically. Suggestion results (for up to 30 days) and exchange rates are cached on our server with no link to you. Data saved on your device is wiped when you delete your account, or you can remove it by uninstalling the app or clearing site data."
         ]
       },
       {
         "heading": "Your choices and rights",
         "bullets": [
-          "Export: Profile & settings → Your data → Export my data downloads everything as a JSON file.",
+          "Export: Profile & settings → Your data → Export my data downloads everything you’ve entered as a JSON file, including trips, places, expenses, stays, packing lists, memories and preferences. Photos and documents are listed with their details, but the image and document files themselves aren’t included.",
           "Delete: Profile & settings → Delete account permanently removes your account and all your trips. You can also email us to ask for deletion.",
-          "Correct: you can edit or delete any trip, place or expense in the app at any time.",
+          "Correct: you can edit or delete any trip, place, expense or memory in the app at any time.",
           "Ask: you can request a copy of your data, correction or deletion by emailing {{email}}. Depending on where you live (for example the EU/UK under GDPR) you may also complain to your data-protection authority."
         ]
       },
@@ -142,7 +148,7 @@
       {
         "heading": "Maps, routes and AI suggestions",
         "paragraphs": [
-          "Travel times, opening hours, routes, weather and AI-drafted plans are estimates from third-party services (including Google Maps, OpenFreeMap/OpenStreetMap, OpenRouteService, Open-Meteo, Gemini and Groq). They can be wrong or out of date. Always check opening times, local conditions and safety information yourself, and follow road signs and local rules while travelling. Map data and place information are subject to the providers’ own terms, including the Google Maps Terms of Service and the OpenStreetMap licence."
+          "Travel times, opening hours, routes, weather, exchange rates, place suggestions and AI-drafted plans are estimates from third-party services (including Google Maps, OpenFreeMap/OpenStreetMap, OpenRouteService, Open-Meteo, Wikipedia, Frankfurter, Gemini and Groq). They can be wrong or out of date. Always check opening times, prices, local conditions and safety information yourself, and follow road signs and local rules while travelling. Map data and place information are subject to the providers’ own terms, including the Google Maps Terms of Service, the OpenStreetMap licence and Wikipedia’s CC BY-SA licence."
         ]
       },
       {

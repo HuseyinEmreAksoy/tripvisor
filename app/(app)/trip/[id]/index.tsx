@@ -52,16 +52,16 @@ import { TripHeader, TripMenuSheet } from '@/components/trip-detail/TripHeader';
 import { MapTab } from '@/components/trip-detail/MapTab';
 import { ItineraryTab } from '@/components/trip-detail/ItineraryTab';
 import { TripHubTab } from '@/components/trip-detail/TripHubTab';
-import { TripSettingsSheet, deleteTripErrorMessage } from '@/components/trip-detail/TripSettingsSheet';
+import {
+  TripSettingsSheet,
+  deleteTripErrorKey,
+  type DeleteTripErrorKey,
+} from '@/components/trip-detail/TripSettingsSheet';
 import { QuickAddFab, QuickAddSheet } from '@/components/trip-detail/QuickAddSheet';
 import { resolveTripTab, type TripTabKey } from '@/components/trip-detail/tripTabs';
 import { ActionErrorBanner } from '@/components/trip-detail/ActionErrorBanner';
 import { PlanSkeleton, TripDetailSkeleton } from '@/components/trip-detail/TripDetailSkeleton';
-
-// New copy (2026-09-29 security follow-up); moves to `t()` keys with i18n.
-const COPY = {
-  shareOwnerOnly: 'Only the trip owner can create a share link. Ask them to send you one.',
-} as const;
+import { useT } from '@/i18n';
 
 // FAB (56) + its bottom offset — the hub and the Plan list pad by this so the last row clears it.
 const FAB_CLEARANCE = 88;
@@ -72,6 +72,7 @@ export default function TripDetail() {
   const router = useRouter();
   const goBack = useSafeBack('/trips');
   const t = useTheme();
+  const { t: tx } = useT('share');
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
 
@@ -100,7 +101,7 @@ export default function TripDetail() {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   // Visible failures for Duplicate (menu already closed) and Delete (shown in the settings sheet).
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<DeleteTripErrorKey | null>(null);
 
   // Phase 21 Step 21.10/21.11: Role-gating for budget + accommodation + collaborators.
   const { canEditTrip, role: tripRole } = useTripRole(id);
@@ -234,7 +235,7 @@ export default function TripDetail() {
       await deleteTrip.mutateAsync(trip.id);
     } catch (err) {
       haptics.error();
-      setDeleteError(deleteTripErrorMessage(err));
+      setDeleteError(deleteTripErrorKey(err));
       return;
     }
     setSettingsOpen(false);
@@ -259,6 +260,7 @@ export default function TripDetail() {
       trip={trip}
       legs={legs}
       placesCount={places.length}
+      canEdit={canEditTrip}
       optimizePending={optimize.isPending}
       optimizeError={optimize.error}
       onBack={goBack}
@@ -370,7 +372,7 @@ export default function TripDetail() {
         {isOwner ? (
           <ShareLinkCard tripId={trip.id} tripTitle={trip.title} />
         ) : (
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{COPY.shareOwnerOnly}</Text>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('link.ownerOnly')}</Text>
         )}
         <Button variant="ghost" label="Close" onPress={() => setShareOpen(false)} />
       </BottomSheet>

@@ -1,12 +1,16 @@
 /**
  * InviteSheet — invite failure copy (2026-09-29 security follow-up, audit
  * #14 invite quotas). The manage-collaborators 429/503 codes get our own
- * copy; unknown failures still fall back to the server message.
+ * copy (translated; the server's messages are English-only). Only problems
+ * with the typed email redden the email field; quota and server failures
+ * show as a form-level alert.
  */
-import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { ThemeProvider } from '@/theme';
-import { InviteSheet, inviteErrorMessage, type InviteSheetProps } from '../InviteSheet';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { ThemeProvider, themes } from '@/theme';
+import { i18n, setLanguagePreference } from '@/i18n';
+import { InviteSheet, inviteError, type InviteErrorKey, type InviteSheetProps } from '../InviteSheet';
 
 jest.mock('@/api/trip-collaborators', () => {
   class CollaboratorError extends Error {
@@ -29,43 +33,89 @@ const { CollaboratorError: MockCollaboratorError } = jest.requireMock<{
   CollaboratorError: new (code: string, message: string, status: number) => Error;
 }>('@/api/trip-collaborators');
 
-describe('inviteErrorMessage', () => {
+const collab = (key: InviteErrorKey) => i18n.t(`collab:${key}`);
+
+afterEach(async () => {
+  await act(async () => {
+    await setLanguagePreference('system');
+  });
+});
+
+describe('inviteError', () => {
   it.each([
-    ['invite_rate_limited', 429, "You've sent a lot of invites today — try again tomorrow"],
-    ['trip_invite_limit', 429, 'This trip has too many pending invites — cancel some first'],
-    ['quota_unavailable', 503, 'Invites are temporarily unavailable'],
-    [
-      'already_invited',
-      409,
-      'This person already has an invite for this trip. Cancel it first to send a new one.',
-    ],
-  ])('%s → our copy, not the English server message', (code, status, copy) => {
-    expect(inviteErrorMessage(new MockCollaboratorError(code, 'server text', status))).toBe(copy);
+    ['invite_rate_limited', 429, 'invite.errors.rateLimited', false],
+    ['trip_invite_limit', 429, 'invite.errors.tripLimit', false],
+    ['quota_unavailable', 503, 'invite.errors.unavailable', false],
+    ['not_owner', 403, 'invite.errors.notOwner', false],
+    ['already_invited', 409, 'invite.errors.alreadyInvited', true],
+  ])('%s → our copy, not the English server message', (code, status, key, field) => {
+    expect(inviteError(new MockCollaboratorError(code, 'server text', status))).toEqual({ key, field });
   });
 
-  it('falls back to the error message, then a generic line', () => {
-    expect(inviteErrorMessage(new MockCollaboratorError('db_error', 'Database hiccup', 500))).toBe(
-      'Database hiccup',
-    );
-    expect(inviteErrorMessage('boom')).toBe('Could not send invite. Please try again.');
+  it('anything else gets the generic line (server messages are English-only)', () => {
+    const generic = { key: 'invite.errors.generic', field: false };
+    expect(inviteError(new MockCollaboratorError('db_error', 'Database hiccup', 500))).toEqual(generic);
+    expect(inviteError(new Error('Network request failed'))).toEqual(generic);
+    expect(inviteError('boom')).toEqual(generic);
   });
 });
 
 describe('InviteSheet', () => {
-  it('shows the rate-limit copy when the invite is rejected with 429', async () => {
-    const mutateAsync = jest.fn(() =>
-      Promise.reject(new MockCollaboratorError('invite_rate_limited', 'Daily invite limit reached', 429)),
-    );
+  function renderSheet(mutateAsync: () => Promise<unknown>) {
     const inviteMutation = { mutateAsync, isPending: false } as unknown as InviteSheetProps['inviteMutation'];
-    const { getByLabelText, getByRole, findByText } = render(
+    return render(
       <ThemeProvider>
         <InviteSheet tripId="trip-1" tripTitle="Lisbon" visible onClose={jest.fn()} inviteMutation={inviteMutation} />
       </ThemeProvider>,
     );
-    fireEvent.changeText(getByLabelText('Collaborator email address'), 'sam@example.com');
-    fireEvent.press(getByRole('button', { name: 'Send invite' }));
+  }
+
+  const borderOf = (input: { props: { style: unknown } }) =>
+    (StyleSheet.flatten(input.props.style as never) as { borderColor?: string }).borderColor;
+  const DANGER = [themes.light.danger, themes.dark.danger];
+
+  async function invite(utils: ReturnType<typeof renderSheet>, email: string) {
+    fireEvent.changeText(utils.getByLabelText('Collaborator email address'), email);
+    // The handler awaits the mutation, so settle it inside act.
+    await act(async () => {
+      fireEvent.press(utils.getByRole('button', { name: 'Send invite' }));
+    });
+  }
+
+  it('shows the rate-limit copy as a form alert without reddening the email field', async () => {
+    const mutateAsync = jest.fn(() =>
+      Promise.reject(new MockCollaboratorError('invite_rate_limited', 'Daily invite limit reached', 429)),
+    );
+    const utils = renderSheet(mutateAsync);
+    const input = utils.getByLabelText('Collaborator email address');
+    const idleBorder = borderOf(input);
+    await invite(utils, 'sam@example.com');
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    const error = await findByText("You've sent a lot of invites today — try again tomorrow");
+    const error = await utils.findByText(collab('invite.errors.rateLimited'));
     expect(error.props.accessibilityRole).toBe('alert');
+    expect(borderOf(utils.getByLabelText('Collaborator email address'))).toBe(idleBorder);
+    expect(DANGER).not.toContain(idleBorder);
+  });
+
+  it('reddens the email field when the email itself is the problem', async () => {
+    const mutateAsync = jest.fn(() =>
+      Promise.reject(new MockCollaboratorError('already_invited', 'Already invited', 409)),
+    );
+    const utils = renderSheet(mutateAsync);
+    await invite(utils, 'sam@example.com');
+    expect(await utils.findByText(collab('invite.errors.alreadyInvited'))).toBeTruthy();
+    expect(DANGER).toContain(borderOf(utils.getByLabelText('Collaborator email address')));
+  });
+
+  it('validates the email locally, in the app language', async () => {
+    const mutateAsync = jest.fn(() => Promise.resolve({}));
+    const utils = renderSheet(mutateAsync);
+    await act(async () => {
+      await setLanguagePreference('tr');
+    });
+    await invite(utils, 'not-an-email');
+    expect(utils.getByText('Geçerli bir e-posta adresi gir.').props.accessibilityRole).toBe('alert');
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(DANGER).toContain(borderOf(utils.getByLabelText('Collaborator email address')));
   });
 });

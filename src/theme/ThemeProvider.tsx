@@ -16,6 +16,7 @@ import {
   HankenGrotesk_800ExtraBold,
 } from '@expo-google-fonts/hanken-grotesk';
 import { storageAdapter } from '@/api/storage';
+import { useIsHydrating } from '@/hooks/useIsHydrating';
 import {
   brandTypography,
   radius,
@@ -121,13 +122,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     storageAdapter.setItem(STORAGE_KEY, next);
   };
 
+  // Web static export: the HTML was prerendered with no storage and no media
+  // query (System → light). Hydrate with exactly that, then switch to the
+  // stored / system theme right after. React doesn't patch mismatched style
+  // attributes while hydrating, so reading the real theme here would leave
+  // dark-mode visitors stuck on the light prerender.
+  const hydrating = useIsHydrating();
+  const activeMode: ThemeMode = hydrating ? 'system' : mode;
+  const activeScheme = hydrating ? null : systemScheme;
+
   const value = useMemo<ThemeContextValue>(() => {
     const name: ThemeName =
-      mode === 'system'
-        ? systemScheme === 'dark'
+      activeMode === 'system'
+        ? activeScheme === 'dark'
           ? 'dark'
           : 'light'
-        : mode;
+        : activeMode;
 
     return {
       theme: {
@@ -138,14 +148,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         typography: brandTypography(fontsLoaded),
         shadows,
       },
-      mode,
+      mode: activeMode,
       setMode,
       // Legacy compat
-      override: mode === 'system' ? null : mode,
+      override: activeMode === 'system' ? null : activeMode,
       setOverride: (n) => setMode(n === null ? 'system' : n),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, systemScheme, fontsLoaded]);
+  }, [activeMode, activeScheme, fontsLoaded]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

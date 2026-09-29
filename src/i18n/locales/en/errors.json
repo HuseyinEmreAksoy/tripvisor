@@ -12,5 +12,9 @@
   "account": {
     "deleteFailed": "Couldn’t delete your account. Please try again.",
     "exportFailed": "Couldn’t export your data. Please try again."
+  },
+  "places": {
+    "quotaExceeded": "Daily place search limit reached. Try again tomorrow.",
+    "detailsFailed": "Couldn’t load this place. Check your connection and try again."
   }
 }

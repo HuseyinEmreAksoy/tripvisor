@@ -7,6 +7,7 @@
 export {
   SYNC_PREFERENCE_READ,
   isStaticRender,
+  isHydratingStaticHtml,
   readStoredPreferenceSync,
   applyDocumentLanguage,
   ensureIntlPolyfills,

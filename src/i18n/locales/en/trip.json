@@ -1,1 +1,20 @@
-{}
+{
+  "optimize": {
+    "running": "Optimizing…",
+    "addPlaces": "Add places to optimize",
+    "inProgress": "Optimizing in progress…",
+    "viewOnly": "View only",
+    "quotaExceeded": "Daily route limit reached. Try again tomorrow.",
+    "tooManyPlaces": "Trip is too large",
+    "routingUnavailable": "Routing service unavailable",
+    "notFound": "Trip not found",
+    "failed": "Optimize failed"
+  },
+  "delete": {
+    "errors": {
+      "storageCleanupFailed": "Couldn’t remove the trip’s files, so nothing was deleted. Try again.",
+      "notOwner": "Only the trip owner can delete this trip.",
+      "generic": "Couldn’t delete this trip. Check your connection and try again."
+    }
+  }
+}

@@ -27,15 +27,10 @@ import { useTheme } from '@/theme';
 import { copyToClipboard } from '@/lib/clipboard';
 import { confirmDestructive } from '@/lib/confirm';
 import { ShareLinkError, useCreateShareLink, useRevokeShareLink } from '@/api/share';
+import { useT } from '@/i18n';
 import { buildAppUrl, useShareAction } from './share';
 
-// Copy added in the 2026-09-29 security follow-up. Plain strings until the
-// i18n step lands (then these move to `t()` keys).
-const COPY = {
-  notOwner: 'Only the trip owner can create a share link. Ask them to send you one.',
-  createFailed: 'Could not create link — try again.',
-  revokeFailed: 'Could not revoke link — try again.',
-} as const;
+type ShareErrorKey = 'link.ownerOnly' | 'link.createFailed' | 'link.revokeFailed';
 
 /**
  * Public links are OWNER-ONLY server-side (security audit #5). Callers gate
@@ -46,8 +41,9 @@ function isNotOwner(err: unknown): boolean {
   return err instanceof ShareLinkError && err.code === 'not_owner';
 }
 
-function shareErrorMessage(err: unknown, fallback: string): string {
-  return isNotOwner(err) ? COPY.notOwner : fallback;
+/** The `share` key for a failed create/revoke (translated at render). */
+function shareErrorKey(err: unknown, fallback: ShareErrorKey): ShareErrorKey {
+  return isNotOwner(err) ? 'link.ownerOnly' : fallback;
 }
 
 interface ShareLinkCardProps {
@@ -58,6 +54,7 @@ interface ShareLinkCardProps {
 
 export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
   const t = useTheme();
+  const { t: tx } = useT('share');
   const router = useRouter();
 
   // Token lives here after a successful create and is cleared on revoke.
@@ -201,7 +198,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
                 style={[t.typography.caption, { color: t.colors.danger }]}
                 accessibilityLiveRegion="polite"
               >
-                {shareErrorMessage(revokeLink.error, COPY.revokeFailed)}
+                {tx(shareErrorKey(revokeLink.error, 'link.revokeFailed'))}
               </Text>
             ) : null}
           </>
@@ -223,7 +220,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
                 style={[t.typography.caption, { color: t.colors.danger }]}
                 accessibilityLiveRegion="polite"
               >
-                {shareErrorMessage(createLink.error, COPY.createFailed)}
+                {tx(shareErrorKey(createLink.error, 'link.createFailed'))}
               </Text>
             ) : null}
           </>

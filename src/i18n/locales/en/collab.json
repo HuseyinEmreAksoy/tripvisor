@@ -1,1 +1,14 @@
-{}
+{
+  "invite": {
+    "errors": {
+      "emailRequired": "Email address is required.",
+      "emailInvalid": "Enter a valid email address.",
+      "alreadyInvited": "This person already has an invite for this trip. Cancel it first to send a new one.",
+      "rateLimited": "You’ve sent a lot of invites today. Try again tomorrow.",
+      "tripLimit": "This trip has too many pending invites. Cancel some first.",
+      "unavailable": "Invites are temporarily unavailable. Try again later.",
+      "notOwner": "Only the trip owner can invite people.",
+      "generic": "Couldn’t send the invite. Please try again."
+    }
+  }
+}

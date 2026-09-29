@@ -11,8 +11,16 @@
  * Keys live in `src/i18n/locales/{en,tr}/<ns>.json`; `npm run i18n:check`
  * enforces en/tr parity, no empty values, no unused keys, and no raw JSX
  * text in migrated directories.
+ *
+ * Statically exported web pages are prerendered in English and hydrate in
+ * English first (`useT`, `useAppLocale`), then switch. So in screens that are
+ * prerendered with content (auth, legal, onboarding), take the language from
+ * `useT` / `useAppLocale()` during render (and pass it to the formatters),
+ * never from `i18n.language` / `appLanguage()` directly.
  */
-export { useTranslation as useT, Trans } from 'react-i18next';
+export { Trans } from 'react-i18next';
+// `useTranslation`, pinned to the prerender language while hydrating static web HTML.
+export { useT } from './useT';
 export { i18n, appLocale, currentLanguage as appLanguage } from './instance';
 export {
   SUPPORTED_LANGUAGES,

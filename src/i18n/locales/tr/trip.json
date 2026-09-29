@@ -1,1 +1,20 @@
-{}
+{
+  "optimize": {
+    "running": "Rota hesaplanıyor…",
+    "addPlaces": "Rota için yer ekle",
+    "inProgress": "Rota hesaplaması sürüyor…",
+    "viewOnly": "Yalnızca görüntüleme",
+    "quotaExceeded": "Günlük rota sınırına ulaşıldı. Yarın tekrar dene.",
+    "tooManyPlaces": "Bu gezide çok fazla yer var",
+    "routingUnavailable": "Rota hizmetine şu an ulaşılamıyor",
+    "notFound": "Gezi bulunamadı",
+    "failed": "Rota hesaplanamadı"
+  },
+  "delete": {
+    "errors": {
+      "storageCleanupFailed": "Gezinin dosyaları kaldırılamadı, bu yüzden hiçbir şey silinmedi. Tekrar dene.",
+      "notOwner": "Bu geziyi yalnızca sahibi silebilir.",
+      "generic": "Bu gezi silinemedi. İnternet bağlantını kontrol edip tekrar dene."
+    }
+  }
+}

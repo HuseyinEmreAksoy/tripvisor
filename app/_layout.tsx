@@ -15,10 +15,17 @@
 //      translated. On native the persisted Profile → Language choice is read
 //      from AsyncStorage; `useI18nReady` keeps the splash up until then
 //      (bounded by a short timeout) so there's no flash of the device language.
+//      That needs `SplashScreen.preventAutoHideAsync()` at module scope (the
+//      one deliberate module-scope call; a native no-op flag, no I/O).
+//      Otherwise the splash auto-hides on the first frame and the `null`
+//      render below shows as a blank screen. On a statically exported web
+//      page, `useSystemLanguageSync` also switches from the prerendered
+//      English into the visitor's language right after hydration.
 
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
@@ -30,6 +37,15 @@ import { ThemeProvider } from '@/theme';
 import { shouldDehydrateQuery } from '@/api/offline';
 import { initSentry } from '@/lib/sentry';
 import { useI18nReady, useSystemLanguageSync } from '@/i18n';
+
+// Native only: hold the splash until the stored language is applied (see
+// `RootLayout`). Must run before the first frame, hence module scope. Web
+// has no native splash (the call is a no-op there anyway).
+if (Platform.OS !== 'web') {
+  SplashScreen.preventAutoHideAsync().catch(() => {
+    // Already hidden (e.g. a fast refresh): nothing to hold.
+  });
+}
 
 // ── Baseline Open Graph / meta tags (web only) ────────────────────────────────
 //
@@ -112,11 +128,21 @@ export default function RootLayout() {
   }, []);
 
   // System mode follows OS language changes (Android per-app language, iOS
-  // Settings, browser `languagechange`).
+  // Settings, browser `languagechange`). On a static web page it also swaps
+  // the prerendered English for the visitor's language after hydration.
   useSystemLanguageSync();
   // Always true on web; on native, false for the few ms it takes to read the
-  // stored language. Returning null keeps the native splash visible.
+  // stored language (at most 500 ms). Returning null meanwhile is safe
+  // because the splash is held (module scope above); it's hidden once the
+  // tree renders in the right language. Fonts don't gate this: they load
+  // non-blocking in ThemeProvider.
   const i18nReady = useI18nReady();
+  useEffect(() => {
+    if (!i18nReady || Platform.OS === 'web') return;
+    SplashScreen.hideAsync().catch(() => {
+      // Already hidden: nothing to do.
+    });
+  }, [i18nReady]);
   if (!i18nReady) return null;
 
   return (

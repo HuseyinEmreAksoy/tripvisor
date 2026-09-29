@@ -27,7 +27,7 @@
   "data": {
     "export": "Export my data",
     "exportA11y": "Export my data as JSON",
-    "exportHint": "Downloads a JSON file with all your trips and places.",
+    "exportHint": "Downloads a JSON file with everything you’ve entered: trips, places, expenses, memories and more.",
     "signOut": "Sign out"
   },
   "legal": {

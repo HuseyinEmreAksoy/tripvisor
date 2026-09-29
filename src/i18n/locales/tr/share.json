@@ -1,1 +1,8 @@
-{}
+{
+  "link": {
+    "ownerOnly": "Paylaşım bağlantısını yalnızca gezinin sahibi oluşturabilir. Sana bir bağlantı göndermesini iste.",
+    "createFailed": "Bağlantı oluşturulamadı. Tekrar dene.",
+    "revokeFailed": "Bağlantı iptal edilemedi. Tekrar dene."
+  },
+  "hubSummary": "Herkese açık, salt okunur bağlantı ya da e-postayla davet"
+}
