@@ -102,4 +102,17 @@ describe('MapTab', () => {
     fireEvent.press(getByRole('button', { name: 'marker Belém Tower' }));
     expect(onMarker).toHaveBeenCalledWith('gid-1', 'row-1');
   });
+
+  it('shows an "Add places" overlay on an empty trip map, not on a populated one', () => {
+    mockPermission = 'prompt';
+    const empty = wrap(
+      <MapTab tripId="trip-1" places={[]} legs={[]} trip={trip} canEdit onMarker={jest.fn()} />,
+    );
+    expect(empty.getByText('Add places to see your route')).toBeTruthy();
+    empty.unmount();
+    const full = wrap(
+      <MapTab tripId="trip-1" places={places} legs={[]} trip={trip} canEdit onMarker={jest.fn()} />,
+    );
+    expect(full.queryByText('Add places to see your route')).toBeNull();
+  });
 });

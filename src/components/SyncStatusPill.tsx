@@ -11,7 +11,9 @@
  *      writeErrorCount + tosViolations (the queue depth itself is not
  *      observable — telemetry.ts documents that writeErrorCount is the
  *      proxy).
- *   2. "Local-only mode"            muted, when persistence degraded to
+ *   2. "Open in another tab"        muted, degraded because another tab holds
+ *      the OPFS access handle (isOtherTabLockReason).
+ *   2b. "Local-only mode"           muted, when persistence degraded to
  *      in-memory (R5). Outranks "Offline" because offline + degraded means
  *      changes survive only this session — saying "saved here" would
  *      overpromise.
@@ -66,11 +68,35 @@ function formatAge(ms: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+/** Spoken/relative phrase: "just now" / "5 min ago" / "2 h ago" / "3 days ago". */
+export function relativeAge(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 function lastSyncSentence(ageMs: number | null): string {
   if (ageMs === null) return 'First sync has not finished yet.';
-  const age = formatAge(ageMs);
-  return age === 'now' ? 'Last synced moments ago.' : `Last synced ${age} ago.`;
+  return `Last synced ${relativeAge(ageMs)}.`;
 }
+
+/**
+ * The web persistence layer (src/sync/persistence.web.ts) degrades with a
+ * free-text reason. When another tab of the app already holds the OPFS sync
+ * access handle, wa-sqlite fails with `NoModificationAllowedError … another
+ * open Access Handle` — a benign, user-fixable cause with its own copy.
+ */
+export function isOtherTabLockReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return /NoModificationAllowedError|access handles?|createSyncAccessHandle/i.test(reason);
+}
+
+const OTHER_TAB_NOTE =
+  "Tripvisor is open in another tab — changes here sync while online but aren't saved on this device until you close the other tab.";
 
 /** Honest per-entity problem summary — write errors are the dead-letter
  * proxy (queue depth is not observable); read errors are consecutive. */
@@ -115,6 +141,7 @@ export function SyncStatusPill() {
   );
   const writeErrors = entityRows.reduce((sum, [, e]) => sum + e.writeErrorCount, 0);
   const issueCount = writeErrors + status.tosViolations;
+  const otherTab = status.degraded && isOtherTabLockReason(status.degradedReason);
   const healthy = problemRows.length === 0 && !status.degraded && status.tosViolations === 0;
 
   let label: string;
@@ -127,6 +154,11 @@ export function SyncStatusPill() {
     a11yLabel = `${issueCount} sync issue${issueCount === 1 ? '' : 's'}. Tap for details.`;
     bg = t.colors.warningLight;
     fg = t.colors.warningText;
+  } else if (otherTab) {
+    label = 'Open in another tab';
+    a11yLabel = `${OTHER_TAB_NOTE} Tap for details.`;
+    bg = t.colors.bgMuted;
+    fg = t.colors.textMuted;
   } else if (status.degraded) {
     label = 'Local-only mode';
     a11yLabel =
@@ -146,7 +178,7 @@ export function SyncStatusPill() {
     fg = t.colors.textMuted;
   } else {
     label = `Synced · ${formatAge(status.lastSyncAgeMs)}`;
-    a11yLabel = `Synced. Last sync ${formatAge(status.lastSyncAgeMs)} ago. Tap for details.`;
+    a11yLabel = `Synced. Last synced ${relativeAge(status.lastSyncAgeMs)}. Tap for details.`;
     bg = t.colors.successLight;
     fg = t.colors.success;
   }
@@ -187,8 +219,9 @@ export function SyncStatusPill() {
   // headers land (S2.8.10) in Chromium/Firefox — Safari has no
   // `credentialless` and stays here by design (R5). Native degrade means a
   // pre-SQLite dev-client build → an app update fixes it.
-  const degradedNote =
-    Platform.OS === 'web'
+  const degradedNote = otherTab
+    ? OTHER_TAB_NOTE
+    : Platform.OS === 'web'
       ? "Local-only mode: this browser can't store sync data right now, so offline changes won't survive a reload. Changes are kept on this device only this session and sync while the app is open."
       : "Local-only mode: this app version can't store sync data on the device yet. Changes are kept on this device only this session and sync while the app is open — updating the app fixes this.";
 

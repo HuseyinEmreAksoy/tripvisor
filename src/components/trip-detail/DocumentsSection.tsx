@@ -55,7 +55,7 @@ function docIcon(mime: string | null): IconName {
 function formatDocDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function DocumentsSection({ tripId, canEdit }: DocumentsSectionProps) {

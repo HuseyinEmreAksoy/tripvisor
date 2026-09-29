@@ -5,8 +5,10 @@
  * Cover behaviour (Phase 25 Step 25.7): when `trip.cover_photo_google_place_id`
  * is set, a cover hero image fills the top of the card (~150px). The photo is
  * fetched via usePlaceDetails + usePlacePhotoUrl — one place-details call per
- * card (cached 1h). Fallback when no cover is set: a soft gradient-tinted
- * placeholder with the trip's initial letter (decorative).
+ * card (cached 1h). Fallback when no cover is set (or Google returns no
+ * photo): one of six bundled destination-style covers, picked
+ * deterministically from the trip id (src/components/tripCovers.ts), under a
+ * soft bottom scrim. Decorative — hidden from assistive tech.
  *
  * Contract notes (Jest queries by role/label/text — do not change):
  *   - role "link", accessible name `Open trip ${trip.title}`
@@ -24,6 +26,7 @@ import { usePlaceDetails } from '@/api/places';
 import { usePlacePhotoUrl } from '@/api/place-photos';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { Trip } from '@/api';
+import { fallbackCoverFor } from './tripCovers';
 
 export interface TripCardProps {
   trip: Trip;
@@ -49,7 +52,7 @@ const COVER_HEIGHT = 150;
 // With staleTime=1h, a cold list of 20 cards triggers 20 parallel calls once;
 // subsequent renders are instant from cache. Future optimisation: batch fetch
 // via a list-level useQueries or prefetch on the trips list screen.
-function CoverHero({ placeId, title }: { placeId: string; title: string }) {
+function CoverHero({ placeId, tripId }: { placeId: string; tripId: string }) {
   const t = useTheme();
   // Fetch only the photos field to minimise billing.
   const { data: placeDetails, isLoading } = usePlaceDetails({
@@ -72,8 +75,8 @@ function CoverHero({ placeId, title }: { placeId: string; title: string }) {
   }
 
   if (!url) {
-    // No photo returned by Google — fall through to the initial placeholder.
-    return <InitialPlaceholder title={title} />;
+    // No photo returned by Google — fall through to the bundled cover.
+    return <FallbackCover tripId={tripId} />;
   }
 
   return (
@@ -87,19 +90,21 @@ function CoverHero({ placeId, title }: { placeId: string; title: string }) {
   );
 }
 
-// ── InitialPlaceholder ───────────────────────────────────────────────────────
-// Decorative cover stand-in: teal-tinted wash + the trip's big initial letter.
-function InitialPlaceholder({ title }: { title: string }) {
+// ── FallbackCover ────────────────────────────────────────────────────────────
+// Decorative bundled destination photo (stable per trip id) + a soft bottom
+// scrim so the card's cover→content edge reads cleanly in light and dark.
+function FallbackCover({ tripId }: { tripId: string }) {
   const t = useTheme();
-  const initial = (title.trim().charAt(0) || '✈').toUpperCase();
   return (
     <View
-      style={[styles.coverHero, styles.placeholderWrap, { backgroundColor: t.colors.gradientSubtle }]}
+      style={[styles.coverHero, { backgroundColor: t.colors.gradientSubtle }]}
       accessibilityElementsHidden
-      importantForAccessibility="no"
+      importantForAccessibility="no-hide-descendants"
       aria-hidden
+      testID="trip-card-fallback-cover"
     >
-      <Text style={[styles.placeholderInitial, { color: t.colors.primaryInk }]}>{initial}</Text>
+      <Image source={fallbackCoverFor(tripId)} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <View style={[styles.scrim, { backgroundColor: t.colors.heroOverlay }]} />
     </View>
   );
 }
@@ -176,11 +181,11 @@ export function TripCard({
             } as ViewStyle),
           ]}
         >
-          {/* Full-bleed cover: photo when set, initial-letter wash otherwise */}
+          {/* Full-bleed cover: Google photo when set, bundled destination cover otherwise */}
           {hasCover && trip.cover_photo_google_place_id ? (
-            <CoverHero placeId={trip.cover_photo_google_place_id} title={trip.title} />
+            <CoverHero placeId={trip.cover_photo_google_place_id} tripId={trip.id} />
           ) : (
-            <InitialPlaceholder title={trip.title} />
+            <FallbackCover tripId={trip.id} />
           )}
 
           {/* Content block */}
@@ -273,14 +278,13 @@ const styles = StyleSheet.create({
     width: '100%',
     height: COVER_HEIGHT,
   },
-  placeholderWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholderInitial: {
-    fontSize: 56,
-    lineHeight: 64,
-    fontWeight: '800',
+  // Bottom ~40% band — keeps the photo vivid while grounding the edge.
+  scrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '40%',
     opacity: 0.55,
   },
   content: {},

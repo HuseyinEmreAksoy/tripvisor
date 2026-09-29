@@ -38,7 +38,7 @@ import { useTheme } from '@/theme';
 
 function todayLabel(now: Date): string {
   try {
-    return now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    return now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   } catch {
     return '';
   }

@@ -15,6 +15,7 @@
  *   <Icon name="message-circle" color={t.colors.textMuted} />
  */
 import React from 'react';
+import { Platform } from 'react-native';
 import {
   AlarmClock,
   ArrowLeft,
@@ -157,6 +158,23 @@ export interface IconProps {
   label?: string;
 }
 
+/**
+ * On web react-native-svg spreads unknown props straight onto the DOM <svg>,
+ * so RN-only a11y props (accessibilityLabel / accessibilityElementsHidden /
+ * importantForAccessibility) trigger React "unknown prop" warnings. Web gets
+ * ARIA attributes; native keeps the RN props.
+ */
+function a11yProps(label: string | undefined): Record<string, unknown> {
+  if (Platform.OS === 'web') {
+    return label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true, focusable: 'false' };
+  }
+  return {
+    accessibilityLabel: label,
+    accessibilityElementsHidden: !label,
+    importantForAccessibility: label ? 'yes' : 'no-hide-descendants',
+  };
+}
+
 export function Icon({ name, size = 20, color, strokeWidth = 1.75, label }: IconProps) {
   const t = useTheme();
   const Glyph = REGISTRY[name];
@@ -165,10 +183,7 @@ export function Icon({ name, size = 20, color, strokeWidth = 1.75, label }: Icon
       size={size}
       color={color ?? t.colors.text}
       strokeWidth={strokeWidth}
-      accessibilityLabel={label}
-      accessibilityElementsHidden={!label}
-      importantForAccessibility={label ? 'yes' : 'no-hide-descendants'}
-      aria-hidden={!label}
+      {...a11yProps(label)}
     />
   );
 }

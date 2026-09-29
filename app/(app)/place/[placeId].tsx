@@ -168,7 +168,7 @@ export default function PlaceDetailsScreen() {
               {place.userRatingCount != null ? (
                 <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
                   {' '}
-                  ({place.userRatingCount.toLocaleString()} reviews)
+                  ({place.userRatingCount.toLocaleString('en-GB')} reviews)
                 </Text>
               ) : null}
             </Text>
@@ -450,7 +450,7 @@ function ReviewsFooter({
   if (total == null || total <= rendered) {
     label = `Showing ${rendered} review${rendered !== 1 ? 's' : ''}`;
   } else {
-    label = `Showing ${rendered} of ${total.toLocaleString()} reviews (Google API limit)`;
+    label = `Showing ${rendered} of ${total.toLocaleString('en-GB')} reviews (Google API limit)`;
   }
 
   return (

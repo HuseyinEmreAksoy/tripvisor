@@ -245,12 +245,12 @@ export function PlaceCommentsSheet({
   );
 }
 
-/** Compact "Jun 10, 14:32" stamp; falls back to the raw ISO date on failure. */
+/** Compact "10 Jun, 14:32" stamp (English, en-GB); falls back to the raw ISO date on failure. */
 function formatCommentTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
   try {
-    return date.toLocaleString(undefined, {
+    return date.toLocaleString('en-GB', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',

@@ -27,6 +27,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { PoweredByGoogle } from '@/components/PoweredByGoogle';
 import { Screen } from '@/components/Screen';
+import { MapEmptyOverlay } from '@/components/Map/MapEmptyOverlay';
 import { Map as TripMap, decodePolyline, type MapMarker, type MapPolyline } from '@/components/Map';
 import { buildAppUrl, useShareAction } from '@/components/share';
 import { SharedDayTabs } from '@/components/share/SharedDayTabs';
@@ -170,6 +171,12 @@ function SharedTripContent({
       accessibilityLabel={selected === 'all' ? 'Map of the whole trip' : `Map of day ${Number(selected) + 1}`}
     >
       <TripMap key={String(selected)} markers={markers} polylines={polylines} />
+      {places.length === 0 ? (
+        <MapEmptyOverlay
+          title="No stops on this trip yet"
+          body="The route will appear here once places are added."
+        />
+      ) : null}
     </View>
   );
 

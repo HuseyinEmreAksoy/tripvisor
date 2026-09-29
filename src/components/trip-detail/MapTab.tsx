@@ -32,6 +32,8 @@ import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { useTripUseMyLocation } from '@/hooks/useTripUseMyLocation';
 import { getLocationPermissionState } from './locationPermission';
 import { useLocationExplainer } from '@/components/permissions';
+import { MapEmptyOverlay } from '@/components/Map/MapEmptyOverlay';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 // v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
 // in a muted gray (same neutral as dayColor()'s unscheduled fallback) so the
@@ -82,6 +84,9 @@ export interface MapTabProps {
 
 export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTabProps) {
   const t = useTheme();
+  // Desktop split view: the map fills its whole column and the controls float
+  // over it as a card, instead of stacking above a short map.
+  const isDesktop = useBreakpoint() === 'desktop';
 
   // ── Route render mode toggle (Step 23.4) ──────────────────────────────────
   const updateRenderMode = useUpdateRouteRenderMode(tripId);
@@ -304,6 +309,25 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
 
   return (
     <View style={{ flex: 1 }}>
+      <View
+        pointerEvents="box-none"
+        style={
+          isDesktop
+            ? [
+                styles.overlayPanel,
+                {
+                  top: t.spacing.md,
+                  left: t.spacing.md,
+                  backgroundColor: t.colors.cardBgSolid,
+                  borderRadius: t.radius.lg,
+                  borderColor: t.colors.border,
+                  paddingTop: t.spacing.sm,
+                  ...t.shadows.md(t.colors.shadowColor),
+                },
+              ]
+            : undefined
+        }
+      >
       {/* ── Route render mode segmented control (Step 23.4) ──────────────────
        * When places.length === 0, the control sits inside the empty-state card
        * with descriptive copy. When places exist, it's a persistent toggle
@@ -312,15 +336,19 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
        */}
       {places.length === 0 ? (
         <View
-          style={{
-            margin: t.spacing.lg,
-            padding: t.spacing.md,
-            backgroundColor: t.colors.bgElevated,
-            borderRadius: t.radius.lg,
-            borderWidth: 1,
-            borderColor: t.colors.border,
-            gap: t.spacing.sm,
-          }}
+          style={
+            isDesktop
+              ? { paddingHorizontal: t.spacing.lg, paddingVertical: t.spacing.sm, gap: t.spacing.sm }
+              : {
+                  margin: t.spacing.lg,
+                  padding: t.spacing.md,
+                  backgroundColor: t.colors.bgElevated,
+                  borderRadius: t.radius.lg,
+                  borderWidth: 1,
+                  borderColor: t.colors.border,
+                  gap: t.spacing.sm,
+                }
+          }
         >
           <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>
             {trip.transport_mode === 'transit'
@@ -513,8 +541,10 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
         </View>
       ) : null}
 
-      {/* Map fills the remaining space */}
-      <View style={{ flex: 1 }}>
+      </View>
+
+      {/* Map fills the remaining space (the whole column on desktop) */}
+      <View style={[{ flex: 1 }, isDesktop && styles.desktopMap]}>
         <TripMap
           markers={finalMarkers}
           polylines={finalPolylines}
@@ -524,6 +554,7 @@ export function MapTab({ tripId, places, legs, trip, canEdit, onMarker }: MapTab
             if (p) onMarker(p.google_place_id, p.id);
           }}
         />
+        {places.length === 0 ? <MapEmptyOverlay placement={isDesktop ? 'bottom' : 'center'} /> : null}
       </View>
       {locationExplainer.sheet}
     </View>
@@ -617,6 +648,16 @@ function RouteRenderModeControl({
 }
 
 const styles = StyleSheet.create({
+  // Desktop: floating controls card over the map (top-left).
+  overlayPanel: {
+    position: 'absolute',
+    zIndex: 2,
+    maxWidth: 420,
+    borderWidth: 1,
+  },
+  desktopMap: {
+    minHeight: 420,
+  },
   // Day-filter chips rendered above the Map in MapTab.
   dayChip: {
     flexDirection: 'row',

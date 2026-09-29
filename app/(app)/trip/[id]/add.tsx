@@ -487,7 +487,9 @@ export default function AddPlace() {
               contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
               ListEmptyComponent={
-                debounced.length >= 2 ? (
+                // The setup banner above already explains why nothing came
+                // back — a "No results" state under it would contradict it.
+                mapsSetupError ? null : debounced.length >= 2 ? (
                   isFetching ? (
                     <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
                       <ActivityIndicator />
