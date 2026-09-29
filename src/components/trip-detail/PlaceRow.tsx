@@ -32,11 +32,15 @@
  *    tighter padding); ≥44pt touch targets via hitSlop.
  *  - The travel connector moved to itinerary/TravelConnector, which fixes
  *    the destination-less transit link (`nextStop`).
+ *
+ * M5 Y2.4: the thumbnail is a `PlaceThumb` slot (own memory photo → lazy,
+ * on-screen-only Google photo → category tile in the day colour), the card
+ * uses the shared `raised` surface, and every string is translated
+ * (`trip:row.*`; machine categories via `trip:category.*`).
  */
-import { Image, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { useTheme } from '@/theme';
-// Direct types import: keeps the map runtime out of this module graph.
-import { dayColor } from '@/components/Map/types';
+import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { dayColor, surfaceStyle, useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { Icon } from '@/components/Icon';
 import { ReactionChip } from '@/components/ReactionChip';
 import { formatDuration } from '@/lib/formatDuration';
@@ -44,35 +48,11 @@ import type { DirectionsPoint } from '@/lib/directions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { TransportMode, TripLeg, TripPlace } from '@/api';
 import type { TripPlaceReactionType } from '@/api/trip-place-reactions';
-import { usePlaceDetails } from '@/api/places';
-import { usePlacePhotoUrl } from '@/api/place-photos';
 import { PlaceNotesEditor } from './NotesEditors';
+import { PlaceThumb } from './PlaceThumb';
+import { useCategoryLabel } from './placeCategory';
 import { formatClockTime, parseTimeOfDay } from './computeDayTimeline';
 import { TravelConnector } from './itinerary/TravelConnector';
-
-// ── PlaceThumbnail (Phase 25 Step 25.8) ──────────────────────────────────────
-// Square photo for each itinerary row. Uses the same place-details +
-// place-photo flow as the TripCard cover. Renders nothing when Google returns
-// no photos. Keeps its own Tier-2 hooks — photo URLs are memory-only (ToS).
-function PlaceThumbnail({ googlePlaceId, size }: { googlePlaceId: string; size: number }) {
-  const { data: details } = usePlaceDetails({
-    placeId: googlePlaceId,
-    fields: ['photos'],
-    enabled: Boolean(googlePlaceId),
-  });
-  const firstName = details?.photos?.[0]?.name ?? null;
-  const { url } = usePlacePhotoUrl(firstName, { maxWidthPx: 100 });
-  if (!url) return null;
-  return (
-    <Image
-      source={{ uri: url }}
-      style={[styles.placeThumbnail, { width: size, height: size }]}
-      resizeMode="cover"
-      accessibilityElementsHidden
-      importantForAccessibility="no"
-    />
-  );
-}
 
 export interface PlaceRowProps {
   place: TripPlace;
@@ -123,6 +103,11 @@ export interface PlaceRowProps {
    * so it carries the gesture itself.
    */
   onLongPress?: () => void;
+  /**
+   * M5 Y2.4: the user's own memory photo thumbnail for this place (signed
+   * URL). Wins over the Google photo in the thumbnail slot. Wave 3 wires it.
+   */
+  memoryThumbUri?: string | null;
 }
 
 export function PlaceRow({
@@ -142,27 +127,28 @@ export function PlaceRow({
   pendingRecompute = false,
   nextStop,
   onLongPress,
+  memoryThumbUri,
 }: PlaceRowProps) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   // v2 M4 X2.3: denser card on phones (one-handed scanning).
   const compact = useBreakpoint() === 'mobile';
-  const title = place.user_title ?? 'place';
+  const title = place.user_title ?? tx('row.untitled');
   const visitLabel = formatDuration(place.visit_duration_minutes);
+  const categoryLabel = useCategoryLabel(place.category);
 
   return (
     <View style={{ gap: compact ? 2 : t.spacing.xs }}>
       <View
         style={[
           styles.placeCard,
+          surfaceStyle(t, 'raised'),
           {
-            borderRadius: t.radius.lg,
-            backgroundColor: t.colors.cardBgSolid,
-            padding: compact ? t.spacing.sm + 2 : t.spacing.md,
+            padding: compact ? t.layout.cardPaddingCompact : t.spacing.md,
             opacity: dragging ? 0.85 : 1,
             // Slim day-color rail keeps the map↔list color link.
             borderLeftWidth: 3,
             borderLeftColor: dayColor(place.day_index ?? -1),
-            ...t.shadows.sm(t.colors.shadowColor),
           },
         ]}
       >
@@ -174,8 +160,8 @@ export function PlaceRow({
             Platform.OS === 'web'
               ? // Web: the kebab is the actions affordance — don't teach
                 // mouse users a long-press gesture they don't have.
-                `Open details for ${title}.`
-              : `Open details for ${title}. Long-press to drag, change day, duration, or delete.`
+                tx('row.openDetails', { title })
+              : tx('row.openDetailsNative', { title })
           }
           onPress={onOpenDetails}
           onLongPress={onLongPress}
@@ -202,39 +188,45 @@ export function PlaceRow({
             }}
           >
             {!dragging ? (
-              <PlaceThumbnail googlePlaceId={place.google_place_id} size={compact ? 44 : 52} />
+              <PlaceThumb
+                dayIndex={place.day_index}
+                category={place.category}
+                size={compact ? 44 : 52}
+                googlePlaceId={place.google_place_id}
+                memoryThumbUri={memoryThumbUri}
+              />
             ) : null}
             <View style={{ flex: 1 }}>
               <Text
                 style={[t.typography.bodyStrong, { color: t.colors.text }]}
                 numberOfLines={compact ? 2 : undefined}
               >
-                {place.user_title ?? 'Place'}
+                {title}
               </Text>
               {compact ? (
                 <Text
                   style={[t.typography.small, { color: t.colors.textMuted }]}
                   numberOfLines={1}
-                  accessibilityLabel={`${place.category ?? 'Unclassified'}, visit duration ${place.visit_duration_minutes} minutes`}
+                  accessibilityLabel={tx('row.metaA11y', {
+                    category: categoryLabel,
+                    minutes: place.visit_duration_minutes,
+                  })}
                 >
-                  {place.category ?? 'Unclassified'}
-                  {' · ~'}
-                  {visitLabel}
+                  {tx('row.meta', { category: categoryLabel, duration: visitLabel })}
                 </Text>
               ) : (
                 <>
                   <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-                    {place.category ?? 'Unclassified'}
+                    {categoryLabel}
                   </Text>
                   {/* Step 23.8: Visit duration label */}
                   <View style={styles.iconLine}>
                     <Icon name="timer" size={13} color={t.colors.textMuted} />
                     <Text
                       style={[t.typography.caption, { color: t.colors.textMuted }]}
-                      accessibilityLabel={`Visit duration ${place.visit_duration_minutes} minutes`}
+                      accessibilityLabel={tx('row.visitA11y', { minutes: place.visit_duration_minutes })}
                     >
-                      {'Visit ~'}
-                      {visitLabel}
+                      {tx('row.visit', { duration: visitLabel })}
                     </Text>
                   </View>
                 </>
@@ -253,8 +245,8 @@ export function PlaceRow({
                 accessibilityRole="button"
                 accessibilityLabel={
                   commentCount > 0
-                    ? `${commentCount} comment${commentCount === 1 ? '' : 's'} on ${title}. Open the thread.`
-                    : `No comments yet on ${title}. Start the discussion.`
+                    ? tx('row.comments', { count: commentCount, title })
+                    : tx('row.noComments', { title })
                 }
                 onPress={onOpenComments}
                 // 32pt chip + 6pt vertical slop = 44pt target.
@@ -287,7 +279,7 @@ export function PlaceRow({
             {onOpenActions && Platform.OS === 'web' ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Place actions"
+                accessibilityLabel={tx('row.actions')}
                 onPress={onOpenActions}
                 // styles.actionsKebab enforces the 44px minimum touch target.
                 style={({ pressed }) => [
@@ -339,23 +331,26 @@ function TimeChips({
   pendingRecompute: boolean;
 }) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   const windowStart = parseTimeOfDay(place.arrive_after);
   const windowEnd = parseTimeOfDay(place.leave_before);
+  const from = windowStart !== null ? formatClockTime(windowStart) : null;
+  const to = windowEnd !== null ? formatClockTime(windowEnd) : null;
   const windowLabel =
-    windowStart !== null && windowEnd !== null
-      ? `${formatClockTime(windowStart)}–${formatClockTime(windowEnd)}`
-      : windowStart !== null
-        ? `from ${formatClockTime(windowStart)}`
-        : windowEnd !== null
-          ? `until ${formatClockTime(windowEnd)}`
+    from && to
+      ? tx('row.window.range', { from, to })
+      : from
+        ? tx('row.window.from', { time: from })
+        : to
+          ? tx('row.window.until', { time: to })
           : null;
   const windowA11y =
-    windowStart !== null && windowEnd !== null
-      ? `Time window: arrive after ${formatClockTime(windowStart)}, leave before ${formatClockTime(windowEnd)}`
-      : windowStart !== null
-        ? `Time window: arrive after ${formatClockTime(windowStart)}`
-        : windowEnd !== null
-          ? `Time window: leave before ${formatClockTime(windowEnd)}`
+    from && to
+      ? tx('row.window.rangeA11y', { from, to })
+      : from
+        ? tx('row.window.fromA11y', { time: from })
+        : to
+          ? tx('row.window.untilA11y', { time: to })
           : null;
 
   if (!timeline && !windowLabel && !pendingRecompute) return null;
@@ -380,8 +375,8 @@ function TimeChips({
           accessible
           accessibilityLabel={
             timeline.pinnedAt
-              ? `Arrival pinned to ${timeline.pinnedAt}, departs ${timeline.departure}`
-              : `Arrives ${timeline.arrival}, departs ${timeline.departure}`
+              ? tx('row.pinnedA11y', { time: timeline.pinnedAt, departure: timeline.departure })
+              : tx('row.arrivesA11y', { arrival: timeline.arrival, departure: timeline.departure })
           }
         >
           {timeline.pinnedAt ? <Icon name="pin" size={11} color={t.colors.primary} /> : null}
@@ -404,13 +399,10 @@ function TimeChips({
         <View
           style={muted}
           accessible
-          accessibilityLabel={`Arrives before the time window opens — waits until ${timeline.waitUntil}`}
+          accessibilityLabel={tx('row.waitA11y', { time: timeline.waitUntil })}
         >
           <Icon name="hourglass" size={12} color={t.colors.textMuted} />
-          <Text style={mutedText}>
-            {'waits until '}
-            {timeline.waitUntil}
-          </Text>
+          <Text style={mutedText}>{tx('row.wait', { time: timeline.waitUntil })}</Text>
         </View>
       ) : null}
 
@@ -421,9 +413,9 @@ function TimeChips({
           style={muted}
           accessible
           accessibilityLiveRegion="polite"
-          accessibilityLabel="Order saved on this device. Travel times update with the next route recompute once you're back online."
+          accessibilityLabel={tx('row.pendingA11y')}
         >
-          <Text style={mutedText}>{'⟳ route recompute pending'}</Text>
+          <Text style={mutedText}>{tx('row.pending')}</Text>
         </View>
       ) : null}
 
@@ -432,7 +424,7 @@ function TimeChips({
         <View
           style={[styles.timelineChip, { backgroundColor: t.colors.warningLight, borderRadius: t.radius.pill }]}
           accessible
-          accessibilityLabel={`Warning: ${timeline.warning}. This is just a heads-up — your plan is unchanged.`}
+          accessibilityLabel={tx('row.warningA11y', { warning: timeline.warning })}
         >
           <Icon name="alert-triangle" size={12} color={t.colors.warningText} />
           <Text style={[t.typography.caption, { color: t.colors.warningText, fontWeight: '600' }]}>
@@ -486,10 +478,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  placeThumbnail: {
-    borderRadius: 12,
-    flexShrink: 0,
   },
   travelConnector: {
     flexDirection: 'row',

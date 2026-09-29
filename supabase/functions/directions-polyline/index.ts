@@ -9,7 +9,8 @@
 //     origin: { lat, lng },
 //     destination: { lat, lng },
 //     intermediates?: [{ lat, lng }],
-//     mode: 'driving' | 'walking' | 'transit' | 'bicycling'
+//     mode: 'driving' | 'walking' | 'transit' | 'bicycling',
+//     perLeg?: boolean,                                  // M5 Y2.3
 //   }
 //   -> {
 //        polyline: string | null,
@@ -19,6 +20,11 @@
 //                          travelMode: 'WALK' | 'TRANSIT',
 //                          lineName: string | null,
 //                          vehicleType: string | null }],
+//        provider: 'ors' | 'google',                     // M5 Y2.3
+//        legs?: [{ polyline: string | null,              // M5 Y2.3, perLeg only
+//                  durationSeconds: number,
+//                  distanceMeters: number }],
+//        noRoute?: true,                                 // M5 Y2.3, transit fallback
 //      }
 //
 // Phase 23: 'bicycling' joins the enum (Routes API exposes BICYCLE as a
@@ -58,17 +64,41 @@
 // or 2 when there are > 10 intermediates (Google prices that as the Pro SKU,
 // about 2x) (-> 429 quota_exceeded). optimize-trip forwards the CALLER's
 // Authorization header, so its per-day polylines are metered to that user.
+//
+// M5 Y2.3 (ADDITIVE contract change, per-leg transport modes):
+//   request  `perLeg?: boolean` asks for a per-leg breakdown of a
+//            multi-waypoint route (ignored for transit, which optimize-trip
+//            routes one leg per call).
+//   response `provider: 'ors' | 'google'` (always; optimize-trip records it
+//            as trip_legs.source), `legs?: [{ polyline, durationSeconds,
+//            distanceMeters }]` (only when perLeg was asked AND the provider
+//            returned a consistent split: exactly waypoints - 1 entries,
+//            otherwise omitted), and `noRoute: true` on the transit-no-route
+//            200 fallback. Older callers ignore all three. Quota metering is
+//            unchanged: the breakdown costs no extra units.
+//   ORS: the route's `segments[i]` carry each leg's duration/distance and
+//        `way_points` index the geometry, so the encoded geometry is split
+//        exactly (decode -> slice -> re-encode, integer E5 math, lossless).
+//   Google: the FieldMask adds routes.legs.{duration,distanceMeters,
+//        polyline.encodedPolyline} only when perLeg is asked with
+//        intermediates (the pre-Y2.3 mask is unchanged otherwise).
 
+// @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import {
   consumeQuota,
   describeInvalidInput,
   quotaDeniedResponse,
   requireUser,
+  // @ts-ignore -- Deno `.ts`-suffixed import
 } from '../_shared/auth.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { handlePreflight } from '../_shared/cors.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { log, newRequestId } from '../_shared/logger.ts';
 import {
   ORS_BASE_URL,
@@ -78,6 +108,7 @@ import {
   type OrsRoutableMode,
   resolveRoutingProvider,
   tryOrs,
+  // @ts-ignore -- Deno `.ts`-suffixed import
 } from '../_shared/routing.ts';
 
 const TIMEOUT_MS = 10_000;
@@ -95,12 +126,30 @@ const BodySchema = z.object({
   // Phase 23 Step 23.1: 'bicycling' added in lockstep with the trips
   // CHECK in migration 0016 and the TransportMode union in src/api/types.ts.
   mode: z.enum(['driving', 'walking', 'transit', 'bicycling']),
+  // M5 Y2.3: per-leg breakdown for multi-waypoint routes (see header).
+  perLeg: z.boolean().optional(),
 });
+
+type Body = {
+  origin: { lat: number; lng: number };
+  destination: { lat: number; lng: number };
+  intermediates?: Array<{ lat: number; lng: number }>;
+  mode: 'driving' | 'walking' | 'transit' | 'bicycling';
+  perLeg?: boolean;
+};
+
+/** M5 Y2.3: one leg of a per-leg breakdown (waypoint i -> i + 1). */
+export interface RouteLegWire {
+  /** polyline5; null only when the provider sent no geometry for the leg. */
+  polyline: string | null;
+  durationSeconds: number;
+  distanceMeters: number;
+}
 
 // Routes API uses upper-case enum names. BICYCLE is the first-class
 // travelMode for cycling routes. TWO_WHEELER is a separate (motorcycle)
 // mode and intentionally not used.
-const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
+const MODE_MAP: Record<Body['mode'], string> = {
   driving: 'DRIVE',
   walking: 'WALK',
   transit: 'TRANSIT',
@@ -115,6 +164,12 @@ const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
 // feeds `transitSteps`. Non-transit modes keep the pre-P1 mask verbatim.
 const BASE_FIELD_MASK =
   'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline';
+// M5 Y2.3: per-leg split, requested only with perLeg + intermediates.
+const LEGS_FIELD_MASK = [
+  'routes.legs.duration',
+  'routes.legs.distanceMeters',
+  'routes.legs.polyline.encodedPolyline',
+].join(',');
 const TRANSIT_FIELD_MASK = [
   'routes.duration',
   'routes.distanceMeters',
@@ -141,7 +196,13 @@ interface GoogleRoute {
   duration?: string;
   distanceMeters?: number;
   polyline?: { encodedPolyline?: string };
-  legs?: Array<{ steps?: GoogleRouteStep[] }>;
+  legs?: Array<{
+    steps?: GoogleRouteStep[];
+    // M5 Y2.3: present only with LEGS_FIELD_MASK.
+    duration?: string;
+    distanceMeters?: number;
+    polyline?: { encodedPolyline?: string };
+  }>;
 }
 
 interface GoogleRoutesResponse {
@@ -213,6 +274,7 @@ export async function handler(req: Request): Promise<Response> {
   const auth = await requireUser(req, { fn: 'directions-polyline', requestId, origin });
   if (!auth.ok) return auth.response;
 
+  // @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'directions-polyline', level: 'error', err: 'missing_server_key' });
@@ -224,7 +286,7 @@ export async function handler(req: Request): Promise<Response> {
     );
   }
 
-  let body: z.infer<typeof BodySchema>;
+  let body: Body;
   try {
     body = BodySchema.parse(await req.json());
   } catch (err) {
@@ -265,7 +327,7 @@ export async function handler(req: Request): Promise<Response> {
       const ors = await tryOrs({
         requestId,
         fn: 'directions-polyline',
-        call: (orsKey) => orsRoute(body, routable, orsKey),
+        call: (orsKey: string) => orsRoute(body, routable, orsKey),
       });
       if (ors !== null) {
         log({
@@ -278,11 +340,12 @@ export async function handler(req: Request): Promise<Response> {
           mode: body.mode,
           polyline: 'present',
           intermediates: body.intermediates?.length ?? 0,
+          perLeg: body.perLeg === true ? (ors.legs ? 'split' : 'unavailable') : 'no',
           durationSeconds: ors.durationSeconds,
           distanceMeters: ors.distanceMeters,
           durationMs: Date.now() - start,
         });
-        return jsonResponse(ors, { origin });
+        return jsonResponse({ ...ors, provider: 'ors' as const }, { origin });
       }
       // tryOrs logged { provider_fallback: 'google', reason } and fed the
       // breaker — fall through to the Google path below. If the leg is
@@ -290,6 +353,11 @@ export async function handler(req: Request): Promise<Response> {
       // client-visible behavior exactly.
     }
   }
+
+  // M5 Y2.3: waypoints this request spans; a per-leg split has count - 1 legs.
+  const waypointCount = 2 + (body.intermediates?.length ?? 0);
+  // Transit never gets a split: optimize-trip routes transit one leg per call.
+  const wantLegs = body.perLeg === true && body.mode !== 'transit';
 
   try {
     const googleRes = await fetchWithTimeout(
@@ -300,7 +368,11 @@ export async function handler(req: Request): Promise<Response> {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask':
-            body.mode === 'transit' ? TRANSIT_FIELD_MASK : BASE_FIELD_MASK,
+            body.mode === 'transit'
+              ? TRANSIT_FIELD_MASK
+              : wantLegs && waypointCount > 2
+                ? `${BASE_FIELD_MASK},${LEGS_FIELD_MASK}`
+                : BASE_FIELD_MASK,
         },
         body: JSON.stringify({
           origin: latLngWaypoint(body.origin),
@@ -340,10 +412,14 @@ export async function handler(req: Request): Promise<Response> {
     //     nothing to give them.
     if (!route) {
       if (body.mode === 'transit') {
+        // M5 Y2.3: `noRoute` + `provider` are additive; the zeros stay for
+        // pre-Y2.3 callers. optimize-trip turns this into an estimate leg.
         const fallback = {
           polyline: null,
           durationSeconds: 0,
           distanceMeters: 0,
+          noRoute: true as const,
+          provider: 'google' as const,
         };
         log({
           requestId,
@@ -370,6 +446,8 @@ export async function handler(req: Request): Promise<Response> {
       durationSeconds: number;
       distanceMeters: number;
       transitSteps?: TransitStep[];
+      provider: 'google';
+      legs?: RouteLegWire[];
     } = {
       polyline:
         body.mode === 'transit'
@@ -378,6 +456,7 @@ export async function handler(req: Request): Promise<Response> {
       durationSeconds: parseDuration(route.duration ?? '0s'),
       distanceMeters: route.distanceMeters ?? 0,
       ...(transitSteps.length > 0 ? { transitSteps } : {}),
+      provider: 'google',
     };
 
     // Drivable / walkable / bikeable mode without a polyline string is a
@@ -385,6 +464,21 @@ export async function handler(req: Request): Promise<Response> {
     // expected and already fell through above.
     if (body.mode !== 'transit' && result.polyline === null) {
       return errorResponse('no_route', 'No route found', 404, origin);
+    }
+
+    // M5 Y2.3: per-leg split. Two waypoints = one leg = the route itself.
+    if (wantLegs) {
+      const legs =
+        waypointCount === 2
+          ? [
+              {
+                polyline: result.polyline,
+                durationSeconds: result.durationSeconds,
+                distanceMeters: result.distanceMeters,
+              },
+            ]
+          : extractGoogleLegs(route, waypointCount - 1);
+      if (legs) result.legs = legs;
     }
 
     log({
@@ -398,6 +492,7 @@ export async function handler(req: Request): Promise<Response> {
       polyline: result.polyline === null ? 'null' : 'present',
       transitSteps: transitSteps.length,
       intermediates: body.intermediates?.length ?? 0,
+      perLeg: wantLegs ? (result.legs ? 'split' : 'unavailable') : 'no',
       durationSeconds: result.durationSeconds,
       distanceMeters: result.distanceMeters,
       durationMs: Date.now() - start,
@@ -440,13 +535,134 @@ function parseDuration(s: string): number {
   return match ? Math.round(parseFloat(match[1]!)) : 0;
 }
 
+/**
+ * M5 Y2.3: routes[0].legs -> RouteLegWire[] (one per waypoint pair), or
+ * undefined when the split is not exactly `expected` legs long. Google omits
+ * zero values in its JSON (proto3), so a missing duration/distance reads as
+ * 0 and a missing leg polyline as null (a zero-length leg has nothing to
+ * draw).
+ */
+function extractGoogleLegs(route: GoogleRoute, expected: number): RouteLegWire[] | undefined {
+  const legs = route.legs;
+  if (!Array.isArray(legs) || legs.length !== expected) return undefined;
+  return legs.map((leg) => ({
+    polyline: leg.polyline?.encodedPolyline ?? null,
+    durationSeconds: parseDuration(leg.duration ?? '0s'),
+    distanceMeters: typeof leg.distanceMeters === 'number' ? Math.round(leg.distanceMeters) : 0,
+  }));
+}
+
+// ---- polyline5 codec (M5 Y2.3) ----------------------------------------------
+// Google's encoded polyline algorithm at precision 1e5 (what both providers
+// return). Decoding keeps INTEGER E5 coordinates and encoding consumes them,
+// so a decode -> slice -> encode round trip reproduces the provider's exact
+// characters; no float rounding can creep in.
+
+/** Decode a polyline5 string into integer [latE5, lngE5] pairs. Throws on bad input. */
+export function decodePolylineE5(encoded: string): Array<[number, number]> {
+  const points: Array<[number, number]> = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  const next = (): number => {
+    let result = 0;
+    let shift = 0;
+    let byte: number;
+    do {
+      if (index >= encoded.length) throw new Error('truncated polyline');
+      byte = encoded.charCodeAt(index++) - 63;
+      if (byte < 0 || byte > 63) throw new Error('invalid polyline character');
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    return result & 1 ? ~(result >> 1) : result >> 1;
+  };
+  while (index < encoded.length) {
+    lat += next();
+    lng += next();
+    points.push([lat, lng]);
+  }
+  return points;
+}
+
+function encodeSignedE5(value: number): string {
+  let v = value < 0 ? ~(value << 1) : value << 1;
+  let out = '';
+  while (v >= 0x20) {
+    out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+    v >>= 5;
+  }
+  return out + String.fromCharCode(v + 63);
+}
+
+/** Encode integer [latE5, lngE5] pairs as polyline5. */
+export function encodePolylineE5(points: ReadonlyArray<readonly [number, number]>): string {
+  let out = '';
+  let prevLat = 0;
+  let prevLng = 0;
+  for (const [lat, lng] of points) {
+    out += encodeSignedE5(lat - prevLat) + encodeSignedE5(lng - prevLng);
+    prevLat = lat;
+    prevLng = lng;
+  }
+  return out;
+}
+
 // ---- ORS directions (v2 N5) --------------------------------------------------
 
+interface OrsRoute {
+  summary?: { duration?: number; distance?: number };
+  geometry?: string;
+  // M5 Y2.3: one per waypoint pair (returned with the default instructions=true).
+  segments?: Array<{ duration?: number; distance?: number }>;
+  // M5 Y2.3: index of each waypoint in the decoded geometry.
+  way_points?: number[];
+}
+
 interface OrsDirectionsResponse {
-  routes?: Array<{
-    summary?: { duration?: number; distance?: number };
-    geometry?: string;
-  }>;
+  routes?: OrsRoute[];
+}
+
+/**
+ * M5 Y2.3: split an ORS route into one RouteLegWire per waypoint pair, using
+ * `segments[i]` for the numbers and `way_points` to slice the geometry.
+ * Undefined when anything is inconsistent (the caller then omits `legs` and
+ * optimize-trip routes those legs one call each). Exported for tests.
+ */
+export function splitOrsRoute(route: OrsRoute, waypointCount: number): RouteLegWire[] | undefined {
+  const segments = route.segments;
+  const wayPoints = route.way_points;
+  if (typeof route.geometry !== 'string') return undefined;
+  if (!Array.isArray(segments) || segments.length !== waypointCount - 1) return undefined;
+  if (!Array.isArray(wayPoints) || wayPoints.length !== waypointCount) return undefined;
+  let coords: Array<[number, number]>;
+  try {
+    coords = decodePolylineE5(route.geometry);
+  } catch {
+    return undefined;
+  }
+  const legs: RouteLegWire[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const a = wayPoints[i];
+    const b = wayPoints[i + 1];
+    if (
+      typeof a !== 'number' || typeof b !== 'number' ||
+      !Number.isInteger(a) || !Number.isInteger(b) ||
+      a < 0 || b < a || b >= coords.length
+    ) {
+      return undefined;
+    }
+    const slice = coords.slice(a, b + 1);
+    const seg = segments[i]!;
+    legs.push({
+      // A zero-length leg (two stops on the same spot) is one point; repeat
+      // it so the leg still decodes to a (degenerate) line.
+      polyline: encodePolylineE5(slice.length === 1 ? [slice[0]!, slice[0]!] : slice),
+      durationSeconds: Math.round(typeof seg.duration === 'number' ? seg.duration : 0),
+      distanceMeters: Math.round(typeof seg.distance === 'number' ? seg.distance : 0),
+    });
+  }
+  return legs;
 }
 
 /**
@@ -463,19 +679,20 @@ interface OrsDirectionsResponse {
  * the client's decodePolyline (src/components/Map/polyline.ts) already
  * expects, byte-compatible with Google's routes.polyline.encodedPolyline.
  * `summary.duration` is float seconds, `summary.distance` float meters.
+ * M5 Y2.3: `instructions` stays at its default (true) on purpose: that is
+ * what makes ORS return `segments`, the per-leg numbers `perLeg` needs.
  *
  * Throws OrsError on any HTTP/shape problem (including "no route found",
  * which ORS reports as a 404); `tryOrs` (the only caller's wrapper) maps
  * that to a logged Google fallback.
  */
 async function orsRoute(
-  body: z.infer<typeof BodySchema>,
+  body: Body,
   mode: OrsRoutableMode,
   orsKey: string,
-): Promise<{ polyline: string; durationSeconds: number; distanceMeters: number }> {
-  const coordinates = [body.origin, ...(body.intermediates ?? []), body.destination].map(
-    (p) => [p.lng, p.lat],
-  );
+): Promise<{ polyline: string; durationSeconds: number; distanceMeters: number; legs?: RouteLegWire[] }> {
+  const waypoints = [body.origin, ...(body.intermediates ?? []), body.destination];
+  const coordinates = waypoints.map((p) => [p.lng, p.lat]);
 
   const res = await fetchWithTimeout(
     `${ORS_BASE_URL}/v2/directions/${ORS_PROFILE[mode]}`,
@@ -501,11 +718,25 @@ async function orsRoute(
     throw new OrsError('ors_bad_response', 'missing routes[0].geometry');
   }
 
-  return {
+  const out: {
+    polyline: string;
+    durationSeconds: number;
+    distanceMeters: number;
+    legs?: RouteLegWire[];
+  } = {
     polyline: route.geometry,
     durationSeconds: Math.round(route.summary?.duration ?? 0),
     distanceMeters: Math.round(route.summary?.distance ?? 0),
   };
+  if (body.perLeg === true) {
+    const legs =
+      waypoints.length === 2
+        ? [{ polyline: out.polyline, durationSeconds: out.durationSeconds, distanceMeters: out.distanceMeters }]
+        : splitOrsRoute(route, waypoints.length);
+    if (legs) out.legs = legs;
+  }
+  return out;
 }
 
+// @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
 Deno.serve(handler);

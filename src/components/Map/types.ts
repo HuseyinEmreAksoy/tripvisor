@@ -46,21 +46,13 @@ export interface MapViewProps {
   onMarkerPress?: (markerId: string) => void;
 }
 
-/** Day palette — up to 7 days gets distinct colors; later days wrap. */
-export const DAY_COLORS = [
-  '#2E6BE6',
-  '#E0A010',
-  '#1D9B5E',
-  '#D93B3B',
-  '#8A5CF0',
-  '#0FB5BA',
-  '#E3478B',
-];
+// M5 Y2.4: the day palette moved to the theme (src/theme/dayColors.ts), the
+// one source shared by map pins/legs, the itinerary rail, chips, Today and
+// memories. Re-exported here (direct leaf-module import, no ThemeProvider)
+// so map providers stay theme-free.
+import { dayColor } from '@/theme/dayColors';
 
-export function dayColor(dayIndex: number | null | undefined): string {
-  if (dayIndex == null || dayIndex < 0) return '#8B8B93';
-  return DAY_COLORS[dayIndex % DAY_COLORS.length]!;
-}
+export { DAY_COLORS, DAY_NEUTRAL, ON_DAY_COLOR, dayColor, dayTint } from '@/theme/dayColors';
 
 /**
  * v2 P1.2: single source of truth for a polyline's stroke color across all

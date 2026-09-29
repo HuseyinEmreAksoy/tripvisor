@@ -16,5 +16,159 @@
       "notOwner": "Bu geziyi yalnızca sahibi silebilir.",
       "generic": "Bu gezi silinemedi. İnternet bağlantını kontrol edip tekrar dene."
     }
+  },
+  "dayLabel": "{{day}}. gün",
+  "transport": {
+    "driving": "Araba",
+    "walking": "Yürüyüş",
+    "bicycling": "Bisiklet",
+    "transit": "Toplu taşıma"
+  },
+  "status": {
+    "live": "Gün {{day}}/{{total}}",
+    "upcoming_one": "Yarın başlıyor",
+    "upcoming_other": "{{count}} gün kaldı",
+    "past": "Yeniden yaşa",
+    "a11y": "Gezi durumu: {{status}}"
+  },
+  "card": {
+    "open": "{{title}} gezisini aç",
+    "actions": "Gezi işlemleri",
+    "archived": "Arşivlendi",
+    "meta": "Günde {{hours}} sa · {{mode}}"
+  },
+  "header": {
+    "back": "Geziler",
+    "noDates": "Tarih belirlenmedi",
+    "menu": "Gezi menüsü",
+    "menuHint": "Gezi ayarları, yazdırma, paylaşma ve dahası",
+    "print": "Yazdır",
+    "printA11y": "Planı yazdır",
+    "meta": "{{dates}} · günde {{hours}} sa · {{mode}}"
+  },
+  "route": {
+    "places_one": "{{count}} yer",
+    "places_other": "{{count}} yer",
+    "timeA11y": "Toplam yol süresi {{value}}",
+    "distanceA11y": "Toplam mesafe {{value}} kilometre",
+    "summary": "Rota özeti"
+  },
+  "menu": {
+    "settings": "Gezi ayarları",
+    "settingsA11y": "Gezi ayarlarını aç",
+    "print": "Planı yazdır",
+    "share": "Geziyi paylaş",
+    "shareA11y": "Bu geziyi paylaş",
+    "people": "Kişiler",
+    "peopleA11y": "Katılımcıları yönet",
+    "duplicate": "Geziyi kopyala",
+    "duplicating": "Kopyalanıyor…",
+    "duplicateA11y": "Bu geziyi kopyala"
+  },
+  "detail": {
+    "loadError": "Bu gezi yüklenemedi",
+    "loadErrorBody": "Bir şeyler ters gitti. Bağlantını kontrol edip tekrar dene.",
+    "retry": "Tekrar dene",
+    "retryA11y": "Geziyi yeniden yüklemeyi dene",
+    "backToTrips": "Gezilere dön",
+    "notFound": "Gezi bulunamadı",
+    "duplicateError": "Bu gezi kopyalanamadı. Bağlantını kontrol edip tekrar dene.",
+    "shareTitle": "Bu geziyi paylaş",
+    "close": "Kapat"
+  },
+  "tabs": {
+    "plan": "Plan",
+    "map": "Harita",
+    "trip": "Gezi",
+    "planMap": "Harita ve plan"
+  },
+  "hub": {
+    "viewPlace": "{{name}} ayrıntılarını gör"
+  },
+  "row": {
+    "untitled": "Adsız yer",
+    "openDetails": "{{title}} ayrıntılarını aç.",
+    "openDetailsNative": "{{title}} ayrıntılarını aç. Taşımak, günü ya da süreyi değiştirmek veya silmek için basılı tut.",
+    "meta": "{{category}} · ~{{duration}}",
+    "metaA11y": "{{category}}, ziyaret süresi {{minutes}} dakika",
+    "visit": "Ziyaret ~{{duration}}",
+    "visitA11y": "Ziyaret süresi {{minutes}} dakika",
+    "comments_one": "{{title}} için {{count}} yorum var. Konuşmayı aç.",
+    "comments_other": "{{title}} için {{count}} yorum var. Konuşmayı aç.",
+    "noComments": "{{title}} için henüz yorum yok. Konuşmayı başlat.",
+    "actions": "Yer işlemleri",
+    "window": {
+      "range": "{{from}}–{{to}}",
+      "from": "{{time}} saatinden itibaren",
+      "until": "{{time}} saatine kadar",
+      "rangeA11y": "Zaman aralığı: {{from}} sonrasında var, {{to}} öncesinde ayrıl",
+      "fromA11y": "Zaman aralığı: {{time}} sonrasında var",
+      "untilA11y": "Zaman aralığı: {{time}} öncesinde ayrıl"
+    },
+    "pinnedA11y": "Varış {{time}} olarak sabitlendi, ayrılış {{departure}}",
+    "arrivesA11y": "Varış {{arrival}}, ayrılış {{departure}}",
+    "wait": "{{time}} saatine kadar bekleme",
+    "waitA11y": "Zaman aralığı açılmadan varılıyor; {{time}} saatine kadar beklenecek",
+    "pending": "⟳ rota yeniden hesaplanacak",
+    "pendingA11y": "Sıralama bu cihaza kaydedildi. Yeniden çevrimiçi olunca rota hesaplanır ve yol süreleri güncellenir.",
+    "warningA11y": "Uyarı: {{warning}}. Bu yalnızca bir bilgilendirme; planın değişmedi."
+  },
+  "category": {
+    "none": "Sınıflandırılmamış",
+    "museum": "Müze",
+    "restaurant": "Restoran",
+    "nightlife": "Gece hayatı",
+    "park": "Park",
+    "religious_site": "Dini yapı",
+    "attraction": "Gezilecek yer",
+    "shopping": "Alışveriş",
+    "family_attraction": "Aile eğlencesi",
+    "hotel": "Otel",
+    "nature": "Doğa",
+    "general": "Yer"
+  },
+  "mapUnavailable": {
+    "a11y": "Harita kullanılamıyor — yerlerin listesi",
+    "title": "Harita kullanılamıyor",
+    "hint": "Haritayı görmek için <code>{{keyName}}</code> değerini ayarla (bkz. <code>{{doc}}</code>). Yerlerin listesi:",
+    "empty": "Henüz yer eklenmedi.",
+    "unscheduled": "Planlanmamış"
+  },
+  "new": {
+    "back": "Gezilerim",
+    "overline": "Yeni gezi",
+    "title": "Gezini planla",
+    "subtitle": "Gezine bir ad ve tarih ver; gün gün planı birlikte kuralım.",
+    "sections": {
+      "where": "Nereye, ne zaman",
+      "how": "Nasıl gezeceksin"
+    },
+    "fields": {
+      "title": "Gidilecek yer ya da gezi adı",
+      "titlePlaceholder": "ör. Lizbon’da uzun hafta sonu",
+      "start": "Başlangıç tarihi",
+      "end": "Bitiş tarihi",
+      "hours": "Günlük plan süresi (saat)",
+      "hoursHint": "Günde kaç saat gezmek istediğin",
+      "mode": "Ulaşım şekli",
+      "currency": "Para birimi"
+    },
+    "currencies": {
+      "USD": "ABD Doları",
+      "EUR": "Euro",
+      "GBP": "İngiliz Sterlini",
+      "TRY": "Türk Lirası",
+      "JPY": "Japon Yeni"
+    },
+    "currencyA11y": "{{code}} — {{name}}",
+    "timezone": "Algılanan saat dilimi: {{tz}}",
+    "create": "Geziyi oluştur",
+    "errors": {
+      "titleRequired": "Gezine bir ad ver",
+      "titleTooLong": "Ad 120 karakteri geçmesin",
+      "hoursRange": "1 ile 24 saat arasında bir değer gir",
+      "endBeforeStart": "Bitiş tarihi başlangıçtan önce olamaz",
+      "createFailed": "Gezi oluşturulamadı. Bağlantını kontrol edip tekrar dene."
+    }
   }
 }

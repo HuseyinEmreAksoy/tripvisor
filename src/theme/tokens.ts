@@ -26,6 +26,28 @@ export const spacing = {
   huge: 64,
 } as const;
 
+/**
+ * Layout scale (M5 Y2.4) — the semantic spacing every card and screen uses,
+ * so stacked surfaces breathe the same way everywhere. Widths are the
+ * centred desktop columns `Screen width="form" | "content"` applies.
+ */
+export const layout = {
+  /** Screen side padding. */
+  gutter: spacing.lg,
+  /** Inner padding of a card on tablet/desktop. */
+  cardPadding: spacing.lg,
+  /** Inner padding of a card on phones. */
+  cardPaddingCompact: spacing.md,
+  /** Gap between stacked cards / list rows. */
+  cardGap: spacing.md,
+  /** Gap between sections of a screen. */
+  sectionGap: spacing.xl,
+  /** Desktop form column (≤ 720 px rule). */
+  formWidth: 640,
+  /** Desktop reading / content column. */
+  contentWidth: 960,
+} as const;
+
 // Generous, soft geometry — cards live at lg/xl, chips are always `pill`.
 export const radius = {
   sm: 10,
@@ -149,7 +171,8 @@ export const lightColors = {
   // Backgrounds — warm off-white paper, white cards float on top.
   bg: '#FAF6F0',
   bgElevated: '#FFFFFF',
-  bgMuted: '#F1EAE0',
+  // Y2.4: a lighter inset "well" (was #F1EAE0) — chips, notes, pressed rows.
+  bgMuted: '#F3EDE5',
   // Glass effect backgrounds
   cardBg: 'rgba(255, 255, 255, 0.92)',
   cardBgSolid: '#FFFFFF',
@@ -218,14 +241,22 @@ export const lightColors = {
   gradientEnd: '#C8431D',
   gradientSubtle: 'rgba(12, 133, 120, 0.10)',
 
-  // Shadows — warm-tinted, soft and layered.
-  shadowColor: 'rgba(46, 38, 28, 0.10)',
-  shadowColorStrong: 'rgba(46, 38, 28, 0.20)',
+  // Shadows — warm-tinted, soft and layered. Y2.4: lighter (was 0.10/0.20)
+  // so cards lift off the paper without reading as heavy slabs.
+  shadowColor: 'rgba(46, 38, 28, 0.08)',
+  shadowColorStrong: 'rgba(46, 38, 28, 0.16)',
 
   // Hero overlays
   heroOverlay: 'rgba(18, 14, 10, 0.46)',
   heroChipBg: 'rgba(255, 255, 255, 0.22)',
   heroChipText: '#FFFFFF',
+  // Y2.4 trip hero: the bottom stop of the photo scrim (white text on it
+  // holds ≥ 4.5:1 even over a pure-white pixel) and the dark "glass" behind
+  // buttons and chips that sit on imagery.
+  heroScrim: 'rgba(18, 14, 10, 0.74)',
+  // The light top stop of a banner scrim (the photo still reads through).
+  heroScrimSoft: 'rgba(18, 14, 10, 0.12)',
+  heroGlass: 'rgba(18, 14, 10, 0.6)',
 
   // Glow (for focused/active elements)
   glowPrimary: 'rgba(12, 133, 120, 0.30)',
@@ -247,21 +278,23 @@ export const lightColors = {
 export const darkColors: Record<keyof typeof lightColors, string> = {
   // Backgrounds — deep warm ink, not blue-black.
   bg: '#14120E',
-  bgElevated: '#1E1B15',
-  bgMuted: '#2A261E',
+  // Y2.4: a lighter raised surface (was #1E1B15) so cards separate from the
+  // page by tone — shadows barely register on ink.
+  bgElevated: '#221F19',
+  bgMuted: '#2E2A22',
 
   // Glass effect backgrounds
-  cardBg: 'rgba(30, 27, 21, 0.92)',
-  cardBgSolid: '#1E1B15',
+  cardBg: 'rgba(34, 31, 25, 0.94)',
+  cardBgSolid: '#221F19',
 
   // Text — soft bone, muted warm sand.
   text: '#F1ECE2',
   textMuted: '#A89E8E',
   textInverse: '#14120E',
 
-  // Borders
-  border: 'rgba(168, 158, 142, 0.16)',
-  borderStrong: 'rgba(168, 158, 142, 0.30)',
+  // Borders — Y2.4: a touch stronger (was 0.16/0.30) to carry card edges on ink.
+  border: 'rgba(168, 158, 142, 0.18)',
+  borderStrong: 'rgba(168, 158, 142, 0.32)',
 
   // Primary — luminous lagoon teal (dark-ink label text, 8.5:1)
   primary: '#3ECCBB',
@@ -315,6 +348,9 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   heroOverlay: 'rgba(10, 8, 5, 0.62)',
   heroChipBg: 'rgba(255, 255, 255, 0.14)',
   heroChipText: '#F1ECE2',
+  heroScrim: 'rgba(10, 8, 5, 0.8)',
+  heroScrimSoft: 'rgba(10, 8, 5, 0.22)',
+  heroGlass: 'rgba(10, 8, 5, 0.6)',
 
   // Glow (for focused/active elements)
   glowPrimary: 'rgba(62, 204, 187, 0.28)',
@@ -336,19 +372,21 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
 // whitespace instead of sitting behind borders.
 
 export const shadows = {
+  // Y2.4: sm/md lightened (were 2/6/e2 and 6/14/e5) — list cards and hero
+  // cards float on whitespace instead of casting slabs.
   sm: (color: string) => ({
     shadowColor: color,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 1,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowRadius: 4,
+    elevation: 1,
   }),
   md: (color: string) => ({
     shadowColor: color,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 1,
-    shadowRadius: 14,
-    elevation: 5,
+    shadowRadius: 12,
+    elevation: 3,
   }),
   lg: (color: string) => ({
     shadowColor: color,
@@ -372,6 +410,27 @@ export const shadows = {
     elevation: 6,
   }),
 } as const;
+
+/**
+ * Elevation scale (M5 Y2.4) — the ONE vocabulary for surfaces. Components
+ * pick a level and call `surfaceStyle(theme, level)` (src/theme/surfaces.ts)
+ * instead of hand-mixing background + border + shadow:
+ *   - flat:     sits in the page (hairline edge, no shadow) — nested cards;
+ *   - raised:   list cards (place rows, trip cards, Today cards);
+ *   - floating: heroes, the FAB, sticky bars;
+ *   - overlay:  sheets and dialogs.
+ */
+export const elevation = {
+  flat: { shadow: null, radius: 'lg' },
+  raised: { shadow: 'sm', radius: 'lg' },
+  floating: { shadow: 'md', radius: 'xl' },
+  overlay: { shadow: 'lg', radius: 'xl' },
+} as const satisfies Record<
+  string,
+  { shadow: keyof typeof shadows | null; radius: keyof typeof radius }
+>;
+
+export type ElevationLevel = keyof typeof elevation;
 
 // Colors: a record with the same keys as lightColors but with string values,
 // so both lightColors (literal types) and darkColors (string values) satisfy it.

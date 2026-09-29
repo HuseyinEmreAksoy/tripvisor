@@ -1,5 +1,6 @@
 import { describe, it, expect, jest } from '@jest/globals';
-import { render, fireEvent } from '@testing-library/react-native';
+import { act, render, fireEvent } from '@testing-library/react-native';
+import { formatDateRange, setLanguagePreference } from '@/i18n';
 import { TripCard } from '../TripCard';
 import { ThemeProvider } from '@/theme';
 import type { Trip } from '@/api';
@@ -36,18 +37,35 @@ describe('TripCard', () => {
     const trip = makeTrip();
     const { getByText } = renderWithTheme(<TripCard trip={trip} onPress={() => {}} />);
     expect(getByText('Lisbon 3 days')).toBeTruthy();
-    // Phase 20 travel-product polish: the date Text node has two children —
-    // "📅 " (emoji prefix) and the date range string — so getByText with an
-    // exact string no longer matches. Use a regex that matches the date portion.
-    expect(getByText(/2026-05-01 → 2026-05-03/)).toBeTruthy();
-    // Transport pill also renders an emoji prefix as a sibling child node.
-    expect(getByText(/8h \/ day · walking/)).toBeTruthy();
+    // M5 Y2.4: dates go through the app-language formatter (was raw ISO).
+    expect(getByText(formatDateRange('2026-05-01', '2026-05-03')!)).toBeTruthy();
+    expect(getByText('8h/day · Walk')).toBeTruthy();
+  });
+
+  it('follows the app language (Turkish meta pill)', async () => {
+    const { getByText } = renderWithTheme(<TripCard trip={makeTrip()} onPress={() => {}} />);
+    await act(async () => {
+      await setLanguagePreference('tr');
+    });
+    expect(getByText('Günde 8 sa · Yürüyüş')).toBeTruthy();
+    await act(async () => {
+      await setLanguagePreference('system');
+    });
+  });
+
+  it('shows the trip status chip on the cover', () => {
+    const { getByLabelText } = renderWithTheme(
+      <TripCard trip={makeTrip({ start_date: '2000-01-01', end_date: '2000-01-02' })} onPress={() => {}} />,
+    );
+    expect(getByLabelText('Trip status: Relive')).toBeTruthy();
   });
 
   it('omits date range when both dates are null', () => {
     const trip = makeTrip({ start_date: null, end_date: null });
-    const { queryByText } = renderWithTheme(<TripCard trip={trip} onPress={() => {}} />);
+    const { queryByText, getByText } = renderWithTheme(<TripCard trip={trip} onPress={() => {}} />);
     expect(queryByText(/→/)).toBeNull();
+    // Y2.4: an explicit placeholder keeps grid cards the same height.
+    expect(getByText('No dates set')).toBeTruthy();
   });
 
   it('calls onPress when tapped', () => {

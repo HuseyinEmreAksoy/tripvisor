@@ -1,9 +1,20 @@
 // Run: deno test --allow-env --allow-net supabase/functions/directions-polyline/test.ts
+// @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import process from 'node:process';
 import { test } from 'node:test';
-import { handler as rawHandler, routeQuotaUnits } from './index.ts';
+import {
+  decodePolylineE5,
+  encodePolylineE5,
+  handler as rawHandler,
+  routeQuotaUnits,
+  splitOrsRoute,
+  // @ts-ignore -- Deno `.ts`-suffixed import
+} from './index.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { _setQuotaRpcForTests, _setTokenVerifierForTests } from '../_shared/auth.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
+import { _resetRoutingStateForTests } from '../_shared/routing.ts';
 
 // Audit #2: the function requires a real user. Every request below is
 // authenticated as a fixed user through the verifier hook (unless it sets
@@ -265,5 +276,246 @@ test('upstream timeout → 504', async () => {
     assertEquals(res.status, 504);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+// ---- M5 Y2.3: provider, per-leg split, transit noRoute ----------------------
+
+test('Y2.3 polyline5 codec: Google reference string round-trips exactly', () => {
+  const ref = '_p~iF~ps|U_ulLnnqC_mqNvxq`@';
+  const pts = decodePolylineE5(ref);
+  assertEquals(pts, [
+    [3850000, -12020000],
+    [4070000, -12095000],
+    [4325200, -12645300],
+  ]);
+  assertEquals(encodePolylineE5(pts), ref);
+  let threw = false;
+  try {
+    decodePolylineE5('_p~iF~ps|'); // truncated mid-value
+  } catch {
+    threw = true;
+  }
+  assert(threw, 'a truncated polyline is rejected, not half-decoded');
+});
+
+test('Y2.3 Google: perLeg asks for routes.legs and returns one entry per waypoint pair', async () => {
+  const mock = mockGoogle({
+    body: {
+      routes: [
+        {
+          duration: '900s',
+          distanceMeters: 9000,
+          polyline: { encodedPolyline: 'whole' },
+          legs: [
+            { duration: '300s', distanceMeters: 3000, polyline: { encodedPolyline: 'leg0' } },
+            { duration: '600s', distanceMeters: 6000, polyline: { encodedPolyline: 'leg1' } },
+          ],
+        },
+      ],
+    },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: 38.7, lng: -9.1 },
+          intermediates: [{ lat: 38.71, lng: -9.11 }],
+          destination: { lat: 38.76, lng: -9.09 },
+          mode: 'driving',
+          perLeg: true,
+        }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as {
+      polyline: string;
+      provider: string;
+      legs: Array<{ polyline: string; durationSeconds: number; distanceMeters: number }>;
+    };
+    assertEquals(body.provider, 'google');
+    assertEquals(body.polyline, 'whole');
+    assertEquals(body.legs, [
+      { polyline: 'leg0', durationSeconds: 300, distanceMeters: 3000 },
+      { polyline: 'leg1', durationSeconds: 600, distanceMeters: 6000 },
+    ]);
+    const mask = new Headers(mock.calls[0]!.init.headers).get('X-Goog-FieldMask') ?? '';
+    assertStringIncludes(mask, 'routes.polyline.encodedPolyline');
+    assertStringIncludes(mask, 'routes.legs.duration');
+    assertStringIncludes(mask, 'routes.legs.distanceMeters');
+    assertStringIncludes(mask, 'routes.legs.polyline.encodedPolyline');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.3 Google: without perLeg the mask and body stay pre-Y2.3 (plus provider)', async () => {
+  const mock = mockGoogle({
+    body: { routes: [{ duration: '60s', distanceMeters: 500, polyline: { encodedPolyline: 'abc' } }] },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: 38.7, lng: -9.1 },
+          intermediates: [{ lat: 38.71, lng: -9.11 }],
+          destination: { lat: 38.76, lng: -9.09 },
+          mode: 'walking',
+        }),
+      }),
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    assertEquals(body, { polyline: 'abc', durationSeconds: 60, distanceMeters: 500, provider: 'google' });
+    assertEquals(
+      new Headers(mock.calls[0]!.init.headers).get('X-Goog-FieldMask'),
+      'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.3 Google: an inconsistent leg split is omitted, not guessed', async () => {
+  const mock = mockGoogle({
+    body: {
+      routes: [
+        {
+          duration: '900s',
+          distanceMeters: 9000,
+          polyline: { encodedPolyline: 'whole' },
+          legs: [{ duration: '900s', distanceMeters: 9000, polyline: { encodedPolyline: 'only-one' } }],
+        },
+      ],
+    },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: 38.7, lng: -9.1 },
+          intermediates: [{ lat: 38.71, lng: -9.11 }],
+          destination: { lat: 38.76, lng: -9.09 },
+          mode: 'bicycling',
+          perLeg: true,
+        }),
+      }),
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    assertEquals(res.status, 200);
+    assertEquals('legs' in body, false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.3 transit with no route: 200 zeros + noRoute + provider (no split for transit)', async () => {
+  const mock = mockGoogle({ body: { routes: [] } });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: 38.7, lng: -9.1 },
+          destination: { lat: 38.76, lng: -9.09 },
+          mode: 'transit',
+          perLeg: true,
+        }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      polyline: null,
+      durationSeconds: 0,
+      distanceMeters: 0,
+      noRoute: true,
+      provider: 'google',
+    });
+    const mask = new Headers(mock.calls[0]!.init.headers).get('X-Goog-FieldMask') ?? '';
+    assert(!mask.includes('routes.legs.duration'), 'transit never asks for a leg split');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.3 ORS: perLeg splits the geometry at way_points (exact characters) + segment numbers', async () => {
+  const pts: Array<[number, number]> = [
+    [3870000, -910000],
+    [3870500, -910700],
+    [3871000, -911000],
+    [3872200, -910400],
+    [3876000, -909000],
+  ];
+  const geometry = encodePolylineE5(pts);
+  process.env.ROUTING_PROVIDER = 'ors';
+  process.env.ORS_API_KEY = 'test-ors-key';
+  _resetRoutingStateForTests();
+  const mock = mockGoogle({
+    body: {
+      routes: [
+        {
+          summary: { distance: 3000.8, duration: 301 },
+          geometry,
+          segments: [
+            { distance: 1000.6, duration: 100.4 },
+            { distance: 2000.2, duration: 200.6 },
+          ],
+          way_points: [0, 2, 4],
+        },
+      ],
+    },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: 38.7, lng: -9.1 },
+          intermediates: [{ lat: 38.71, lng: -9.11 }],
+          destination: { lat: 38.76, lng: -9.09 },
+          mode: 'walking',
+          perLeg: true,
+        }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    assertStringIncludes(mock.calls[0]!.url, 'openrouteservice.org/v2/directions/foot-walking');
+    const body = (await res.json()) as {
+      provider: string;
+      polyline: string;
+      durationSeconds: number;
+      legs: Array<{ polyline: string; durationSeconds: number; distanceMeters: number }>;
+    };
+    assertEquals(body.provider, 'ors');
+    assertEquals(body.polyline, geometry);
+    assertEquals(body.durationSeconds, 301);
+    assertEquals(body.legs, [
+      { polyline: encodePolylineE5(pts.slice(0, 3)), durationSeconds: 100, distanceMeters: 1001 },
+      { polyline: encodePolylineE5(pts.slice(2, 5)), durationSeconds: 201, distanceMeters: 2000 },
+    ]);
+    assertEquals(decodePolylineE5(body.legs[1]!.polyline), pts.slice(2, 5));
+
+    // Unsplittable ORS payload (no segments): legs omitted, route still served.
+    assertEquals(
+      splitOrsRoute({ geometry, way_points: [0, 2, 4] }, 3),
+      undefined,
+    );
+    assertEquals(
+      splitOrsRoute({ geometry, segments: [{}, {}], way_points: [0, 9, 4] }, 3),
+      undefined,
+      'way_points out of order / range are rejected',
+    );
+  } finally {
+    mock.restore();
+    delete process.env.ROUTING_PROVIDER;
+    delete process.env.ORS_API_KEY;
+    _resetRoutingStateForTests();
   }
 });

@@ -75,6 +75,17 @@ export interface WipeTier1Result {
 export async function wipeTier1PersistedStorage(userId: string): Promise<WipeTier1Result> {
   if (!userId) return { ok: false, removedKeys: 0, reason: 'no userId' };
   const prefix = `tier1/${userId}/`;
+  // M5 Y2.1: the durable photo upload queue keeps re-encoded images of this
+  // user on the device (AsyncStorage manifest + document-dir files / web
+  // IndexedDB) until they upload. Account deletion drops them too. Lazy
+  // require: keeps the queue off this module's import graph; best-effort
+  // (the helper never throws), same contract as the rest of this wipe.
+  try {
+    const queue = require('../api/memories.upload-queue') as typeof import('../api/memories.upload-queue');
+    await queue.wipePhotoUploadQueue(userId);
+  } catch {
+    // queue module unavailable — nothing queued through it
+  }
   try {
     // Lazy require, same stance as persistence.native/web: expo-sqlite is a
     // native module riding the S1 dev-client rebuild — a top-level import

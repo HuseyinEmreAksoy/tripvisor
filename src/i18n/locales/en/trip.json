@@ -16,5 +16,159 @@
       "notOwner": "Only the trip owner can delete this trip.",
       "generic": "Couldn’t delete this trip. Check your connection and try again."
     }
+  },
+  "dayLabel": "Day {{day}}",
+  "transport": {
+    "driving": "Drive",
+    "walking": "Walk",
+    "bicycling": "Bike",
+    "transit": "Transit"
+  },
+  "status": {
+    "live": "Day {{day}} of {{total}}",
+    "upcoming_one": "Starts tomorrow",
+    "upcoming_other": "In {{count}} days",
+    "past": "Relive",
+    "a11y": "Trip status: {{status}}"
+  },
+  "card": {
+    "open": "Open trip {{title}}",
+    "actions": "Trip actions",
+    "archived": "Archived",
+    "meta": "{{hours}}h/day · {{mode}}"
+  },
+  "header": {
+    "back": "Trips",
+    "noDates": "No dates set",
+    "menu": "Trip menu",
+    "menuHint": "Trip settings, print, share and more",
+    "print": "Print",
+    "printA11y": "Print itinerary",
+    "meta": "{{dates}} · {{hours}}h/day · {{mode}}"
+  },
+  "route": {
+    "places_one": "{{count}} place",
+    "places_other": "{{count}} places",
+    "timeA11y": "Total travel time {{value}}",
+    "distanceA11y": "Total distance {{value}} kilometres",
+    "summary": "Route summary"
+  },
+  "menu": {
+    "settings": "Trip settings",
+    "settingsA11y": "Open trip settings",
+    "print": "Print itinerary",
+    "share": "Share trip",
+    "shareA11y": "Share this trip",
+    "people": "People",
+    "peopleA11y": "Manage collaborators",
+    "duplicate": "Duplicate trip",
+    "duplicating": "Duplicating…",
+    "duplicateA11y": "Duplicate this trip"
+  },
+  "detail": {
+    "loadError": "Couldn’t load this trip",
+    "loadErrorBody": "Something went wrong. Check your connection and try again.",
+    "retry": "Retry",
+    "retryA11y": "Retry loading this trip",
+    "backToTrips": "Back to trips",
+    "notFound": "Trip not found",
+    "duplicateError": "Couldn’t duplicate this trip. Check your connection and try again.",
+    "shareTitle": "Share this trip",
+    "close": "Close"
+  },
+  "tabs": {
+    "plan": "Plan",
+    "map": "Map",
+    "trip": "Trip",
+    "planMap": "Map & itinerary"
+  },
+  "hub": {
+    "viewPlace": "View details for {{name}}"
+  },
+  "row": {
+    "untitled": "Untitled place",
+    "openDetails": "Open details for {{title}}.",
+    "openDetailsNative": "Open details for {{title}}. Long-press to drag, change day, duration, or delete.",
+    "meta": "{{category}} · ~{{duration}}",
+    "metaA11y": "{{category}}, visit duration {{minutes}} minutes",
+    "visit": "Visit ~{{duration}}",
+    "visitA11y": "Visit duration {{minutes}} minutes",
+    "comments_one": "{{count}} comment on {{title}}. Open the thread.",
+    "comments_other": "{{count}} comments on {{title}}. Open the thread.",
+    "noComments": "No comments yet on {{title}}. Start the discussion.",
+    "actions": "Place actions",
+    "window": {
+      "range": "{{from}}–{{to}}",
+      "from": "from {{time}}",
+      "until": "until {{time}}",
+      "rangeA11y": "Time window: arrive after {{from}}, leave before {{to}}",
+      "fromA11y": "Time window: arrive after {{time}}",
+      "untilA11y": "Time window: leave before {{time}}"
+    },
+    "pinnedA11y": "Arrival pinned to {{time}}, departs {{departure}}",
+    "arrivesA11y": "Arrives {{arrival}}, departs {{departure}}",
+    "wait": "waits until {{time}}",
+    "waitA11y": "Arrives before the time window opens — waits until {{time}}",
+    "pending": "⟳ route recompute pending",
+    "pendingA11y": "Order saved on this device. Travel times update with the next route recompute once you’re back online.",
+    "warningA11y": "Warning: {{warning}}. This is just a heads-up — your plan is unchanged."
+  },
+  "category": {
+    "none": "Unclassified",
+    "museum": "Museum",
+    "restaurant": "Restaurant",
+    "nightlife": "Nightlife",
+    "park": "Park",
+    "religious_site": "Religious site",
+    "attraction": "Attraction",
+    "shopping": "Shopping",
+    "family_attraction": "Family attraction",
+    "hotel": "Hotel",
+    "nature": "Nature",
+    "general": "Place"
+  },
+  "mapUnavailable": {
+    "a11y": "Map unavailable — list of places",
+    "title": "Map unavailable",
+    "hint": "Set <code>{{keyName}}</code> to view the map — see <code>{{doc}}</code>. Here’s the list of places:",
+    "empty": "No places added yet.",
+    "unscheduled": "Unscheduled"
+  },
+  "new": {
+    "back": "My trips",
+    "overline": "New trip",
+    "title": "Plan your trip",
+    "subtitle": "Give your trip a name and dates — we’ll help you build the day-by-day plan.",
+    "sections": {
+      "where": "Where & when",
+      "how": "How you travel"
+    },
+    "fields": {
+      "title": "Destination or trip name",
+      "titlePlaceholder": "e.g. Lisbon long weekend",
+      "start": "Start date",
+      "end": "End date",
+      "hours": "Daily plan time (hours)",
+      "hoursHint": "How many hours of activities you want per day",
+      "mode": "Travel mode",
+      "currency": "Currency"
+    },
+    "currencies": {
+      "USD": "US Dollar",
+      "EUR": "Euro",
+      "GBP": "British Pound",
+      "TRY": "Turkish Lira",
+      "JPY": "Japanese Yen"
+    },
+    "currencyA11y": "{{code}} — {{name}}",
+    "timezone": "Detected time zone: {{tz}}",
+    "create": "Create trip",
+    "errors": {
+      "titleRequired": "Give your trip a name",
+      "titleTooLong": "Keep the name under 120 characters",
+      "hoursRange": "Enter between 1 and 24 hours",
+      "endBeforeStart": "The end date can’t be before the start date",
+      "createFailed": "Couldn’t create the trip. Check your connection and try again."
+    }
   }
 }

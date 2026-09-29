@@ -37,6 +37,7 @@ jest.mock('@/components/Map', () => {
   return {
     decodePolyline: () => [],
     dayColor: () => '#000000',
+    DAY_NEUTRAL: '#78716A',
     Map: ({
       markers,
       onMarkerPress,

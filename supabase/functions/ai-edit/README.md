@@ -6,9 +6,9 @@ AI editing, gap-fill suggestions, and import grounding (v2 Phase N4). Every acti
 
 | method      | auth     | body                                                                                       | response                                            |
 | ----------- | -------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| `POST`      | required | `{ action: "edit", tripId, instruction (5..1000), idempotencyKey (8..64) }`                | `{ runId, status, diff, unresolved, usage }`         |
-| `POST`      | required | `{ action: "suggest", tripId, dayIndex (0-based), slackMinutes (30..480), idempotencyKey }` | `{ runId, status, suggestions, unresolved, usage }`  |
-| `POST`      | required | `{ action: "ground", names (1..30, each 2..120), destination?, idempotencyKey }`            | `{ runId, resolved, unresolved, usage }`             |
+| `POST`      | required | `{ action: "edit", tripId, instruction (5..1000), idempotencyKey (8..64), lang? }`                | `{ runId, status, diff, unresolved, usage }`         |
+| `POST`      | required | `{ action: "suggest", tripId, dayIndex (0-based), slackMinutes (30..480), idempotencyKey, lang? }` | `{ runId, status, suggestions, unresolved, usage }`  |
+| `POST`      | required | `{ action: "ground", names (1..30, each 2..120), destination?, idempotencyKey, lang? }`            | `{ runId, resolved, unresolved, usage }`             |
 | `GET ?ping` | none     | none                                                                                        | `{ ok: true, fn: "ai-edit" }`                        |
 
 ### action `edit` — NL edit as a previewable DIFF

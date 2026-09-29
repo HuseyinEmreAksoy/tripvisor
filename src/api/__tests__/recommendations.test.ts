@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { renderHook, waitFor } from '@testing-library/react-native';
+import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockFetch = jest.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
@@ -22,11 +22,34 @@ jest.mock('../supabase', () => {
   };
 });
 
+// M5 Y2.5: the trip-aware hooks read places / create places through
+// ./trip-places. Mocked here so this suite never boots the sync engine.
+let mockTripPlaces: Array<Record<string, unknown>> = [];
+const mockUseTripPlacesArgs: Array<string | undefined> = [];
+const mockCreate = jest.fn<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>();
+const mockMove = jest.fn<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>();
+jest.mock('../trip-places', () => ({
+  useTripPlaces: (tripId: string | undefined) => {
+    mockUseTripPlacesArgs.push(tripId);
+    return { data: tripId ? mockTripPlaces : undefined, isLoading: false };
+  },
+  useCreateTripPlace: () => ({ mutateAsync: mockCreate }),
+  useMoveToDay: () => ({ mutateAsync: mockMove }),
+}));
+
 import {
+  AddPoiError,
+  centerOfPoints,
   fetchRecommendations,
   normalizeRecommendationParams,
+  pickPoiSuggestion,
+  poiCategoryDefault,
+  recommendationCenterFromPlaces,
   recommendationKeys,
   RecommendationsError,
+  resolvePoiGooglePlace,
+  useAddPoiToTrip,
+  useRecommendationCenter,
   useRecommendations,
 } from '../recommendations';
 
@@ -88,6 +111,10 @@ function track(client: QueryClient): QueryClient {
 
 beforeEach(() => {
   mockFetch.mockReset();
+  mockCreate.mockReset();
+  mockMove.mockReset();
+  mockTripPlaces = [];
+  mockUseTripPlacesArgs.length = 0;
 });
 
 afterEach(() => {
@@ -186,5 +213,253 @@ describe('useRecommendations', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect((result.current.error as RecommendationsError).code).toBe('recommendations_disabled');
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===========================================================================
+// M5 Y2.5 — lang default, trip-aware centre, add a card to the trip
+// ===========================================================================
+
+const TRIP = '00000000-0000-4000-8000-000000000001';
+const ISTANBUL = [
+  { lat: 41.0086, lng: 28.9802, day_index: 0 }, // Hagia Sophia
+  { lat: 41.0054, lng: 28.9768, day_index: 0 }, // Blue Mosque
+  { lat: 41.0256, lng: 28.9744, day_index: 1 }, // Galata
+];
+const CAPPADOCIA = { lat: 38.6431, lng: 34.8289, day_index: 2 };
+
+function hookWrapper() {
+  const client = track(new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }));
+  return ({ children }: { children: React.ReactNode }) => React.createElement(QueryClientProvider, { client }, children);
+}
+
+describe('Y2.5 lang default', () => {
+  it('uses the app language when no lang is given, and still maps explicit tags', () => {
+    expect(normalizeRecommendationParams({ lat: 1, lng: 2, interests: ['food'] }).lang).toBe('en');
+    expect(normalizeRecommendationParams({ lat: 1, lng: 2, interests: ['food'], lang: 'TR' }).lang).toBe('tr');
+  });
+});
+
+describe('Y2.5 search centre (pure)', () => {
+  it('a day centres on its own stops; a day without stops falls back to the trip', () => {
+    const day0 = recommendationCenterFromPlaces(ISTANBUL, 0);
+    expect(day0.source).toBe('day');
+    expect(day0.placeCount).toBe(2);
+    expect(day0.center!.lat).toBeCloseTo(41.007, 3);
+    const day5 = recommendationCenterFromPlaces(ISTANBUL, 5);
+    expect(day5.source).toBe('trip');
+    expect(day5.placeCount).toBe(3);
+  });
+
+  it('ignores tombstones and bad coordinates; nothing to centre on gives none', () => {
+    expect(recommendationCenterFromPlaces([{ lat: 41, lng: 29, deleted: true }, { lat: NaN, lng: 1 }])).toEqual({
+      center: null,
+      source: 'none',
+      placeCount: 0,
+    });
+  });
+
+  it('a two-city trip centres on the busier city (medoid), not the empty space between', () => {
+    const c = centerOfPoints([...ISTANBUL, CAPPADOCIA])!;
+    expect(ISTANBUL.some((p) => p.lat === c.lat && p.lng === c.lng)).toBe(true);
+  });
+
+  it('handles the antimeridian', () => {
+    const c = centerOfPoints([{ lat: -17, lng: 179.9 }, { lat: -17, lng: -179.9 }])!;
+    expect(Math.abs(c.lng)).toBeGreaterThan(179.8);
+  });
+});
+
+describe('Y2.5 useRecommendations({ tripId | center, ... })', () => {
+  it('centres a trip query on the trip places', async () => {
+    mockTripPlaces = ISTANBUL;
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, OK));
+    const { result } = renderHook(() => useRecommendations({ tripId: TRIP, dayIndex: 0, interests: ['history'] }), {
+      wrapper: hookWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(lastBody()).toMatchObject({ action: 'search', lat: 41.007, lng: 28.979, interests: ['history'], lang: 'en' });
+    expect(mockUseTripPlacesArgs).toContain(TRIP);
+  });
+
+  it('an explicit centre wins and the trip places are not read', async () => {
+    mockTripPlaces = ISTANBUL;
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, OK));
+    const { result } = renderHook(
+      () => useRecommendations({ tripId: TRIP, center: { lat: 38.6431, lng: 34.8289 }, interests: ['nature'] }),
+      { wrapper: hookWrapper() },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(lastBody()).toMatchObject({ lat: 38.643, lng: 34.829 });
+    expect(mockUseTripPlacesArgs.every((a) => a === undefined)).toBe(true);
+  });
+
+  it('holds while the trip has no stops, and reports why', () => {
+    const wrapper = hookWrapper();
+    const q = renderHook(() => useRecommendations({ tripId: TRIP, interests: ['food'] }), { wrapper });
+    const c = renderHook(() => useRecommendationCenter({ tripId: TRIP }), { wrapper });
+    expect(q.result.current.fetchStatus).toBe('idle');
+    expect(c.result.current).toEqual({ center: null, source: 'none', placeCount: 0, loading: false });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+const CARD = {
+  name: 'Blue Mosque',
+  originalName: 'Sultanahmet Camii',
+  lat: 41.00538,
+  lng: 28.97682,
+  kind: 'historic=mosque',
+  interests: ['history' as const],
+};
+
+function suggestion(placeId: string, mainText: string) {
+  return { placeId, mainText, secondaryText: 'Istanbul' };
+}
+
+describe('Y2.5 resolvePoiGooglePlace (quota-metered places-autocomplete)', () => {
+  it('sends the card name, a 1 km bias around the card, a session token and the app language', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(200, { suggestions: [suggestion('A', 'Blue Mosque Cafe'), suggestion('B', 'Blue Mosque')] }),
+    );
+    const match = await resolvePoiGooglePlace(CARD);
+    expect(String(mockFetch.mock.calls[0]![0])).toBe('http://supabase.test/functions/v1/places-autocomplete');
+    const body = lastBody();
+    expect(body).toMatchObject({
+      input: 'Blue Mosque',
+      locationBias: { lat: 41.00538, lng: 28.97682, radiusMeters: 1000 },
+      lang: 'en',
+    });
+    expect(String(body.sessionToken)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(match).toEqual({ placeId: 'B', mainText: 'Blue Mosque', secondaryText: 'Istanbul', query: 'Blue Mosque' });
+  });
+
+  it('retries once with the local name (same session) when the card name finds nothing', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(200, { suggestions: [] }))
+      .mockResolvedValueOnce(jsonResponse(200, { suggestions: [suggestion('C', 'Sultanahmet Camii')] }));
+    const match = await resolvePoiGooglePlace(CARD, { sessionToken: '11111111-1111-4111-8111-111111111111' });
+    expect(match.placeId).toBe('C');
+    expect(match.query).toBe('Sultanahmet Camii');
+    const sent = mockFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)) as { sessionToken: string });
+    expect(sent.map((b) => b.sessionToken)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('maps failures to stable AddPoiError codes', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(429, { error: { code: 'quota_exceeded', message: 'Daily limit reached' } }),
+    );
+    await expect(resolvePoiGooglePlace(CARD)).rejects.toMatchObject({ name: 'AddPoiError', code: 'quota_exceeded' });
+    mockFetch.mockResolvedValueOnce(jsonResponse(500, { error: { code: 'server_misconfigured', message: 'no key' } }));
+    await expect(resolvePoiGooglePlace(CARD)).rejects.toMatchObject({ code: 'places_unavailable' });
+    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse(200, { suggestions: [] })));
+    await expect(resolvePoiGooglePlace(CARD)).rejects.toMatchObject({ code: 'no_match' });
+    await expect(resolvePoiGooglePlace({ name: 'X', lat: 200, lng: 0 })).rejects.toBeInstanceOf(AddPoiError);
+  });
+
+  it('matches names case- and diacritics-insensitively (Turkish too)', () => {
+    const s = [suggestion('A', 'Galata Tower'), suggestion('B', 'GALATA KULESİ')];
+    expect(pickPoiSuggestion(s, ['Galata Kulesi'])!.placeId).toBe('B');
+    expect(pickPoiSuggestion(s, ['Something else'])!.placeId).toBe('A');
+    expect(pickPoiSuggestion([], ['x'])).toBeNull();
+  });
+});
+
+describe('Y2.5 poiCategoryDefault', () => {
+  it('maps OSM kinds (then interests) onto the add-place categories', () => {
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0, kind: 'tourism=museum' })).toEqual({
+      category: 'museum',
+      durationMinutes: 120,
+    });
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0, kind: 'amenity=cafe' })).toEqual({
+      category: 'restaurant',
+      durationMinutes: 90,
+    });
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0, kind: 'historic=mosque' }).category).toBe('religious_site');
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0, kind: 'historic=castle' }).category).toBe('attraction');
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0, kind: null, interests: ['nature'] }).category).toBe('nature');
+    expect(poiCategoryDefault({ name: 'x', lat: 0, lng: 0 })).toEqual({ category: 'general', durationMinutes: 60 });
+  });
+});
+
+describe('Y2.5 useAddPoiToTrip', () => {
+  it('resolves, creates through the create hook with OSM coords + card name, then schedules the day', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, { suggestions: [suggestion('ChIJ_blue', 'Blue Mosque')] }));
+    mockCreate.mockResolvedValueOnce({ id: 'row-1', trip_id: TRIP });
+    mockMove.mockResolvedValueOnce({ id: 'row-1', day_index: 1 });
+    const { result } = renderHook(() => useAddPoiToTrip(TRIP), { wrapper: hookWrapper() });
+    let out: { googlePlaceId: string; matchedName: string; scheduled: boolean | null } | undefined;
+    await act(async () => {
+      out = await result.current.mutateAsync({ poi: CARD, dayIndex: 1 });
+    });
+    expect(mockCreate).toHaveBeenCalledWith({
+      trip_id: TRIP,
+      google_place_id: 'ChIJ_blue',
+      user_title: 'Blue Mosque',
+      category: 'religious_site',
+      visit_duration_minutes: 45,
+      lat: 41.00538,
+      lng: 28.97682,
+    });
+    expect(mockMove).toHaveBeenCalledWith({ id: 'row-1', tripId: TRIP, toDayIndex: 1 });
+    expect(out).toMatchObject({ googlePlaceId: 'ChIJ_blue', matchedName: 'Blue Mosque', scheduled: true });
+  });
+
+  it('Ideas when no day is given; a duplicate is refused before any write', async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { suggestions: [suggestion('ChIJ_blue', 'Blue Mosque')] })),
+    );
+    mockCreate.mockResolvedValue({ id: 'row-2', trip_id: TRIP });
+    const { result } = renderHook(() => useAddPoiToTrip(TRIP), { wrapper: hookWrapper() });
+    let ideas: { scheduled: boolean | null } | undefined;
+    await act(async () => {
+      ideas = await result.current.mutateAsync({ poi: CARD });
+    });
+    expect(ideas?.scheduled).toBeNull();
+    expect(mockMove).not.toHaveBeenCalled();
+
+    mockCreate.mockClear();
+    let err: unknown;
+    await act(async () => {
+      err = await result.current
+        .mutateAsync({ poi: CARD, existingGooglePlaceIds: ['ChIJ_other', 'ChIJ_blue'] })
+        .catch((e: unknown) => e);
+    });
+    expect(err).toBeInstanceOf(AddPoiError);
+    expect((err as AddPoiError).code).toBe('already_in_trip');
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('reuses a match resolved by the detail sheet (no second metered search)', async () => {
+    mockCreate.mockResolvedValueOnce({ id: 'row-3', trip_id: TRIP });
+    const { result } = renderHook(() => useAddPoiToTrip(TRIP), { wrapper: hookWrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({
+        poi: CARD,
+        match: { placeId: 'ChIJ_pre', mainText: 'Blue Mosque', secondaryText: '', query: 'Blue Mosque' },
+      });
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ google_place_id: 'ChIJ_pre' }));
+  });
+
+  it('a failed create is create_failed; a missing trip is invalid_input (no Places call)', async () => {
+    const { result } = renderHook(() => useAddPoiToTrip(undefined), { wrapper: hookWrapper() });
+    let err: unknown;
+    await act(async () => {
+      err = await result.current.mutateAsync({ poi: CARD }).catch((e: unknown) => e);
+    });
+    expect((err as AddPoiError).code).toBe('invalid_input');
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, { suggestions: [suggestion('ChIJ_blue', 'Blue Mosque')] }));
+    mockCreate.mockRejectedValueOnce(new Error('offline queue full'));
+    await act(async () => {
+      err = await result.current.mutateAsync({ poi: CARD, tripId: TRIP }).catch((e: unknown) => e);
+    });
+    expect((err as AddPoiError).code).toBe('create_failed');
   });
 });

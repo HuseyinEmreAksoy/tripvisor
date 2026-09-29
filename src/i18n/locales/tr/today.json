@@ -1,1 +1,36 @@
-{}
+{
+  "live": {
+    "untitled": "Yer",
+    "loading": "Bugünün planı yükleniyor",
+    "loadError": "Bugünün planı yüklenemedi.",
+    "retry": "Tekrar dene",
+    "markedDone": "{{title}} tamamlandı",
+    "markedSkipped": "{{title}} atlandı",
+    "undo": "Geri al",
+    "undoA11y": "Geri al: {{title}}",
+    "dayPlan": "{{day}}. gün planı",
+    "todayPlan": "Bugünün planı",
+    "dayOf": "Gün {{day}}/{{total}}",
+    "today": "Bugün",
+    "addExpense": "Harcama ekle",
+    "packing": "Bavul listesi",
+    "openTrip": "Geziyi aç",
+    "openTripA11y": "{{title}} gezisini aç",
+    "weatherCredit": "Hava durumu verisi: Open-Meteo.com"
+  },
+  "timeline": {
+    "checked": "{{done}}/{{total}} tamamlandı",
+    "status": {
+      "done": "tamamlandı",
+      "skipped": "atlandı",
+      "open": "yapılmadı"
+    },
+    "rowA11y": "{{time}}, {{title}}, {{status}}",
+    "rowNextA11y": "{{time}}, {{title}}, {{status}}, sıradaki durak",
+    "hintReopen": "Yeniden açmak için dokun",
+    "hintDone": "Tamamlandı olarak işaretlemek için dokun",
+    "skipped": "Atlandı",
+    "until": "{{time}} saatine kadar",
+    "untilNext": "{{time}} saatine kadar · sıradaki"
+  }
+}

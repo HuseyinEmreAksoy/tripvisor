@@ -4,7 +4,7 @@ Pairwise travel time / distance for N origins x M destinations. Used by
 `optimize-trip` (matrix sub-blocks for k-means + 2-opt) and the client leg
 cache (`trip_legs`, 30-day TTL).
 
-## Contract (provider-independent — clients cannot tell who served them)
+## Contract (provider-independent numbers; `provider` names the backend since M5 Y2.3)
 
 ```
 POST /functions/v1/distance-matrix
@@ -13,8 +13,13 @@ POST /functions/v1/distance-matrix
   "destinations": [{ "lat": number, "lng": number }],   // 1..25
   "mode": "driving" | "walking" | "transit" | "bicycling"
 }
--> 200 { "legs": [{ "fromIndex", "toIndex", "durationSeconds", "distanceMeters" }] }
+-> 200 { "legs": [{ "fromIndex", "toIndex", "durationSeconds", "distanceMeters" }],
+         "provider": "ors" | "google" }                    // M5 Y2.3, additive
 ```
+
+- **M5 Y2.3:** `provider` names the backend that answered. `optimize-trip`
+  stores it as `trip_legs.source` on the matrix-cache rows it writes (keyed by
+  mode). Older callers ignore it; metering is unchanged.
 
 Unreachable pairs are omitted from `legs` (Google `ROUTE_NOT_FOUND` / ORS
 `null` cells — identical filtering on both paths).

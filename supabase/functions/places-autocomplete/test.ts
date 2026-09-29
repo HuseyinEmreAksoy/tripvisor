@@ -270,3 +270,39 @@ test('upstream timeout → 504', async () => {
     globalThis.fetch = original;
   }
 });
+
+// ---- M5 Y2.5: lang -> Google languageCode ------------------------------------
+
+function autocompleteRequest(extra: Record<string, unknown>): Request {
+  return new Request('http://localhost/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ input: 'Ayasofya', sessionToken: '11111111-1111-4111-8111-111111111111', ...extra }),
+  });
+}
+
+test('Y2.5: lang=tr is forwarded as languageCode; no lang defaults to en', async () => {
+  const mock = mockGoogle({ body: { suggestions: [] } });
+  try {
+    assertEquals((await handler(autocompleteRequest({ lang: 'tr' }))).status, 200);
+    assertEquals((await handler(autocompleteRequest({}))).status, 200);
+    const sent = mock.calls.map((c) => (JSON.parse(c.init.body as string) as { languageCode?: string }).languageCode);
+    assertEquals(sent, ['tr', 'en']);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.5: an unsupported lang is a 400 and Google is never called', async () => {
+  const mock = mockGoogle({ body: { suggestions: [] } });
+  try {
+    for (const lang of ['de', 'tr-TR', 7]) {
+      const res = await handler(autocompleteRequest({ lang }));
+      assertEquals(res.status, 400, String(lang));
+      assertEquals(((await res.json()) as { error: { code: string } }).error.code, 'invalid_input');
+    }
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});

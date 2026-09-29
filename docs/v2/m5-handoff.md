@@ -142,3 +142,121 @@ Money conversion order (MV + Y2.2 lib):
 - Only Y2.1 edits src/sync/** (allowlist/hydrate/mutations) for the memory roots. user_preferences stays Tier-2 (TanStack), owned by Y2.2.
 - Orphan trip-memories sweep function + cron → Y2.1.
 - Dev server: NetInfo HEAD probes are answered by metro.config.js; start it with BROWSER=none NODE_OPTIONS=--max-old-space-size=4096 npx expo start --web --port 8081.
+
+## From Y2.3 (per-leg routing) — contract for Y3.3
+- optimize-trip meta.contractVersion 2. Additive fields: keptOrderDays:number[], legSources{ors,google,estimate,user}.
+- trip_legs:
+  - day_index >= 0 → one row per consecutive pair. transport_mode is the effective mode (incl. flight/ferry).
+  - polyline is null for transit (use transit_steps), estimate and user legs → draw a straight/arc dashed line.
+  - day_index = -1 rows are matrix cache: NEVER render them.
+- Helpers in @/api/routes: effectiveLegMode, isEstimatedLeg (show "≈"), isUserTimedLeg, isKeptOrderLegMode, isDayLeg, dayLegsFor, keptOrderDaySet, orderLegsForHopLookup, OPTIMIZE_CONTRACT_VERSION.
+- UI rules:
+  - No leg chip before a day's first stop.
+  - Clear arrival_mode and arrival_minutes together.
+  - After a mode change, run useOptimizeTrip with trip.route_render_mode.
+  - Offer flight/ferry only on scheduled stops.
+- computeDayTimeline ignores source → Y3.3 adds "≈" at render time.
+- Estimate model (legs.ts): flight 800 km/h + 2 h; ferry 25 km/h; transit ×1.3 @25 km/h + 5 min; drive 40, walk 4.8, bike 15 km/h ×1.3. (BUILD-LOG says flight 700 km/h + 90 min, ferry 30 km/h → docs to align.)
+- Deploy: 0035 before optimize-trip. Deploy directions-polyline + distance-matrix together with it (perLeg, provider, noRoute).
+- Deno for fns that call Deno.serve at load: `--allow-net=127.0.0.1,0.0.0.0:8000`, one file per run, plus `-v .../src/lib/optimizer:/app/src/lib/optimizer:ro` for optimize-trip.
+
+## From Y2.5 (sharing, lang, recommendations client) — contracts for Y3.4/Y3.5
+- share-trip ops (owner only):
+  - create {tripId, settings?} → {token, createdAt, settings}.
+  - current {tripId} → {share|null}.
+  - update_settings {tripId, token?, settings}; with no active link → 404 no_active_link.
+- Public read, contractVersion 3:
+  - sections{itinerary,expenses,memories} is always present.
+  - expenses = summary only (homeCurrency, count, totals, byCategory, pending, byCurrency).
+  - memories = {journal, reviews, photos, photoUrlExpiresAt, truncated}. Photos are 1 h signed URLs. No author ids.
+- Client:
+  - Sharing: useCurrentShareLink / useTripShareSettings(tripId,{enabled:isOwner}); useUpdateShareSettings (optimistic); useCreateShareLink().mutate({settings}); DEFAULT_SHARE_SETTINGS; ShareLinkError; useSharedTrip → SharedTripPayload.
+  - Language: `lang` is sent on places / details / AI / poi (appLanguage()), and place query keys include lang.
+  - Recommendations:
+    - useRecommendations({tripId, dayIndex?, center?, interests, lang?}); useRecommendationCenter.
+    - useAddPoiToTrip(tripId).mutate({poi, dayIndex?, existingGooglePlaceIds?, match?}) → {place, googlePlaceId, matchedName, scheduled}.
+    - resolvePoiGooglePlace(poi,{sessionToken}): pass its result as `match` → 1 metered search.
+    - AddPoiError.code: no_match | quota_exceeded | places_unavailable | not_authenticated | already_in_trip | create_failed | invalid_input. There is NO custom-place fallback (google_place_id NOT NULL).
+    - scheduled===false → "Added to Ideas".
+- Y3.5 UI:
+  - Mount the owner hooks with {enabled:isOwner}; re-show the token after reload; handle no_active_link.
+  - Render each public section only if its key is present; itinerary off → "hidden by owner".
+- ORCHESTRATOR DECISION (2026-09-29, privacy): the public link shows ONLY memories AUTHORED BY THE TRIP OWNER (visibility='trip'), never other members' items. They consented to share with the trip, not the internet. Fix in the Wave-2 gate round (share-trip filter + test + toggle copy "publishes your shared memories").
+- Gate-round follow-ups:
+  - A per-IP rate limit on anonymous share reads (signing up to 200 objects per read; Storage egress).
+  - `_shared/ai.ts` grounding should pass languageCode (AI place names are English today).
+- Deno for fns that call Deno.serve at load: --allow-net=127.0.0.1,0.0.0.0:8000.
+
+## From Y2.4 (visual foundation)
+- Tokens:
+  - `layout` scale (formWidth 640, contentWidth 960) and `elevation` scale.
+  - `surfaceStyle(t, level)`.
+  - heroScrim, heroScrimSoft, heroGlass.
+  - The contrast test (`src/theme/__tests__/contrast.test.ts`) gates every pair.
+- ONE day-colour source, `src/theme/dayColors.ts`: dayColor, dayTint, DAY_COLORS, DAY_NEUTRAL, ON_DAY_COLOR, withAlpha. Memories timeline (Y3.1) MUST use it.
+- New components:
+  - `Screen width="form"|"content"|"full"` + ScreenScrollView.
+  - TripHero, TripCover, TripStatusChip (Relive / Day N of M / In N days), heroCollapse.
+  - PlaceThumb: memory photo → category tile. ROW_GOOGLE_PHOTOS=false (orchestrator: attribution + quota).
+- Orchestrator visual review (2026-09-29) → Wave-2 gate / Y4 fixes:
+  - The brand overline shows "TRİPVİSOR" in tr (CSS uppercase) → write "TRIPVISOR" literally / no textTransform.
+  - Day chips "D1 Thu 18" are English in tr → dayChips.ts via the i18n formatters (Y3.3 or Y4).
+  - The phone header chip row truncates the route-limit pill ("Rota hızn…") → wrap or icon-only.
+  - Legacy English strings in tr: "Your trips", "Starts", "Travel", "Add notes…", "places/Visit/Day" chips → Y4.2/4.3.
+- Screenshots: %TEMP%\tripvisor-y24-shots\
+
+## From Y2.1 (memories data layer) — hook contracts for Y3.1 (all from @/api/memories; types in memories.types.ts)
+- Read:
+  - useTripMemories(tripId) → {data?{days[{dayIndex|null, items}], items, counts{photos, journal, reviews, uploading, failed}, latestPhoto}, userId, isLoading, error, isRefetching, refetch}.
+  - MemoryItem {id, tripId, dayIndex, at, isOwn, visibility} plus photo{photo, upload} | journal{entry} | review{review}. Undated items come last; own items still show offline.
+- Journal:
+  - useJournalEntry(tripId, dayIndex) → {data, entries, isLoading}.
+  - useSaveJournalEntry() {tripId, dayIndex, body, visibility?, id?} → id.
+- Reviews:
+  - usePlaceReviews(tripId, tripPlaceId) → {mine, others}.
+  - useUpsertPlaceReview() {tripId, tripPlaceId, rating 1–5|null, body?, visibility?}.
+- Photos:
+  - useAddPhotos() {tripId, assets: PickedPhoto[], dayIndex? (undefined = derive from capture date, null = undated), tripPlaceId?, caption?, visibility?} → {ids, failed}. Works offline.
+  - usePhotoUploads(tripId?) → {jobs[{state queued|uploading|waiting|failed, progress, waitingFor, error, previewUri}], retry, cancel, durable}.
+  - useUpdatePhoto() {id, tripId, caption?, dayIndex?, takenAt?, tripPlaceId? (online only)}.
+  - useMemoryPhotoUrls(paths) / useMemoryPhotoUrl(path): thumb_path for grids, storage_path for the lightbox; 1 h signed URLs.
+- All kinds:
+  - useSetMemoryVisibility() {tripId, items[{kind,id}], visibility} (bulk OK).
+  - useDeleteMemory() {tripId, kind, id}: tombstone + undo.
+  - useRemoveTripMemory() (owner moderation).
+  - useMemoryQuota(tripId?).
+- MemoryError {code, scope?, limit?, used?}. Codes: quota_exceeded (user|user_bytes|pending|trip), storage_full, unsupported_image, image_too_large, exif_strip_failed, not_authenticated, forbidden, network → i18n keys.
+- UI MUST:
+  - `npx expo install expo-image-picker` + app.json permission strings; pass result.assets straight to useAddPhotos.
+  - NEW native build required: expo-image-manipulator (and picker) are native modules.
+- Cloud (user):
+  - db push (0031–0039).
+  - Deploy memories-sweep.
+  - `secrets set MEMORIES_SWEEP_SECRET`.
+  - Vault secrets project_url / anon_key / memories_sweep_secret.
+  - Verify with `select public.invoke_memories_sweep();`.
+- Risks:
+  - Tombstoned photos keep their files if the device never comes back online (follow-up: a server sweep of old tombstones).
+  - Very long journals are a risk on web (1 MiB per-table cap).
+  - Native EXIF/orientation needs a device check.
+
+## From Y2.2 (money + preferences) — contracts for Y3.2/Y3.4
+- @/lib/money:
+  - Pure bigint decimals: MoneyValue {currency, exact, value}; pass `value` to formatMoney(value, currency).
+  - parseAmount(text, {language, currency}).
+  - planHomeCurrencyChange(rows, oldHome, newHome).
+- @/api/trip-expenses:
+  - useTripMoneySummary(tripId, {rateMode 'entry'|'today', autoWarm}) → {data {total, byCategory, byDay, byCurrency (home first; original / converted / pending), pending {count, ids, actualByCurrency, estimatedByCurrency}, budget, remaining, rows, counts, methods}, home, isFetchingRates, ratesError, todayRatesUnavailable}.
+  - useWarmFxForTrip(tripId).mutate({homeCurrency}) → call after useUpdateTrip({currency}).
+  - useTripExpenseRollup: same shape as before, plus currency / pendingCount / pending*ByCurrency.
+  - Create: optional currency/fx_*. The rate is resolved automatically (cache → fetch in 4 s → pending); works offline.
+- @/api/expense-fx:
+  - useExpenseFxPreview({amount, currency, home, tripStartDate, dayIndex}) → live "≈ ₺…".
+  - useMoneySummaries(trips, expenses) for analytics.
+  - The reconciler auto-starts (owner/editor only).
+- @/api/preferences:
+  - useUserPreferences() → {locale, home_currency, interests[], saved}; useUpdateUserPreferences() (partial, optimistic).
+  - useLanguagePreferenceMirror(): mount once in the signed-in tree.
+- Y3.2 TODO:
+  - analytics.tsx still sums raw amounts → switch to useMoneySummaries.
+  - createTripSchema (trips.ts) lacks currency → add when flipping TripCurrency, and prefill from preferences.

@@ -9,6 +9,9 @@
  * No Google or routing calls from here: directions open the device maps app
  * via a URL, the "≈ N min from you" figure is a straight-line estimate, and
  * weather is Open-Meteo (keyless) through the existing hook.
+ *
+ * M5 Y2.4: the day's colour (the shared `dayColor`) marks the "Day N of M"
+ * card and the timeline rail, and every string is translated (`today:live.*`).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StyleSheet, Text, View } from 'react-native';
@@ -21,7 +24,8 @@ import { Skeleton, SkeletonGroup } from '@/components/Skeleton';
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { openDirections } from '@/lib/directions';
 import { haptics } from '@/lib/haptics';
-import { useTheme } from '@/theme';
+import { dayColor, useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { DayTimelineList, type TimelineItem } from './DayTimelineList';
 import { NextStopCard } from './NextStopCard';
 import { TodayAction } from './TodayAction';
@@ -48,6 +52,7 @@ const UNDO_MS = 6_000;
 
 export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
   const t = useTheme();
+  const { t: tx } = useT('today');
   const router = useRouter();
   const card = useTodayCardStyle();
   const plan = useLiveDayPlan(trip, now);
@@ -76,13 +81,14 @@ export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
   );
   const next = selectNextStop({ stops, nowMinutes, checkoffs });
   const nextPlace = next.kind === 'next' ? plan.places.find((p) => p.id === next.stop.placeId) ?? null : null;
-  const titleOf = (id: string) => plan.places.find((p) => p.id === id)?.user_title ?? 'Place';
+  const untitled = tx('live.untitled');
+  const titleOf = (id: string) => plan.places.find((p) => p.id === id)?.user_title ?? untitled;
 
   const items: TimelineItem[] = plan.places.map((p) => {
     const stop = plan.timeline.get(p.id);
     return {
       placeId: p.id,
-      title: p.user_title ?? 'Place',
+      title: p.user_title ?? untitled,
       arrivalMinutes: stop?.arrivalMinutes ?? 0,
       departureMinutes: stop?.departureMinutes ?? 0,
       travelUnknown: stop?.travelUnknown ?? false,
@@ -148,7 +154,7 @@ export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
 
   if (plan.isLoading) {
     return (
-      <SkeletonGroup label="Loading today's plan" style={{ gap: t.spacing.md }}>
+      <SkeletonGroup label={tx('live.loading')} style={{ gap: t.spacing.md }}>
         <Skeleton height={220} radius="xl" />
         <Skeleton height={160} radius="xl" />
       </SkeletonGroup>
@@ -159,10 +165,10 @@ export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
     return (
       <View style={card}>
         <Text style={[t.typography.bodyStrong, { color: t.colors.text }]} accessibilityRole="alert">
-          Couldn't load today's plan.
+          {tx('live.loadError')}
         </Text>
         <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>{plan.error.message}</Text>
-        <Button label="Retry" fullWidth={false} onPress={plan.refetchPlaces} />
+        <Button label={tx('live.retry')} fullWidth={false} onPress={plan.refetchPlaces} />
       </View>
     );
   }
@@ -172,7 +178,7 @@ export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
   const nextCard = (
     <NextStopCard
       result={next}
-      place={nextPlace ? { id: nextPlace.id, title: nextPlace.user_title ?? 'Place', lat: nextPlace.lat, lng: nextPlace.lng } : null}
+      place={nextPlace ? { id: nextPlace.id, title: nextPlace.user_title ?? untitled, lat: nextPlace.lat, lng: nextPlace.lng } : null}
       travelUnknown={nextStop?.travelUnknown ?? false}
       mode={trip.transport_mode}
       location={location}
@@ -195,48 +201,61 @@ export function LiveTripView({ trip, now, isDesktop }: LiveTripViewProps) {
       accessibilityLiveRegion="polite"
     >
       <Text style={[t.typography.body, styles.flex, { color: t.colors.text }]} numberOfLines={1}>
-        {`${lastMark.title} ${lastMark.status === 'done' ? 'marked done' : 'skipped'}`}
+        {lastMark.status === 'done'
+          ? tx('live.markedDone', { title: lastMark.title })
+          : tx('live.markedSkipped', { title: lastMark.title })}
       </Text>
-      <TodayAction label="Undo" variant="ghost" onPress={undoMark} accessibilityLabel={`Undo: ${lastMark.title}`} />
+      <TodayAction
+        label={tx('live.undo')}
+        variant="ghost"
+        onPress={undoMark}
+        accessibilityLabel={tx('live.undoA11y', { title: lastMark.title })}
+      />
     </View>
   ) : null;
 
   const timeline = (
     <DayTimelineList
-      heading={plan.dayIndex !== null ? `Day ${plan.dayIndex + 1} plan` : "Today's plan"}
+      heading={plan.dayIndex !== null ? tx('live.dayPlan', { day: plan.dayIndex + 1 }) : tx('live.todayPlan')}
       items={items}
       onToggle={toggle}
+      dayIndex={plan.dayIndex}
     />
   );
 
   const contextCard = (
     <View style={card}>
       <View style={[styles.row, { gap: t.spacing.sm }]}>
+        {plan.dayIndex !== null ? (
+          <View style={[styles.dayDot, { backgroundColor: dayColor(plan.dayIndex) }]} />
+        ) : null}
         <Text style={[t.typography.overline, styles.flex, { color: t.colors.textMuted }]}>
-          {plan.dayIndex !== null ? `Day ${plan.dayIndex + 1} of ${dayCount}` : 'Today'}
+          {plan.dayIndex !== null
+            ? tx('live.dayOf', { day: plan.dayIndex + 1, total: dayCount })
+            : tx('live.today')}
         </Text>
         {plan.weather ? <WeatherChip day={plan.weather} dayNumber={(plan.dayIndex ?? 0) + 1} /> : null}
       </View>
       <View style={[styles.row, styles.wrap, { gap: t.spacing.sm }]}>
         {canEdit ? (
-          <TodayAction label="Add expense" icon="wallet" onPress={() => setExpenseOpen(true)} />
+          <TodayAction label={tx('live.addExpense')} icon="wallet" onPress={() => setExpenseOpen(true)} />
         ) : null}
         <TodayAction
-          label="Packing"
+          label={tx('live.packing')}
           icon="luggage"
           variant="ghost"
           onPress={() => router.push({ pathname: '/trip/[id]/packing', params: { id: trip.id } })}
         />
         <TodayAction
-          label="Open trip"
+          label={tx('live.openTrip')}
           icon="chevron-right"
           variant="ghost"
           onPress={() => router.push({ pathname: '/trip/[id]', params: { id: trip.id } })}
-          accessibilityLabel={`Open ${trip.title}`}
+          accessibilityLabel={tx('live.openTripA11y', { title: trip.title })}
         />
       </View>
       {plan.weather ? (
-        <Text style={[t.typography.small, { color: t.colors.attribution }]}>Weather data by Open-Meteo.com</Text>
+        <Text style={[t.typography.small, { color: t.colors.attribution }]}>{tx('live.weatherCredit')}</Text>
       ) : null}
     </View>
   );
@@ -292,4 +311,5 @@ const styles = StyleSheet.create({
   main: { flex: 3, minWidth: 0 },
   side: { flex: 2, minWidth: 0 },
   undo: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1 },
+  dayDot: { width: 10, height: 10, borderRadius: 5 },
 });

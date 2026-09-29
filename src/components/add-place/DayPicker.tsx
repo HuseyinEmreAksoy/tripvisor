@@ -6,15 +6,10 @@
  * Day 1, Day 2, Day 3 and Ideas. `null` is the Ideas bucket (day_index NULL).
  */
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useTheme } from '@/theme';
-import { dayColor } from '@/components/Map/types';
+import { ON_DAY_COLOR, dayColor, useTheme } from '@/theme';
 
 // Guard against a garbage date range rendering hundreds of chips.
 export const MAX_PICKER_DAYS = 60;
-
-// Day palette colors are fixed (not themed) and designed for white labels —
-// same foreground the pre-extraction chips used.
-const ON_DAY_COLOR = '#FFFFFF';
 
 function parseIsoDateUtc(value: string | null | undefined): number | null {
   if (!value) return null;

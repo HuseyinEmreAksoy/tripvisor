@@ -29,7 +29,7 @@ import {
   useMap,
 } from '@vis.gl/react-google-maps';
 import Constants from 'expo-constants';
-import { dayColor, polylineColor, type MapViewProps, type MapPolyline } from './types';
+import { ON_DAY_COLOR, dayColor, polylineColor, type MapViewProps, type MapPolyline } from './types';
 import { MapUnavailable } from '../MapUnavailable';
 
 /**
@@ -98,7 +98,7 @@ export function GoogleMap(props: MapViewProps) {
               onClick={() => props.onMarkerPress?.(m.id)}
               title={m.title}
             >
-              <Pin background={dayColor(m.dayIndex)} borderColor="#111115" glyphColor="#FFFFFF" />
+              <Pin background={dayColor(m.dayIndex)} borderColor={ON_DAY_COLOR} glyphColor={ON_DAY_COLOR} />
             </AdvancedMarker>
           ))}
         </GMapView>

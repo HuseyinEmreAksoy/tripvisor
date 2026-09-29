@@ -7,10 +7,30 @@ import type { RouteRenderMode, TripLeg, Uuid } from './types';
 // `import { tripLegsKeys } from './routes'` call sites keep working.
 import { tripsKeys, tripPlacesKeys, tripLegsKeys } from './_keys';
 import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
+import { orderLegsForHopLookup, type OptimizeResultLegFields } from './routes.types';
 
 export { tripLegsKeys };
+// M5 Y2.3: per-leg transport modes (types + pure helpers, see routes.types.ts).
+export {
+  OPTIMIZE_CONTRACT_VERSION,
+  KEPT_ORDER_LEG_MODES,
+  dayLegsFor,
+  effectiveLegMode,
+  isDayLeg,
+  isEstimatedLeg,
+  isKeptOrderLegMode,
+  isUserTimedLeg,
+  keptOrderDaySet,
+  orderLegsForHopLookup,
+} from './routes.types';
+export type { OptimizeLegSources, OptimizeResultLegFields } from './routes.types';
 
-export interface OptimizeResult {
+/**
+ * optimize-trip success body. M5 Y2.3 (contractVersion 2) adds the optional
+ * {@link OptimizeResultLegFields} (`keptOrderDays`, `legSources`, `meta`);
+ * every pre-M5 field is unchanged.
+ */
+export interface OptimizeResult extends OptimizeResultLegFields {
   stateHash: string;
   days: Array<{ dayIndex: number; orderedPlaceIds: string[]; totalMinutes: number }>;
   placesUpdated: number;
@@ -55,7 +75,10 @@ export interface OptimizeResult {
  *   - `quota_exceeded`      — 429 — (audit #2) the caller's daily routing quota
  *                              (2000 billable elements per UTC day) is spent.
  *                              Not retryable today. See
- *                              {@link isRoutingQuotaExceeded}.
+ *                              {@link isRoutingQuotaExceeded}. M5 Y2.3: only
+ *                              the optimizer's (non-transit) matrix can fail
+ *                              this way; legs routed after the quota is gone
+ *                              are written as `source: 'estimate'` instead.
  *   - `not_authenticated`   — 401 — no signed-in user session
  *
  * Network-only failures (no envelope / parse failure) fall through to
@@ -96,7 +119,10 @@ export function useTripLegs(tripId: Uuid | undefined) {
         .select('*')
         .eq('trip_id', tripId);
       if (error) throw error;
-      return (data ?? []) as TripLeg[];
+      // M5 Y2.3: matrix-cache rows (day_index -1) first, day legs last, so
+      // from→to lookups with last-wins (computeDayTimeline) always pick the
+      // day leg, whose mode may differ from the cached day-default pair.
+      return orderLegsForHopLookup((data ?? []) as TripLeg[]);
     },
   });
 }
@@ -166,10 +192,15 @@ export function useAllTripLegs(tripIds: readonly Uuid[]) {
     refetchOnWindowFocus: false,
     queryFn: async () => {
       if (tripIds.length === 0) return [];
+      // M5 Y2.3: day legs only (day_index >= 0). optimize-trip also keeps
+      // one matrix-cache row per ordered place pair (day_index = -1, up to
+      // 600 per trip); summing those inflated the sort and could push the
+      // read past PostgREST's row cap.
       const { data, error } = await supabase
         .from('trip_legs')
         .select('trip_id, duration_seconds')
-        .in('trip_id', tripIds as Uuid[]);
+        .in('trip_id', tripIds as Uuid[])
+        .gte('day_index', 0);
       if (error) throw error;
       return (data ?? []) as TripLegDurationRow[];
     },

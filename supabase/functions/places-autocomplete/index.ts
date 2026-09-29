@@ -2,8 +2,13 @@
 // Deno / Supabase Edge Function
 //
 // Contract:
-//   POST { input: string, sessionToken: string, locationBias?: { lat, lng, radiusMeters? } }
+//   POST { input: string, sessionToken: string, locationBias?: { lat, lng, radiusMeters? },
+//          lang?: 'en' | 'tr' }
 //   -> { suggestions: [{ placeId, mainText, secondaryText }] }
+//
+// `lang` (M5 Y2.5, optional, default 'en'): the app language, sent to
+// Google as `languageCode` so suggestion texts come back in it. Any other
+// value is a 400 invalid_input.
 //
 // The sessionToken MUST be forwarded to the subsequent place-details call
 // by the client — otherwise Google bills both calls separately.
@@ -38,6 +43,7 @@ const BodySchema = z.object({
       radiusMeters: z.number().positive().max(50_000).optional(),
     })
     .optional(),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 const FIELD_MASK = [
@@ -161,6 +167,7 @@ export async function handler(req: Request): Promise<Response> {
         body: JSON.stringify({
           input: body.input,
           sessionToken: body.sessionToken,
+          languageCode: body.lang ?? 'en',
           ...(body.locationBias
             ? {
                 locationBias: {

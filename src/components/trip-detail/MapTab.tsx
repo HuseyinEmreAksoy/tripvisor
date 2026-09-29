@@ -17,7 +17,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 // import were named `Map`, TypeScript/Metro would resolve those call sites to
 // the React component and produce a runtime crash ("Cannot read properties of
 // undefined (reading 'markers')") on first render.
-import { Map as TripMap, decodePolyline, dayColor, type MapMarker, type MapPolyline } from '@/components/Map';
+import { Map as TripMap, decodePolyline, dayColor, DAY_NEUTRAL, type MapMarker, type MapPolyline } from '@/components/Map';
 import { useTheme } from '@/theme';
 import { Icon, type IconName } from '@/components/Icon';
 import { haptics } from '@/lib/haptics';
@@ -36,9 +36,9 @@ import { MapEmptyOverlay } from '@/components/Map/MapEmptyOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 // v2 P1.2: WALK connector steps of a multi-leg transit route render dashed
-// in a muted gray (same neutral as dayColor()'s unscheduled fallback) so the
+// in the day palette's neutral (DAY_NEUTRAL, also the unscheduled colour) so the
 // day-colored TRANSIT segments stay the visual spine of the route.
-const WALK_STEP_COLOR = '#8B8B93';
+const WALK_STEP_COLOR = DAY_NEUTRAL;
 
 /**
  * v2 P1.2: expand a transit leg's per-step geometry (TripLeg.transit_steps,

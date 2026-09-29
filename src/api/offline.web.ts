@@ -12,7 +12,14 @@ const PERSIST_ROOTS: ReadonlySet<string> = new Set([
   'trips',
   'trip-places',
   'trip-legs',
+  // M5 Y2.2 (ADR-0012 §4): FX rates are public ECB data (not Google), so the
+  // last-known rate map survives restarts — offline expense entry freezes
+  // from it. Successful queries only (see SUCCESS_ONLY_ROOTS).
+  'fx',
 ]);
+
+/** Roots persisted only in the `success` state: an error/pending FX entry must never rehydrate. */
+const SUCCESS_ONLY_ROOTS: ReadonlySet<string> = new Set(['fx']);
 
 /**
  * S2.8.11: roots whose DURABILITY moves to the Tier-1 sync store once the
@@ -44,6 +51,7 @@ export function shouldDehydrateQuery(query: Query): boolean {
   const root = query.queryKey[0];
   if (typeof root !== 'string') return false;
   if (!PERSIST_ROOTS.has(root)) return false;
+  if (SUCCESS_ONLY_ROOTS.has(root) && query.state?.status !== 'success') return false;
   if (TIER1_OWNED_ROOTS.has(root) && isTier1SyncActive() && !isTier1PersistenceDegraded()) {
     return false;
   }

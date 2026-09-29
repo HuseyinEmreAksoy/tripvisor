@@ -1,1 +1,36 @@
-{}
+{
+  "live": {
+    "untitled": "Place",
+    "loading": "Loading today’s plan",
+    "loadError": "Couldn’t load today’s plan.",
+    "retry": "Retry",
+    "markedDone": "{{title}} marked done",
+    "markedSkipped": "{{title}} skipped",
+    "undo": "Undo",
+    "undoA11y": "Undo: {{title}}",
+    "dayPlan": "Day {{day}} plan",
+    "todayPlan": "Today’s plan",
+    "dayOf": "Day {{day}} of {{total}}",
+    "today": "Today",
+    "addExpense": "Add expense",
+    "packing": "Packing",
+    "openTrip": "Open trip",
+    "openTripA11y": "Open {{title}}",
+    "weatherCredit": "Weather data by Open-Meteo.com"
+  },
+  "timeline": {
+    "checked": "{{done}}/{{total}} checked off",
+    "status": {
+      "done": "done",
+      "skipped": "skipped",
+      "open": "not done"
+    },
+    "rowA11y": "{{time}}, {{title}}, {{status}}",
+    "rowNextA11y": "{{time}}, {{title}}, {{status}}, next stop",
+    "hintReopen": "Tap to reopen",
+    "hintDone": "Tap to mark done",
+    "skipped": "Skipped",
+    "until": "until {{time}}",
+    "untilNext": "until {{time}} · next"
+  }
+}

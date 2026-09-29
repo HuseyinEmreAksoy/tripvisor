@@ -2,8 +2,12 @@
 // Deno / Supabase Edge Function
 //
 // Contract:
-//   POST { placeId: string, sessionToken?: string, fields?: string[] }
+//   POST { placeId: string, sessionToken?: string, fields?: string[], lang?: 'en' | 'tr' }
 //   -> { place: PlaceDetails }
+//
+// `lang` (M5 Y2.5, optional, default 'en'): the app language, sent to
+// Google as `languageCode` (names, addresses, hours and review text come
+// back in it where Google has them). Any other value is a 400 invalid_input.
 //
 // Reviews, photos, rating, hours etc. are returned live and MUST NOT be
 // persisted by the client beyond the React Query cache (Google ToS).
@@ -67,6 +71,7 @@ const BodySchema = z.object({
   placeId: z.string().min(1),
   sessionToken: z.string().uuid().optional(),
   fields: z.array(z.string()).optional(),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 interface GooglePlaceResponse {
@@ -202,6 +207,7 @@ export async function handler(req: Request): Promise<Response> {
     `https://places.googleapis.com/v1/places/${encodeURIComponent(body.placeId)}`,
   );
   if (body.sessionToken) placeUrl.searchParams.set('sessionToken', body.sessionToken);
+  placeUrl.searchParams.set('languageCode', body.lang ?? 'en');
 
   const start = Date.now();
   try {

@@ -4,7 +4,7 @@ Encoded polyline + total duration/distance for an ordered waypoint sequence
 (origin -> intermediates -> destination). Waypoint order is NEVER re-optimized
 here — the optimizer (or the user's manual order) already decided it.
 
-## Contract (provider-independent — clients cannot tell who served them)
+## Contract (provider-independent numbers; `provider` names the backend since M5 Y2.3)
 
 ```
 POST /functions/v1/directions-polyline
@@ -12,7 +12,8 @@ POST /functions/v1/directions-polyline
   "origin":        { "lat": number, "lng": number },
   "destination":   { "lat": number, "lng": number },
   "intermediates": [{ "lat": number, "lng": number }],   // 0..23 (25 waypoints total)
-  "mode": "driving" | "walking" | "transit" | "bicycling"
+  "mode": "driving" | "walking" | "transit" | "bicycling",
+  "perLeg": boolean                                    // M5 Y2.3, optional
 }
 -> 200 {
   "polyline": string | null,
@@ -24,7 +25,11 @@ POST /functions/v1/directions-polyline
     "travelMode": "WALK" | "TRANSIT",
     "lineName": string | null,            // nameShort ("M2") preferred over name; null for WALK
     "vehicleType": string | null          // Google enum verbatim (SUBWAY, BUS, TRAM, ...); null for WALK
-  }]
+  }],
+  // M5 Y2.3 — additive:
+  "provider": "ors" | "google",
+  "legs": [{ "polyline": string | null, "durationSeconds": number, "distanceMeters": number }],  // perLeg only
+  "noRoute": true                         // transit-no-route 200 fallback only
 }
 ```
 
@@ -48,6 +53,18 @@ POST /functions/v1/directions-polyline
   (jsonb, migration 0023), which the nightly 30-day TTL purge covers because
   it deletes whole rows. Non-transit modes never include the field and their
   FieldMask is unchanged.
+
+- **M5 Y2.3 — per-leg split (ADDITIVE):** with `perLeg: true` (non-transit),
+  the response adds `legs`, one entry per waypoint pair (waypoints - 1),
+  so `optimize-trip` can route a run of same-mode legs in ONE call and still
+  store one `trip_legs` row per leg. Google: the FieldMask gains
+  `routes.legs.{duration,distanceMeters,polyline.encodedPolyline}` (only
+  with intermediates). ORS: `segments[i]` give the numbers and `way_points`
+  slice the geometry (decode -> slice -> re-encode in integer E5, so the
+  characters are exactly the provider's). An inconsistent split is omitted,
+  never guessed; the caller then asks one leg per call. Quota units are
+  unchanged. `provider` is always present (`optimize-trip` records it as
+  `trip_legs.source`); `noRoute: true` marks the transit-no-route fallback.
 
 `GET ?ping=1` -> `{ ok: true, fn: "directions-polyline" }` (warmup / health).
 

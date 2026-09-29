@@ -1,20 +1,19 @@
 /**
  * Shared card chrome for the Today tab (v2 M4 X2.1) — one place for the
- * surface/border/radius/shadow tokens so every Today card reads as one set.
+ * surface/radius/padding so every Today card reads as one set.
+ * M5 Y2.4: built on the shared elevation scale (`surfaceStyle(t, 'raised')`):
+ * lighter than the old border + md shadow, same in every card list.
  */
-import { StyleSheet, type ViewStyle } from 'react-native';
-import { useTheme } from '@/theme';
+import type { ViewStyle } from 'react-native';
+import { surfaceStyle, useTheme } from '@/theme';
 
 export function useTodayCardStyle(): ViewStyle {
   const t = useTheme();
   return {
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    backgroundColor: t.colors.cardBgSolid,
-    borderColor: t.colors.border,
+    ...surfaceStyle(t, 'raised'),
     borderRadius: t.radius.xl,
-    padding: t.spacing.lg,
+    padding: t.layout.cardPadding,
     gap: t.spacing.md,
-    ...t.shadows.md(t.colors.shadowColor),
   };
 }
 

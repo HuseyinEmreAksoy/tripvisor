@@ -22,6 +22,11 @@
  * Desktop keeps the map + itinerary split; the hub replaces the old
  * Settings panel behind the "Trip" tab.
  *
+ * M5 Y2.4: TripHeader is a cover hero. On phones it collapses to the one-line
+ * bar when the Plan / Trip list scrolls (HeroScrollContext + useHeroCollapse)
+ * and always on the Map tab (the map needs the height); desktop shows it as
+ * a banner. Strings are translated (`trip:detail.*`, `trip:tabs.*`).
+ *
  * v1 parity (docs/v2/features.md §L): print + share + duplicate (⋯ menu),
  * .ics + delete (settings sheet), notes + reactions (itinerary / place
  * detail with trip context), account export (Profile tab).
@@ -36,7 +41,6 @@ import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { haptics } from '@/lib/haptics';
 import {
-  orderPlacesForDisplay,
   useDeleteTrip,
   useDuplicateTrip,
   useOptimizeTrip,
@@ -61,6 +65,8 @@ import { QuickAddFab, QuickAddSheet } from '@/components/trip-detail/QuickAddShe
 import { resolveTripTab, type TripTabKey } from '@/components/trip-detail/tripTabs';
 import { ActionErrorBanner } from '@/components/trip-detail/ActionErrorBanner';
 import { PlanSkeleton, TripDetailSkeleton } from '@/components/trip-detail/TripDetailSkeleton';
+import { HeroScrollContext, useHeroCollapse } from '@/components/trip-detail/heroCollapse';
+import { manualRankLayout } from '@/components/trip-detail/manualRankLayout';
 import { useT } from '@/i18n';
 
 // FAB (56) + its bottom offset — the hub and the Plan list pad by this so the last row clears it.
@@ -72,7 +78,7 @@ export default function TripDetail() {
   const router = useRouter();
   const goBack = useSafeBack('/trips');
   const t = useTheme();
-  const { t: tx } = useT('share');
+  const { t: tx } = useT(['trip', 'share']);
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
 
@@ -95,12 +101,20 @@ export default function TripDetail() {
     router.setParams({ tab: key });
   };
 
+  // Y2.4: phone hero collapse. A newly shown tab starts at its top, so the
+  // hero re-expands on every tab switch (the Map tab keeps it collapsed).
+  const hero = useHeroCollapse();
+  const resetHero = hero.reset;
+  useEffect(() => {
+    resetHero();
+  }, [tab, resetHero]);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   // Visible failures for Duplicate (menu already closed) and Delete (shown in the settings sheet).
-  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicateFailed, setDuplicateFailed] = useState(false);
   const [deleteError, setDeleteError] = useState<DeleteTripErrorKey | null>(null);
 
   // Phase 21 Step 21.10/21.11: Role-gating for budget + accommodation + collaborators.
@@ -139,7 +153,7 @@ export default function TripDetail() {
   // reorderDay RPC is retired), so order_in_day stops changing on drag —
   // keying manual-mode layout on it would never recompute legs after a
   // drag. Flag-on + manual, `layout` instead derives from the rank-ordered
-  // per-day place-id SEQUENCE (manualRankLayout below). Loop safety (the
+  // per-day place-id SEQUENCE (manualRankLayout). Loop safety (the
   // High risk this step flags): the manual-mode optimize writes derived
   // order_in_day back, but that write cannot re-change the key because the
   // key never reads order_in_day VALUES — only the sequence, which the Edge
@@ -193,16 +207,16 @@ export default function TripDetail() {
   if (error) {
     return (
       <Screen>
-        <Heading level={2}>{"Couldn't load this trip"}</Heading>
+        <Heading level={2}>{tx('detail.loadError')}</Heading>
         <Text
           accessibilityLiveRegion="polite"
           style={[t.typography.body, { color: t.colors.textMuted, marginBottom: t.spacing.md }]}
         >
-          {error.message || 'Something went wrong. Check your connection and try again.'}
+          {error.message || tx('detail.loadErrorBody')}
         </Text>
         <View style={{ gap: t.spacing.sm }}>
-          <Button label="Retry" onPress={() => refetch()} accessibilityLabel="Retry loading this trip" />
-          <Button variant="secondary" label="Back to trips" onPress={() => router.replace('/trips')} />
+          <Button label={tx('detail.retry')} onPress={() => refetch()} accessibilityLabel={tx('detail.retryA11y')} />
+          <Button variant="secondary" label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />
         </View>
       </Screen>
     );
@@ -211,8 +225,8 @@ export default function TripDetail() {
   if (!trip) {
     return (
       <Screen>
-        <Heading level={2}>Trip not found</Heading>
-        <Button label="Back to trips" onPress={() => router.replace('/trips')} />
+        <Heading level={2}>{tx('detail.notFound')}</Heading>
+        <Button label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />
       </Screen>
     );
   }
@@ -242,7 +256,7 @@ export default function TripDetail() {
     router.replace('/trips');
   };
   const handleDuplicate = async () => {
-    setDuplicateError(null);
+    setDuplicateFailed(false);
     try {
       const newTripId = await duplicateTrip.mutateAsync(trip.id);
       haptics.success();
@@ -250,7 +264,7 @@ export default function TripDetail() {
     } catch {
       haptics.error();
       // The menu has already closed, so surface the failure on the screen.
-      setDuplicateError("Couldn't duplicate this trip. Check your connection and try again.");
+      setDuplicateFailed(true);
     }
   };
 
@@ -267,10 +281,14 @@ export default function TripDetail() {
       onPrint={() => router.push(`/trip/${trip.id}/print`)}
       onOpenMenu={() => setMenuOpen(true)}
       compact={!isDesktop}
+      collapsed={!isDesktop && (tab === 'map' || hero.collapsed)}
     />
   );
   const actionError = (
-    <ActionErrorBanner message={duplicateError} onDismiss={() => setDuplicateError(null)} />
+    <ActionErrorBanner
+      message={duplicateFailed ? tx('detail.duplicateError') : null}
+      onDismiss={() => setDuplicateFailed(false)}
+    />
   );
 
   const mapTab = (
@@ -366,15 +384,15 @@ export default function TripDetail() {
         deleting={deleteTrip.isPending}
         deleteError={deleteError}
       />
-      <BottomSheet visible={shareOpen} onClose={() => setShareOpen(false)} accessibilityLabel="Share trip">
-        <Heading level={3}>Share this trip</Heading>
+      <BottomSheet visible={shareOpen} onClose={() => setShareOpen(false)} accessibilityLabel={tx('menu.share')}>
+        <Heading level={3}>{tx('detail.shareTitle')}</Heading>
         {/* Audit #5: public links are owner-only (editors get 403 `not_owner`). */}
         {isOwner ? (
           <ShareLinkCard tripId={trip.id} tripTitle={trip.title} />
         ) : (
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('link.ownerOnly')}</Text>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('share:link.ownerOnly')}</Text>
         )}
-        <Button variant="ghost" label="Close" onPress={() => setShareOpen(false)} />
+        <Button variant="ghost" label={tx('detail.close')} onPress={() => setShareOpen(false)} />
       </BottomSheet>
     </>
   );
@@ -393,8 +411,8 @@ export default function TripDetail() {
           activeKey={showHub ? 'trip' : 'plan'}
           onSelect={selectTab}
           tabs={[
-            { key: 'plan', label: 'Map & Itinerary' },
-            { key: 'trip', label: 'Trip' },
+            { key: 'plan', label: tx('tabs.planMap') },
+            { key: 'trip', label: tx('tabs.trip') },
           ]}
         />
 
@@ -421,52 +439,28 @@ export default function TripDetail() {
 
   // ── Phone / tablet: Plan · Map · Trip ────────────────────────────────────
   return (
-    <Screen padded={false}>
-      {pageHeader}
-      {actionError}
+    <HeroScrollContext.Provider value={hero.report}>
+      <Screen padded={false}>
+        {pageHeader}
+        {actionError}
 
-      <TabBar<TripTabKey>
-        activeKey={tab}
-        onSelect={selectTab}
-        tabs={[
-          { key: 'plan', label: 'Plan' },
-          { key: 'map', label: 'Map' },
-          { key: 'trip', label: 'Trip' },
-        ]}
-      />
+        <TabBar<TripTabKey>
+          activeKey={tab}
+          onSelect={selectTab}
+          tabs={[
+            { key: 'plan', label: tx('tabs.plan') },
+            { key: 'map', label: tx('tabs.map') },
+            { key: 'trip', label: tx('tabs.trip') },
+          ]}
+        />
 
-      <View style={{ flex: 1 }}>
-        {tab === 'map' ? mapTab : tab === 'plan' ? itineraryTab : hubTab}
-      </View>
-      {overlays}
-    </Screen>
+        <View style={{ flex: 1 }}>
+          {tab === 'map' ? mapTab : tab === 'plan' ? itineraryTab : hubTab}
+        </View>
+        {overlays}
+      </Screen>
+    </HeroScrollContext.Provider>
   );
-}
-
-/**
- * v2 S2.8.7: the flag-on manual-mode layout key — per scheduled day, the
- * rank-ordered place-id chain (via orderPlacesForDisplay, the same canonical
- * rule ItineraryTab renders with and optimize-trip's manual branch persists
- * from). Ideas (day_index NULL) are excluded: the optimizer skips them, so
- * their internal order can never affect legs (entering/leaving Ideas still
- * changes a day's chain, which is what matters). Derived from the id
- * SEQUENCE only — never from order_in_day values — so the optimizer writing
- * derived order_in_day back cannot re-change the key (auto-optimize loop
- * guard). Output is deterministic: days ascending, ids joined in display
- * order.
- */
-function manualRankLayout(places: TripPlace[]): string[] {
-  const ordered = orderPlacesForDisplay(places, 'manual', true);
-  const chains = new Map<number, string[]>();
-  for (const p of ordered) {
-    if (p.day_index === null) continue;
-    const chain = chains.get(p.day_index);
-    if (chain) chain.push(p.id);
-    else chains.set(p.day_index, [p.id]);
-  }
-  return [...chains.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([day, ids]) => `${day}:${ids.join('>')}`);
 }
 
 // ── Desktop side-by-side panel styles ────────────────────────────────────────

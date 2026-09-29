@@ -56,9 +56,29 @@
  *   n4.    A currency-less create (pre-M5 client shape) is filled server-side
  *          (0034 §3d: trip home currency @ 1) and the create-ack merges the
  *          filled values back into the store.
+ *   n5.    (M5 Y2.2) The money lib against a live pending row: convertExpense
+ *          keeps it pending (never 1:1), planRateFills groups it, the
+ *          reconciler's rateFillPatch goes through updateExpense to the server,
+ *          and a fresh hydration converts it with the frozen rate.
  *   o1–o2. Per-leg modes: updatePlace({arrival_mode, arrival_minutes}) reaches
  *          the server with optimizer order untouched (C1); a fresh hydration
  *          carries arrival_mode/arrival_minutes and trip_days.transport_mode.
+ *
+ * M5 Y2.1 (appended; contract proofs for the memory roots 0036/0038):
+ *   p1–p3. Journal through src/sync/memories.ts: create (client id, author
+ *          stamped, private by default) → edit + share after ack →
+ *          tombstone (fresh hydration excludes it).
+ *   p4–p5. Review: create with the user's own stars (server stamps the place
+ *          snapshots, merged back on ack); a second create for the same place
+ *          supersedes the first server-side AND in the store.
+ *   p6–p8. Photo: the REAL upload queue (memories.upload-queue.ts) inserts the
+ *          row, uploads the EXIF-stripped fixture to the returned paths and
+ *          marks it ready; the Tier-1 root receives it; visibility is shared
+ *          through Tier-1 (server-owned columns untouched); tombstone + file
+ *          deletion removes both objects.
+ *   p9.    Author scoping: a trip-mate's SHARED journal entry is visible to
+ *          the smoke user under RLS (Tier-2) but never enters its Tier-1
+ *          replica.
  *
  * If a FAILURE traces to the beta plugin's write path itself, the verdict is
  * "ABORT GATE TRIPPED" (R6): stop, fall back to the named hand-rolled
@@ -136,8 +156,19 @@ const S2812_DESC = {
   n2: 'expense currency edit after ack: currency + fx_rate + fx_date change reaches the server; trip_id + created_at unchanged',
   n3: 'rate-pending create (fx_rate null) → reconciler update fills fx_rate server-side; fresh hydration carries all 4 money fields',
   n4: 'currency-less create (pre-M5 shape) → server fills the trip home currency @ 1; the create-ack merges it into the store',
+  n5: 'Y2.2 money lib: a pending row converts as pending (not 1:1) → planRateFills groups it → rateFillPatch via updateExpense reaches the server → fresh hydration converts with the frozen rate',
   o1: 'arrival_mode write: updatePlace({arrival_mode, arrival_minutes}) → server row updated; day_index/order_in_day untouched (C1)',
   o2: 'fresh hydration carries trip_places.arrival_mode/arrival_minutes + trip_days.transport_mode',
+  // M5 Y2.1 — memory roots (0036/0038) through src/sync/memories.ts + the upload queue
+  p1: 'journal create: memories.createJournalEntry → server row (client id, author = me, visibility only_me, server-stamped created_at)',
+  p2: 'journal edit + share after ack: body + visibility=trip reach the server; created_at/author unchanged',
+  p3: 'journal tombstone: server deleted=true (row kept) + fresh hydration excludes it',
+  p4: 'review create: own 1–5 stars → server row; server-stamped place_name_snapshot merged into the store on ack',
+  p5: 'review supersede: a 2nd create for the same place tombstones the 1st server-side and in the store',
+  p6: 'photo upload queue: row pending → both EXIF-free files at the RETURNED paths → ready; Tier-1 receives the row',
+  p7: 'photo visibility via Tier-1: server visibility=trip; status/bytes/storage_path untouched (server-owned)',
+  p8: 'photo tombstone + file deletion: server deleted=true and both Storage objects removed',
+  p9: "author scoping: a trip-mate's SHARED entry is RLS-visible (Tier-2) but never enters the Tier-1 replica",
 };
 
 /** Fail every id in `ids` that has not produced a result yet (block-level
@@ -204,7 +235,7 @@ function getLocalStack() {
 const SMOKE_EMAIL = process.env.SMOKE_EMAIL ?? 'smoke-phase6@test.local';
 const SMOKE_PASSWORD = process.env.SMOKE_PASSWORD ?? 'pw-tripvisor-e2e-1234';
 
-async function ensureSmokeUser({ url, serviceKey }) {
+async function ensureSmokeUser({ url, serviceKey }, email = SMOKE_EMAIL) {
   const headers = {
     apikey: serviceKey,
     Authorization: `Bearer ${serviceKey}`,
@@ -213,15 +244,15 @@ async function ensureSmokeUser({ url, serviceKey }) {
   const createRes = await fetch(`${url}/auth/v1/admin/users`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ email: SMOKE_EMAIL, email_confirm: true, password: SMOKE_PASSWORD }),
+    body: JSON.stringify({ email, email_confirm: true, password: SMOKE_PASSWORD }),
   });
   if (!createRes.ok && createRes.status !== 422 && createRes.status !== 409) {
     throw new Error(`admin user create failed: HTTP ${createRes.status} ${await createRes.text()}`);
   }
-  const listRes = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(SMOKE_EMAIL)}`, { headers });
+  const listRes = await fetch(`${url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, { headers });
   const listJson = await listRes.json();
-  const user = (listJson.users ?? []).find((u) => u.email === SMOKE_EMAIL);
-  if (!user) throw new Error(`smoke user not found after create: ${SMOKE_EMAIL}`);
+  const user = (listJson.users ?? []).find((u) => u.email === email);
+  if (!user) throw new Error(`smoke user not found after create: ${email}`);
   // Idempotent password reset (the user may predate this script with another pw).
   const updRes = await fetch(`${url}/auth/v1/admin/users/${user.id}`, {
     method: 'PUT',
@@ -281,6 +312,8 @@ function loadSyncModules() {
     order: require(path.join(ROOT, 'src', 'sync', 'order.ts')),
     rank: require(path.join(ROOT, 'src', 'sync', 'rank.ts')),
     allowlist: require(path.join(ROOT, 'src', 'sync', 'allowlist.ts')),
+    // M5 Y2.1 — memory mutations (same cache generation as store/hydrate).
+    memories: require(path.join(ROOT, 'src', 'sync', 'memories.ts')),
   };
 }
 
@@ -328,6 +361,7 @@ async function main() {
   const pruneTripId = randomUUID();
   let rankTripId = null; // minted by mutations.createTrip inside block i
   let ledgerTripId = null; // minted by mutations.createTrip inside block l (X2.5)
+  const memoryObjectPaths = []; // M5 Y2.1: Storage objects to remove at cleanup (block p)
 
   /** Purge + reload the real src/sync modules and boot a brand-new engine
    * instance (the "fresh instance" the hydration proofs need). The previous
@@ -972,7 +1006,7 @@ async function main() {
     console.log('── M5 Y1.1 money + leg-mode proofs ──');
 
     if (!live) {
-      failRemaining(new Error('skipped — no live ledger instance (see l)'), ['n1', 'n2', 'n3', 'n4', 'o1', 'o2']);
+      failRemaining(new Error('skipped — no live ledger instance (see l)'), ['n1', 'n2', 'n3', 'n4', 'n5', 'o1', 'o2']);
     }
 
     // ── n. multi-currency expenses ───────────────────────────────────────
@@ -1103,6 +1137,61 @@ async function main() {
       } catch (err) {
         failRemaining(err, ['n4']);
       }
+
+      // ── n5. M5 Y2.2: the money lib plans + validates a real pending fill ──
+      try {
+        const m = live.sync.mutations;
+        const money = require(path.join(ROOT, 'src', 'lib', 'money', 'index.ts'));
+        const home = (await service.from('trips').select('currency').eq('id', ledgerTripId).single()).data.currency;
+        const foreign = home === 'EUR' ? 'USD' : 'EUR';
+        const fxDate = '2026-07-05';
+        const y22Id = m.createExpense({
+          trip_id: ledgerTripId,
+          category: 'food',
+          amount: 8.4,
+          kind: 'actual',
+          label: `${runTag} pending (Y2.2 reconcile plan)`,
+          currency: foreign,
+          fx_rate: null,
+          fx_date: fxDate,
+          fx_home_currency: home,
+        });
+        await waitFor('Y2.2 pending expense create-ack', () => live.store.tripExpenses[y22Id].created_at.get());
+        const before = live.store.tripExpenses[y22Id].get();
+        // No rate table passed: a pending row must stay pending (never 1:1).
+        const beforeConv = money.convertExpense(before, { home });
+        const plan = money.planRateFills([before], () => home, { today: money.localIsoDate() });
+        const group = plan[0];
+        // The reconciler's exact write (src/api/expense-fx.ts writeRateFill).
+        m.updateExpense(y22Id, money.rateFillPatch(0.9123, group.date, home), 'Fill exchange rate');
+        const server = await waitFor('Y2.2 reconciled rate on server', async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', y22Id).maybeSingle();
+          return data && Number(data.fx_rate) === 0.9123 ? data : undefined;
+        });
+        const inst = await freshLedgerInstance('n5');
+        const after = money.convertExpense(inst.store.tripExpenses[y22Id].get(), { home });
+        const afterExact = after.status === 'converted' ? money.toPlainString(after.homeAmount) : '';
+        check(
+          'n5',
+          S2812_DESC.n5,
+          beforeConv.status === 'pending' &&
+            beforeConv.reason === 'rate_pending' &&
+            plan.length === 1 &&
+            group.from === foreign &&
+            group.to === home &&
+            group.date === fxDate &&
+            group.ids.length === 1 &&
+            group.ids[0] === y22Id &&
+            server.fx_date === fxDate &&
+            server.fx_home_currency === home &&
+            after.status === 'converted' &&
+            after.method === 'frozen' &&
+            afterExact === '7.66332',
+          `before=${beforeConv.status}/${beforeConv.reason ?? '-'} plan=${JSON.stringify(plan)} server=${server.fx_rate}@${server.fx_date}→${server.fx_home_currency} after=${after.status}/${after.method ?? '-'} ${afterExact}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['n5']);
+      }
     }
 
     // ── o. per-leg modes ────────────────────────────────────────────────
@@ -1161,10 +1250,283 @@ async function main() {
         failRemaining(err, ['o1', 'o2']);
       }
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // M5 Y2.1 — memory roots (p). Not R6 ids.
+    // ════════════════════════════════════════════════════════════════════
+
+    console.log('── M5 Y2.1 memory proofs ──');
+    const P_IDS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9'];
+    if (!live) {
+      failRemaining(new Error('skipped — no live ledger instance (see l)'), P_IDS);
+    }
+
+    /** Fresh instance whose three memory roots have finished loading. */
+    async function freshMemoryInstance(label) {
+      const inst = await freshInstance(label);
+      await waitFor(`${label}: journal loaded`, () => syncState(inst.store.tripJournalEntries).isLoaded.get());
+      await waitFor(`${label}: reviews loaded`, () => syncState(inst.store.tripPlaceReviews).isLoaded.get());
+      await waitFor(`${label}: photos loaded`, () => syncState(inst.store.tripPhotos).isLoaded.get());
+      return inst;
+    }
+
+    // ── p1–p3. journal ──────────────────────────────────────────────────
+    if (live) {
+      try {
+        const mm = live.sync.memories;
+        const jId = mm.createJournalEntry({ trip_id: ledgerTripId, day_index: 1, body: `${runTag} arrived` });
+        const row = await waitFor(`journal ${jId} on server`, async () => {
+          const { data } = await service.from('trip_journal_entries').select('*').eq('id', jId).maybeSingle();
+          return data ?? undefined;
+        });
+        check(
+          'p1',
+          S2812_DESC.p1,
+          row.author_id === userId &&
+            row.trip_id === ledgerTripId &&
+            row.visibility === 'only_me' &&
+            row.body === `${runTag} arrived` &&
+            row.day_index === 1 &&
+            row.deleted === false &&
+            row.created_at != null,
+          `author=${row.author_id === userId ? 'me' : row.author_id} visibility=${row.visibility} created_at=${row.created_at}`,
+        );
+        await waitFor('journal create-ack', () => live.store.tripJournalEntries[jId].created_at.get());
+
+        mm.updateJournalEntry(jId, { body: `${runTag} arrived (edited)`, visibility: 'trip' });
+        const edited = await waitFor('journal edit on server', async () => {
+          const { data } = await service.from('trip_journal_entries').select('*').eq('id', jId).maybeSingle();
+          return data && data.visibility === 'trip' ? data : undefined;
+        });
+        check(
+          'p2',
+          S2812_DESC.p2,
+          edited.body === `${runTag} arrived (edited)` && edited.created_at === row.created_at && edited.author_id === userId,
+          `visibility=${edited.visibility} created_at ${row.created_at} → ${edited.created_at}`,
+        );
+
+        mm.tombstoneJournalEntry(jId);
+        await waitFor('journal tombstone on server', async () => {
+          const { data } = await service.from('trip_journal_entries').select('deleted').eq('id', jId).maybeSingle();
+          return data?.deleted === true;
+        });
+        const inst = await freshMemoryInstance('p3');
+        const ghost = inst.store.tripJournalEntries[jId].get();
+        check('p3', S2812_DESC.p3, ghost === undefined, `fresh store row=${JSON.stringify(ghost) ?? 'undefined'}`);
+      } catch (err) {
+        failRemaining(err, ['p1', 'p2', 'p3']);
+      }
+    }
+
+    // ── p4–p5. reviews ──────────────────────────────────────────────────
+    if (live) {
+      try {
+        const m = live.sync.mutations;
+        const mm = live.sync.memories;
+        const memPlaceId = m.createPlace({
+          trip_id: ledgerTripId,
+          google_place_id: 'sync-validate-review',
+          lat: 41.0256,
+          lng: 28.9742,
+          user_title: `${runTag} Galata`,
+        });
+        await waitFor('review place create-ack', () => live.store.tripPlaces[memPlaceId].created_at.get());
+
+        const r1 = mm.createPlaceReview({ trip_id: ledgerTripId, trip_place_id: memPlaceId, rating: 4, body: `${runTag} great view` });
+        const row = await waitFor(`review ${r1} on server`, async () => {
+          const { data } = await service.from('trip_place_reviews').select('*').eq('id', r1).maybeSingle();
+          return data ?? undefined;
+        });
+        const merged = await waitFor('review snapshot merged into the store on ack', () => {
+          const r = live.store.tripPlaceReviews[r1].get();
+          return r && r.created_at && r.place_name_snapshot ? r : undefined;
+        });
+        check(
+          'p4',
+          S2812_DESC.p4,
+          row.rating === 4 &&
+            row.author_id === userId &&
+            row.visibility === 'only_me' &&
+            row.place_name_snapshot === `${runTag} Galata` &&
+            row.place_google_id_snapshot === 'sync-validate-review' &&
+            merged.place_name_snapshot === `${runTag} Galata`,
+          `rating=${row.rating} snapshot=${row.place_name_snapshot} / ${row.place_google_id_snapshot}`,
+        );
+
+        const r2 = mm.createPlaceReview({ trip_id: ledgerTripId, trip_place_id: memPlaceId, rating: 2, body: `${runTag} changed my mind` });
+        const localFirstDeleted = live.store.tripPlaceReviews[r1].deleted.peek() === true || live.store.tripPlaceReviews[r1].peek() === undefined;
+        const both = await waitFor('supersede on server', async () => {
+          const { data } = await service.from('trip_place_reviews').select('id, deleted, rating').in('id', [r1, r2]);
+          const a = data?.find((d) => d.id === r1);
+          const b = data?.find((d) => d.id === r2);
+          return a && b && a.deleted === true && b.deleted === false ? { a, b } : undefined;
+        });
+        const liveOwn = mm.findOwnLiveReview(memPlaceId);
+        check(
+          'p5',
+          S2812_DESC.p5,
+          localFirstDeleted && both.b.rating === 2 && liveOwn?.id === r2,
+          `local first deleted=${localFirstDeleted} server first deleted=${both.a.deleted} live=${liveOwn?.id === r2 ? 'r2' : liveOwn?.id}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['p4', 'p5']);
+      }
+    }
+
+    // ── p6–p8. photos: the real upload queue + Tier-1 update root ──────
+    if (live) {
+      let queue = null;
+      try {
+        const { PhotoUploadQueue } = require(path.join(ROOT, 'src', 'api', 'memories.upload-queue.ts'));
+        const { createMemoryBlobStore } = require(path.join(ROOT, 'src', 'lib', 'photos', 'blobStore.types.ts'));
+        const exif = require(path.join(ROOT, 'src', 'lib', 'photos', 'exif.ts'));
+        const mm = live.sync.memories;
+        const fixture = new Uint8Array(
+          fs.readFileSync(path.join(ROOT, 'src', 'lib', 'photos', '__tests__', 'fixtures', 'gps-exif.jpg')),
+        );
+        const clean = exif.stripJpegMetadata(fixture);
+        const kv = new Map();
+        queue = new PhotoUploadQueue({
+          client: userClient,
+          kv: { getItem: async (k) => kv.get(k) ?? null, setItem: async (k, v) => void kv.set(k, v) },
+          blobs: createMemoryBlobStore(),
+        });
+        await queue.start(userId);
+        const photoId = randomUUID();
+        await queue.enqueue({
+          id: photoId,
+          tripId: ledgerTripId,
+          dayIndex: 1,
+          prepared: {
+            full: { bytes: clean, width: 320, height: 240, quality: 0.75 },
+            thumb: { bytes: clean, width: 320, height: 240, quality: 0.7 },
+            takenAt: '2026-07-14T12:30:00.000Z',
+          },
+        });
+        const ready = await waitFor(
+          'photo ready on server',
+          async () => {
+            const { data } = await service.from('trip_photos').select('*').eq('id', photoId).maybeSingle();
+            return data && data.status === 'ready' ? data : undefined;
+          },
+          30000,
+        );
+        memoryObjectPaths.push(ready.storage_path, ready.thumb_path);
+        const dl = await service.storage.from('trip-memories').download(ready.storage_path);
+        if (dl.error) throw new Error(`download: ${dl.error.message}`);
+        const report = exif.inspectJpeg(new Uint8Array(await dl.data.arrayBuffer()));
+        live.sync.hydrate.resyncTier1();
+        const t1 = await waitFor('photo row reaches Tier-1 (ready)', () => {
+          const r = live.store.tripPhotos[photoId].get();
+          return r && r.status === 'ready' ? r : undefined;
+        });
+        check(
+          'p6',
+          S2812_DESC.p6,
+          ready.storage_path === `${ledgerTripId}/${userId}/${photoId}.jpg` &&
+            ready.thumb_path === `${ledgerTripId}/${userId}/${photoId}_t.jpg` &&
+            ready.bytes > 0 &&
+            ready.thumb_bytes > 0 &&
+            ready.visibility === 'only_me' &&
+            ready.taken_at != null &&
+            report.isJpeg &&
+            !report.hasExif &&
+            !report.hasGps &&
+            t1.storage_path === ready.storage_path &&
+            queue.getSnapshot().jobs.length === 0,
+          `bytes=${ready.bytes}/${ready.thumb_bytes} exifInStorage=${report.hasExif} gps=${report.hasGps} tier1=${t1.status}`,
+        );
+
+        mm.setMemoryVisibility([{ kind: 'photo', id: photoId }], 'trip');
+        const shared = await waitFor('photo visibility on server', async () => {
+          const { data } = await service.from('trip_photos').select('*').eq('id', photoId).maybeSingle();
+          return data && data.visibility === 'trip' ? data : undefined;
+        });
+        check(
+          'p7',
+          S2812_DESC.p7,
+          shared.status === 'ready' &&
+            shared.bytes === ready.bytes &&
+            shared.thumb_bytes === ready.thumb_bytes &&
+            shared.storage_path === ready.storage_path &&
+            shared.created_at === ready.created_at,
+          `visibility=${shared.visibility} status=${shared.status} bytes=${shared.bytes}`,
+        );
+
+        const undo = mm.tombstonePhoto(photoId, 'Remove photo', { canRestore: () => queue.cancelObjectDeletion(photoId) });
+        queue.scheduleObjectDeletion({ id: photoId, storage_path: ready.storage_path, thumb_path: ready.thumb_path }, 0);
+        await waitFor('photo tombstone on server', async () => {
+          const { data } = await service.from('trip_photos').select('deleted').eq('id', photoId).maybeSingle();
+          return data?.deleted === true;
+        });
+        await waitFor('both photo objects removed', async () => {
+          const { data } = await service.storage.from('trip-memories').list(`${ledgerTripId}/${userId}`, { limit: 100 });
+          return !(data ?? []).some((o) => o.name.startsWith(photoId));
+        });
+        let undoRefused = false;
+        try {
+          await undo.inverse();
+        } catch {
+          undoRefused = true;
+        }
+        check('p8', S2812_DESC.p8, undoRefused, 'server deleted=true, objects gone, undo refused after the files were removed');
+      } catch (err) {
+        failRemaining(err, ['p6', 'p7', 'p8']);
+      } finally {
+        queue?.stop();
+      }
+    }
+
+    // ── p9. author scoping ──────────────────────────────────────────────
+    if (live) {
+      try {
+        const friendEmail = 'smoke-friend-y21@test.local';
+        const friendId = await ensureSmokeUser(stack, friendEmail);
+        const col = await service.from('trip_collaborators').insert({
+          trip_id: ledgerTripId,
+          invitee_email: friendEmail,
+          user_id: friendId,
+          role: 'viewer',
+          status: 'accepted',
+          accepted_at: new Date().toISOString(),
+        });
+        if (col.error) throw new Error(`collaborator: ${col.error.message}`);
+        const friendClient = createClient(stack.url, stack.anonKey, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        });
+        const fSign = await friendClient.auth.signInWithPassword({ email: friendEmail, password: SMOKE_PASSWORD });
+        if (fSign.error) throw new Error(`friend sign-in: ${fSign.error.message}`);
+        const fj = randomUUID();
+        const ins = await friendClient
+          .from('trip_journal_entries')
+          .insert({ id: fj, trip_id: ledgerTripId, day_index: 1, body: `${runTag} friend shared`, visibility: 'trip' });
+        if (ins.error) throw new Error(`friend insert: ${ins.error.message}`);
+        const tier2 = await userClient.from('trip_journal_entries').select('id, author_id').eq('id', fj).maybeSingle();
+        live.sync.hydrate.resyncTier1();
+        const inst = await freshMemoryInstance('p9');
+        await new Promise((r) => setTimeout(r, 1500)); // give realtime a chance to (wrongly) deliver
+        const inLive = live.store.tripJournalEntries[fj].get();
+        const inFresh = inst.store.tripJournalEntries[fj].get();
+        check(
+          'p9',
+          S2812_DESC.p9,
+          tier2.data?.id === fj && tier2.data?.author_id === friendId && inLive === undefined && inFresh === undefined,
+          `tier2 sees it=${tier2.data?.id === fj} liveTier1=${inLive === undefined ? 'absent' : 'PRESENT'} freshTier1=${inFresh === undefined ? 'absent' : 'PRESENT'}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['p9']);
+      }
+    }
   } finally {
     // ── cleanup: this run's rows + any strays from prior runs ───────────
     try {
+      if (memoryObjectPaths.length > 0) {
+        await service.storage.from('trip-memories').remove(memoryObjectPaths);
+      }
       const sweep = async (tid) => {
+        await service.from('trip_photos').delete().eq('trip_id', tid);
+        await service.from('trip_place_reviews').delete().eq('trip_id', tid);
+        await service.from('trip_journal_entries').delete().eq('trip_id', tid);
         await service.from('trip_places').delete().eq('trip_id', tid);
         await service.from('trip_expenses').delete().eq('trip_id', tid);
         await service.from('trip_packing_items').delete().eq('trip_id', tid);

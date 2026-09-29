@@ -7,7 +7,8 @@
 //     destinations: [{ lat, lng }],
 //     mode: 'driving' | 'walking' | 'transit' | 'bicycling'
 //   }
-//   -> { legs: [{ fromIndex, toIndex, durationSeconds, distanceMeters }] }
+//   -> { legs: [{ fromIndex, toIndex, durationSeconds, distanceMeters }],
+//        provider: 'ors' | 'google' }        // M5 Y2.3 (additive)
 //
 // Phase 23 Step 23.1: 'bicycling' joins the enum in lockstep with the
 // trips CHECK in migration 0016, the directions-polyline Edge Function,
@@ -29,17 +30,27 @@
 // DAILY_QUOTA.routing_elements per user per UTC day (-> 429
 // quota_exceeded). optimize-trip calls this function with the CALLER's
 // Authorization header, so optimizer runs are metered to the right user.
+//
+// M5 Y2.3 (ADDITIVE): the response names the backend that answered
+// (`provider`), so optimize-trip can record trip_legs.source on the matrix
+// cache rows it writes. Older callers ignore the field.
 
+// @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import {
   consumeQuota,
   describeInvalidInput,
   quotaDeniedResponse,
   requireUser,
+  // @ts-ignore -- Deno `.ts`-suffixed import
 } from '../_shared/auth.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { handlePreflight } from '../_shared/cors.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { log, newRequestId } from '../_shared/logger.ts';
 import {
   ORS_BASE_URL,
@@ -49,6 +60,7 @@ import {
   type OrsRoutableMode,
   resolveRoutingProvider,
   tryOrs,
+  // @ts-ignore -- Deno `.ts`-suffixed import
 } from '../_shared/routing.ts';
 
 const TIMEOUT_MS = 10_000;
@@ -67,7 +79,13 @@ const BodySchema = z.object({
   mode: z.enum(['driving', 'walking', 'transit', 'bicycling']),
 });
 
-const MODE_MAP: Record<z.infer<typeof BodySchema>['mode'], string> = {
+type Body = {
+  origins: Array<{ lat: number; lng: number }>;
+  destinations: Array<{ lat: number; lng: number }>;
+  mode: 'driving' | 'walking' | 'transit' | 'bicycling';
+};
+
+const MODE_MAP: Record<Body['mode'], string> = {
   driving: 'DRIVE',
   walking: 'WALK',
   transit: 'TRANSIT',
@@ -101,6 +119,7 @@ export async function handler(req: Request): Promise<Response> {
   const auth = await requireUser(req, { fn: 'distance-matrix', requestId, origin });
   if (!auth.ok) return auth.response;
 
+  // @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'distance-matrix', level: 'error', err: 'missing_server_key' });
@@ -112,7 +131,7 @@ export async function handler(req: Request): Promise<Response> {
     );
   }
 
-  let body: z.infer<typeof BodySchema>;
+  let body: Body;
   try {
     body = BodySchema.parse(await req.json());
   } catch (err) {
@@ -154,7 +173,7 @@ export async function handler(req: Request): Promise<Response> {
       const ors = await tryOrs({
         requestId,
         fn: 'distance-matrix',
-        call: (orsKey) => orsMatrix(body, routable, orsKey),
+        call: (orsKey: string) => orsMatrix(body, routable, orsKey),
       });
       if (ors !== null) {
         log({
@@ -169,7 +188,7 @@ export async function handler(req: Request): Promise<Response> {
           legs: ors.legs.length,
           durationMs: Date.now() - start,
         });
-        return jsonResponse(ors, { origin });
+        return jsonResponse({ ...ors, provider: 'ors' as const }, { origin });
       }
       // tryOrs logged { provider_fallback: 'google', reason } and fed the
       // breaker — fall through to the Google path below.
@@ -237,7 +256,7 @@ export async function handler(req: Request): Promise<Response> {
       durationMs: Date.now() - start,
     });
 
-    return jsonResponse({ legs }, { origin });
+    return jsonResponse({ legs, provider: 'google' as const }, { origin });
   } catch (err) {
     const isAbort = err instanceof DOMException && err.name === 'AbortError';
     log({
@@ -291,7 +310,7 @@ interface MatrixLeg {
  * wrapper) maps that to a logged Google fallback.
  */
 async function orsMatrix(
-  body: z.infer<typeof BodySchema>,
+  body: Body,
   mode: OrsRoutableMode,
   orsKey: string,
 ): Promise<{ legs: MatrixLeg[] }> {
@@ -352,4 +371,5 @@ async function orsMatrix(
   return { legs };
 }
 
+// @ts-ignore -- `Deno` global is unknown to the Expo tsconfig
 Deno.serve(handler);

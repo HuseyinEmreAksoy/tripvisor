@@ -208,3 +208,59 @@ D.test('audit #8: LLM failure keeps the reservation (no refund, no second increm
     mock.restore();
   }
 });
+
+// ---- M5 Y2.5: lang -> output-language rule in the system instruction ---------
+
+function planRequestWith(extra: Record<string, unknown>): Request {
+  return new Request('http://localhost/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: JWT },
+    body: JSON.stringify({
+      prompt: 'Two relaxed days of museums in Paris',
+      days: 1,
+      destination: 'Paris',
+      idempotencyKey: 'idem-key-0002',
+      ...extra,
+    }),
+  });
+}
+
+function geminiSystemText(calls: FetchCall[]): string {
+  const body = calls.find(isGemini)?.body ?? '';
+  assert(body, 'Gemini was not called');
+  const sent = JSON.parse(body) as { systemInstruction: { parts: Array<{ text: string }> } };
+  return sent.systemInstruction.parts[0]!.text;
+}
+
+D.test('Y2.5: lang=tr asks for Turkish notes (static rule, user text unchanged); default is English', async () => {
+  let mock = stub({ runsToday: 0, reserve: 'true', gemini: 'ok' });
+  try {
+    assertEquals((await handler(planRequestWith({ lang: 'tr' }))).status, 200);
+    const tr = geminiSystemText(mock.calls);
+    assert(tr.includes('Write the notes field in Turkish'), tr);
+    assert(tr.includes('do not translate them'), 'place names must stay searchable');
+  } finally {
+    mock.restore();
+  }
+  mock = stub({ runsToday: 0, reserve: 'true', gemini: 'ok' });
+  try {
+    assertEquals((await handler(planRequestWith({}))).status, 200);
+    const en = geminiSystemText(mock.calls);
+    assert(en.includes('Write the notes field in English'), en);
+    assert(!en.includes('Turkish'));
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('Y2.5: an unsupported lang is a 400 before auth, quota or LLM', async () => {
+  const mock = stub({ runsToday: 0, reserve: 'true', gemini: 'ok' });
+  try {
+    const res = await handler(planRequestWith({ lang: 'de' }));
+    assertEquals(res.status, 400);
+    assertEquals(((await res.json()) as { error: { code: string } }).error.code, 'invalid_input');
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});

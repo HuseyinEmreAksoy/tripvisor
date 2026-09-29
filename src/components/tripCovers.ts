@@ -2,6 +2,11 @@
  * Bundled destination-style fallback covers for trips without a Google cover
  * photo. Generic scenes (no landmarks/text/faces) so any trip can wear one.
  * 800x533 JPEGs, each < 120 KB.
+ *
+ * M5 Y2.4: cover-7 (river valley at sunrise) and cover-8 (a meze table over
+ * the sea) joined the pool. The pick is `hash(trip id) % length`, so adding
+ * them re-rolls the fallback of some existing trips once — they are
+ * decorative, never user-chosen, so that is acceptable.
  */
 import type { ImageSourcePropType } from 'react-native';
 
@@ -12,6 +17,8 @@ export const TRIP_FALLBACK_COVERS: readonly ImageSourcePropType[] = [
   require('../../assets/images/cover-4.jpg'),
   require('../../assets/images/cover-5.jpg'),
   require('../../assets/images/cover-6.jpg'),
+  require('../../assets/images/cover-7.jpg'),
+  require('../../assets/images/cover-8.jpg'),
 ];
 
 /** Stable string hash (FNV-1a, 32-bit) — same trip id → same cover everywhere. */

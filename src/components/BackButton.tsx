@@ -5,6 +5,7 @@
  * visible soft pill (elevated surface + quiet border) instead of a bare text
  * link. Accessible name: "Go back" / "Go back to X" (`common:actions.goBack*`),
  * translated since M5 Y1.4; the default visible label is `common:actions.back`.
+ * `tone="onImage"` (M5 Y2.4) is the dark-glass variant for cover heroes.
  */
 import { Platform, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
@@ -15,9 +16,11 @@ export interface BackButtonProps {
   onPress: () => void;
   label?: string;
   noPrint?: boolean;
+  /** `onImage`: dark glass + white label, for use over a cover photo (Y2.4). */
+  tone?: 'surface' | 'onImage';
 }
 
-export function BackButton({ onPress, label, noPrint = false }: BackButtonProps) {
+export function BackButton({ onPress, label, noPrint = false, tone = 'surface' }: BackButtonProps) {
   const t = useTheme();
   const { t: tx } = useT();
 
@@ -27,6 +30,8 @@ export function BackButton({ onPress, label, noPrint = false }: BackButtonProps)
         // 'data-no-print' prop is dropped by RNW's prop allow-list.
         ({ dataSet: { noPrint: 'true' } } as object)
       : {};
+  const onImage = tone === 'onImage';
+  const fg = onImage ? t.colors.heroChipText : t.colors.text;
 
   return (
     <Pressable
@@ -36,13 +41,21 @@ export function BackButton({ onPress, label, noPrint = false }: BackButtonProps)
       hitSlop={8}
       style={({ pressed }) => [
         styles.btn,
-        {
-          backgroundColor: pressed ? t.colors.bgMuted : t.colors.bgElevated,
-          borderColor: t.colors.border,
-          borderRadius: t.radius.pill,
-          paddingHorizontal: t.spacing.md,
-          ...t.shadows.sm(t.colors.shadowColor),
-        },
+        onImage
+          ? {
+              backgroundColor: t.colors.heroGlass,
+              borderColor: t.colors.heroChipBg,
+              borderRadius: t.radius.pill,
+              paddingHorizontal: t.spacing.md,
+              opacity: pressed ? 0.8 : 1,
+            }
+          : {
+              backgroundColor: pressed ? t.colors.bgMuted : t.colors.bgElevated,
+              borderColor: t.colors.border,
+              borderRadius: t.radius.pill,
+              paddingHorizontal: t.spacing.md,
+              ...t.shadows.sm(t.colors.shadowColor),
+            },
         Platform.OS === 'web' && ({
           transition: 'all 0.15s ease',
           cursor: 'pointer',
@@ -52,8 +65,8 @@ export function BackButton({ onPress, label, noPrint = false }: BackButtonProps)
     >
       {/* v3: Lucide chevron replaces the unicode arrow (decorative — the
           Pressable carries the accessible name). */}
-      <Icon name="chevron-left" size={18} color={t.colors.primary} />
-      <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600', fontSize: 14 }]}>
+      <Icon name="chevron-left" size={18} color={onImage ? fg : t.colors.primary} />
+      <Text style={[t.typography.caption, { color: fg, fontWeight: '600', fontSize: 14 }]}>
         {label ?? tx('actions.back')}
       </Text>
     </Pressable>

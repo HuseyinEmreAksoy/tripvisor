@@ -50,6 +50,7 @@ import {
 import { useThemeNameOptional } from '@/theme';
 import { MAPLIBRE_WORKER_URL } from './maplibreWorker';
 import {
+  ON_DAY_COLOR,
   dayColor,
   polylineColor,
   type MapMarker,
@@ -228,7 +229,7 @@ export function MapLibreMap(props: MapViewProps) {
           return (
             <Marker key={m.id} longitude={m.lng} latitude={m.lat} anchor="bottom">
               {/* Same visual language as the Google AdvancedMarker Pin:
-                  day-color fill, #111115 border, white glyph — plus the
+                  day-color fill, white ring, white glyph (Y2.4) — plus the
                   order-in-day badge ('•' when unscheduled / no order). */}
               <Pressable
                 onPress={() => props.onMarkerPress?.(m.id)}
@@ -265,12 +266,15 @@ const styles = StyleSheet.create({
     height: PIN_SIZE,
     borderRadius: PIN_SIZE / 2,
     borderWidth: 2,
-    borderColor: '#111115', // matches the Google Pin borderColor
+    // Y2.4: a white ring (was #111115) — lighter, and reads on both the
+    // light and dark tiles; matches the Google Pin borderColor.
+    borderColor: ON_DAY_COLOR,
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   pinBadge: {
-    color: '#FFFFFF', // matches the Google Pin glyphColor
+    color: ON_DAY_COLOR, // matches the Google Pin glyphColor
     fontSize: 12,
     fontWeight: '700',
   },

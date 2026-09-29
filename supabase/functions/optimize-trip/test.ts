@@ -27,11 +27,18 @@ import {
   assert,
   assertEquals,
   assertStringIncludes,
+  // @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import process from 'node:process';
 import { test } from 'node:test';
-import { handler } from './index.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
+import { handler, OPTIMIZE_CONTRACT_VERSION } from './index.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { _setTokenVerifierForTests } from '../_shared/auth.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
+import { estimateLeg } from './legs.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
+import { optimize } from '../../../src/lib/optimizer/kmeans-2opt.ts';
 
 // ---- Environment setup -----------------------------------------------------
 
@@ -72,6 +79,15 @@ _setTokenVerifierForTests((token) =>
 // role tests flip it and restore it.
 let editorRoleResult: unknown = true;
 
+// M5 Y2.3: the function also reads trip_days (per-day default modes) and
+// app_config ('transit_routing' kill switch), and deletes the trip's day legs
+// before rewriting them. captureFetch answers those from these flags (no
+// day overrides, no kill switch, delete OK) so the pre-Y2.3 tests keep their
+// exact shape; the Y2.3 tests set them and restore them.
+let tripDayRows: unknown[] = [];
+let tripDaysStatus = 200;
+let appConfigRows: unknown[] = [];
+
 interface FetchCall {
   url: string;
   init: RequestInit;
@@ -98,6 +114,13 @@ function captureFetch(
     const call: FetchCall = { url, init: init ?? {}, method, body };
     calls.push(call);
     if (url.includes('/rest/v1/rpc/user_can_access_trip')) return jsonResp(editorRoleResult);
+    if (url.includes('/rest/v1/trip_days') && method === 'GET') {
+      return tripDaysStatus === 200
+        ? jsonResp(tripDayRows)
+        : jsonResp({ message: 'boom', code: 'XX000' }, tripDaysStatus);
+    }
+    if (url.includes('/rest/v1/app_config') && method === 'GET') return jsonResp(appConfigRows);
+    if (url.includes('/rest/v1/trip_legs') && method === 'DELETE') return jsonResp(null, 204);
     return await Promise.resolve(handle(call));
   }) as typeof fetch;
   return {
@@ -228,13 +251,13 @@ test('viewer (can see trip, not editor) → 403 not_editor; no lock, no writes, 
 
     const roleCall = mock.calls.find((c) => c.url.includes('/rpc/user_can_access_trip'));
     assert(roleCall, 'user_can_access_trip must be consulted');
-    roleArgs = roleCall.body;
+    roleArgs = roleCall!.body;
     const parsed = JSON.parse(roleArgs ?? '{}') as Record<string, string>;
     assertEquals(parsed.p_trip_id, TRIP_ID);
     assertEquals(parsed.p_user_id, USER_ID, "checked with the caller's OWN id");
     assertEquals(parsed.p_min_role, 'editor');
     // Caller-scoped client (the user JWT), never the service role.
-    assertEquals(new Headers(roleCall.init.headers).get('Authorization'), FAKE_JWT);
+    assertEquals(new Headers(roleCall!.init.headers).get('Authorization'), FAKE_JWT);
 
     for (const c of mock.calls) {
       assert(!c.url.includes('claim_trip_optimize'), 'viewer must not take the mutex');
@@ -851,5 +874,574 @@ test('CORS: request from a non-allowlisted Origin does NOT get that Origin echoe
     );
   } finally {
     mock.restore();
+  }
+});
+
+// ============================================================================
+// M5 Y2.3 — per-leg transport modes
+// ============================================================================
+
+interface LatLngReq {
+  lat: number;
+  lng: number;
+}
+interface DirectionsReq {
+  origin: LatLngReq;
+  destination: LatLngReq;
+  intermediates?: LatLngReq[];
+  mode: string;
+  perLeg?: boolean;
+}
+interface MatrixReq {
+  origins: LatLngReq[];
+  destinations: LatLngReq[];
+  mode: string;
+}
+interface InsertedLeg {
+  from_place_id: string;
+  to_place_id: string;
+  day_index: number;
+  transport_mode: string;
+  duration_seconds: number;
+  distance_meters: number;
+  polyline: string | null;
+  transit_steps: unknown[] | null;
+  source: string;
+}
+interface Assignment {
+  id: string;
+  day_index: number;
+  order_in_day: number;
+}
+interface Y23Body {
+  stateHash: string;
+  days: Array<{ dayIndex: number; orderedPlaceIds: string[]; totalMinutes: number }>;
+  placesUpdated: number;
+  legsWritten: number;
+  cacheHit: boolean;
+  polylineDays: number;
+  mode: string;
+  keptOrderDays: number[];
+  legSources: Record<string, number>;
+  meta: { contractVersion: number };
+  error?: { code: string };
+}
+type Y23Place = {
+  id: string;
+  lat: number;
+  lng: number;
+  visit_duration_minutes: number;
+  day_index: number | null;
+  order_in_day: number | null;
+  manual_rank: string | null;
+  arrival_mode: string | null;
+  arrival_minutes: number | null;
+};
+
+function y23Place(n: number, lat: number, lng: number, extra: Partial<Y23Place> = {}): Y23Place {
+  return {
+    id: `00000000-0000-4000-8000-00000000${String(7000 + n)}`,
+    lat,
+    lng,
+    visit_duration_minutes: 60,
+    day_index: null,
+    order_in_day: null,
+    manual_rank: null,
+    arrival_mode: null,
+    arrival_minutes: null,
+    ...extra,
+  };
+}
+
+function y23Trip(transport_mode: string, daily_hours_budget = 8) {
+  return { id: TRIP_ID, user_id: USER_ID, daily_hours_budget, transport_mode, anchor_place_id: null };
+}
+
+/** A directions answer for a run: per-leg split when asked (perLeg). */
+function routedRun(provider: 'ors' | 'google', perLegSeconds = 300) {
+  return (b: DirectionsReq): Response => {
+    const n = 2 + (b.intermediates?.length ?? 0);
+    const legs = Array.from({ length: n - 1 }, (_, i) => ({
+      polyline: `${b.mode}-${i}`,
+      durationSeconds: perLegSeconds,
+      distanceMeters: 1000,
+    }));
+    return jsonResp({
+      polyline: `${b.mode}-whole`,
+      durationSeconds: perLegSeconds * (n - 1),
+      distanceMeters: 1000 * (n - 1),
+      provider,
+      ...(b.perLeg ? { legs } : {}),
+    });
+  };
+}
+
+/** A full N×N matrix answer; `seconds(a, b, mode)` decides each element. */
+function fullMatrix(seconds: (a: LatLngReq, b: LatLngReq, mode: string) => number, provider = 'ors') {
+  return (b: MatrixReq): Response => {
+    const legs: Array<{ fromIndex: number; toIndex: number; durationSeconds: number; distanceMeters: number }> = [];
+    b.origins.forEach((o, i) =>
+      b.destinations.forEach((d, j) => {
+        if (i !== j) legs.push({ fromIndex: i, toIndex: j, durationSeconds: seconds(o, d, b.mode), distanceMeters: 1000 });
+      }),
+    );
+    return jsonResp({ legs, provider });
+  };
+}
+
+async function runY23(h: {
+  trip: Record<string, unknown>;
+  places: Y23Place[];
+  mode: 'optimized' | 'manual';
+  cachedLegs?: unknown[];
+  matrix?: (b: MatrixReq) => Response;
+  directions?: (b: DirectionsReq) => Response;
+}) {
+  const directionsCalls: DirectionsReq[] = [];
+  const matrixCalls: MatrixReq[] = [];
+  const inserted: InsertedLeg[] = [];
+  const applied: Assignment[][] = [];
+  const mock = captureFetch((call) => {
+    if (call.url.includes('/rest/v1/trips') && !call.url.includes('trip_')) return jsonResp([h.trip]);
+    if (call.url.includes('/rest/v1/trip_places')) return jsonResp(h.places);
+    if (call.url.includes('/rest/v1/trip_legs') && call.method === 'GET') return jsonResp(h.cachedLegs ?? []);
+    if (call.url.includes('/rest/v1/rpc/claim_trip_optimize')) return jsonResp(true);
+    if (call.url.includes('/rest/v1/rpc/release_trip_optimize')) return jsonResp(null);
+    if (call.url.includes('/functions/v1/distance-matrix')) {
+      const b = JSON.parse(call.body ?? '{}') as MatrixReq;
+      matrixCalls.push(b);
+      return h.matrix ? h.matrix(b) : jsonResp({ error: { code: 'unexpected_matrix', message: 'x' } }, 500);
+    }
+    if (call.url.includes('/functions/v1/directions-polyline')) {
+      const b = JSON.parse(call.body ?? '{}') as DirectionsReq;
+      directionsCalls.push(b);
+      return h.directions ? h.directions(b) : jsonResp({ error: { code: 'unexpected_directions', message: 'x' } }, 500);
+    }
+    if (call.url.includes('/rest/v1/rpc/apply_optimization')) {
+      applied.push((JSON.parse(call.body ?? '{}') as { p_assignments: Assignment[] }).p_assignments);
+      return jsonResp(1);
+    }
+    if (call.url.includes('/rest/v1/trip_legs') && call.method === 'POST') {
+      inserted.push(...(JSON.parse(call.body ?? '[]') as InsertedLeg[]));
+      return jsonResp([], 201);
+    }
+    return jsonResp({ error: `unexpected ${call.method} ${call.url}` }, 500);
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+        body: JSON.stringify({ tripId: TRIP_ID, mode: h.mode }),
+      }),
+    );
+    const body = (await res.json()) as Y23Body;
+    const deletes = mock.calls
+      .filter((c) => c.url.includes('/rest/v1/trip_legs') && c.method === 'DELETE')
+      .map((c) => decodeURIComponent(c.url));
+    const edgeAuth = mock.calls
+      .filter((c) => c.url.includes('/functions/v1/'))
+      .map((c) => new Headers(c.init.headers).get('Authorization'));
+    return { res, body, directionsCalls, matrixCalls, inserted, applied, deletes, edgeAuth, calls: mock.calls };
+  } finally {
+    mock.restore();
+  }
+}
+
+const sameSpot = (a: LatLngReq, b: { lat: number; lng: number }) => a.lat === b.lat && a.lng === b.lng;
+
+test('Y2.3 manual: mixed day drive -> transit -> walk -> walk; day default beats trip default', async () => {
+  const p0 = y23Place(1, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+  const p1 = y23Place(2, 38.72, -9.18, { day_index: 0, order_in_day: 1 }); // day default: driving
+  const p2 = y23Place(3, 38.75, -9.14, { day_index: 0, order_in_day: 2, arrival_mode: 'transit' });
+  const p3 = y23Place(4, 38.751, -9.139, { day_index: 0, order_in_day: 3, arrival_mode: 'walking' });
+  const p4 = y23Place(5, 38.752, -9.138, { day_index: 0, order_in_day: 4, arrival_mode: 'walking' });
+  const steps = [{ polyline: 'step', travelMode: 'TRANSIT', lineName: 'M2', vehicleType: 'SUBWAY' }];
+  tripDayRows = [{ day_index: 0, transport_mode: 'driving' }];
+  try {
+    const out = await runY23({
+      trip: y23Trip('walking'),
+      places: [p0, p1, p2, p3, p4],
+      mode: 'manual',
+      directions: (b) => {
+        if (b.mode === 'driving') return jsonResp({ polyline: 'drv', durationSeconds: 900, distanceMeters: 4000, provider: 'ors' });
+        if (b.mode === 'transit') {
+          return jsonResp({ polyline: null, durationSeconds: 1500, distanceMeters: 6000, transitSteps: steps, provider: 'google' });
+        }
+        return jsonResp({
+          polyline: 'wlk',
+          durationSeconds: 400,
+          distanceMeters: 300,
+          provider: 'ors',
+          legs: [
+            { polyline: 'w1', durationSeconds: 150, distanceMeters: 120 },
+            { polyline: 'w2', durationSeconds: 250, distanceMeters: 180 },
+          ],
+        });
+      },
+    });
+    assertEquals(out.res.status, 200);
+    assertEquals(out.matrixCalls.length, 0, 'manual mode never builds a matrix');
+
+    // One call per segment: driving run, transit leg, walking run (2 legs).
+    assertEquals(out.directionsCalls.map((c) => c.mode).sort(), ['driving', 'transit', 'walking']);
+    const drive = out.directionsCalls.find((c) => c.mode === 'driving')!;
+    assert(sameSpot(drive.origin, p0) && sameSpot(drive.destination, p1));
+    assertEquals(drive.perLeg, undefined, 'a one-leg run needs no split');
+    const transit = out.directionsCalls.find((c) => c.mode === 'transit')!;
+    assert(sameSpot(transit.origin, p1) && sameSpot(transit.destination, p2));
+    assertEquals(transit.intermediates, undefined, 'transit is routed one leg per call');
+    const walk = out.directionsCalls.find((c) => c.mode === 'walking')!;
+    assert(sameSpot(walk.origin, p2) && sameSpot(walk.destination, p4));
+    assertEquals(walk.intermediates?.length, 1);
+    assertEquals(walk.perLeg, true);
+    for (const a of out.edgeAuth) assertEquals(a, FAKE_JWT, 'routing calls carry the caller JWT');
+
+    // Replace ALL legs (manual), then one row per consecutive pair.
+    assertEquals(out.deletes.length, 1);
+    assertStringIncludes(out.deletes[0]!, `trip_id=eq.${TRIP_ID}`);
+    assert(!out.deletes[0]!.includes('day_index'), 'manual wipes every leg of the trip');
+    assertEquals(
+      out.inserted.map((r) => [r.from_place_id, r.to_place_id, r.day_index, r.transport_mode, r.source, r.duration_seconds, r.polyline]),
+      [
+        [p0.id, p1.id, 0, 'driving', 'ors', 900, 'drv'],
+        [p1.id, p2.id, 0, 'transit', 'google', 1500, null],
+        [p2.id, p3.id, 0, 'walking', 'ors', 150, 'w1'],
+        [p3.id, p4.id, 0, 'walking', 'ors', 250, 'w2'],
+      ],
+    );
+    assertEquals(out.inserted[1]!.transit_steps, steps);
+    assertEquals(out.inserted[0]!.transit_steps, null);
+
+    assertEquals(out.body.mode, 'manual');
+    assertEquals(out.body.keptOrderDays, []);
+    assertEquals(out.body.legSources, { ors: 3, google: 1, estimate: 0, user: 0 });
+    assertEquals(out.body.legsWritten, 4);
+    assertEquals(out.body.polylineDays, 1);
+    assertEquals(out.body.meta.contractVersion, OPTIMIZE_CONTRACT_VERSION);
+    assertEquals(OPTIMIZE_CONTRACT_VERSION, 2);
+  } finally {
+    tripDayRows = [];
+  }
+});
+
+test('Y2.3 optimized: a flight/ferry day keeps its manual_rank order; only its legs are recomputed', async () => {
+  // Day 0 is kept: rank order A, B, C (stored order_in_day disagrees).
+  const A = y23Place(11, 38.72, -9.14, { day_index: 0, order_in_day: 2, manual_rank: 'a0' });
+  const B = y23Place(12, 41.9, 12.5, { day_index: 0, order_in_day: 0, manual_rank: 'a1', arrival_mode: 'flight' });
+  const C = y23Place(13, 40.85, 14.27, {
+    day_index: 0,
+    order_in_day: 1,
+    manual_rank: 'a2',
+    arrival_mode: 'ferry',
+    arrival_minutes: 90,
+  });
+  // Free places: one optimizer day, which must land on index 1.
+  const D = y23Place(14, 41.89, 12.49, { day_index: 1, order_in_day: 0 });
+  const E = y23Place(15, 41.895, 12.48, { day_index: 1, order_in_day: 1 });
+  const F = y23Place(16, 41.91, 12.47); // unscheduled idea
+  const out = await runY23({
+    trip: y23Trip('driving'),
+    places: [A, B, C, D, E, F],
+    mode: 'optimized',
+    matrix: fullMatrix(() => 600),
+    directions: routedRun('ors'),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.body.keptOrderDays, [0]);
+  assertEquals(out.body.days.length, 2);
+  assertEquals(out.body.days[0]!.dayIndex, 0);
+  assertEquals(out.body.days[0]!.orderedPlaceIds, [A.id, B.id, C.id], 'kept day = manual_rank order');
+  assertEquals(out.body.days[1]!.dayIndex, 1, 'the optimized day skips the kept index');
+  assertEquals([...out.body.days[1]!.orderedPlaceIds].sort(), [D.id, E.id, F.id].sort());
+
+  // The optimizer (matrix) never sees the kept day's places.
+  assertEquals(out.matrixCalls.length, 1);
+  assertEquals(out.matrixCalls[0]!.origins.length, 3);
+  for (const o of out.matrixCalls[0]!.origins) assert(![A, B, C].some((p) => sameSpot(o, p)));
+
+  // Kept rows: rank-derived order_in_day, day_index unchanged.
+  const assignments = out.applied.flat();
+  const byId = new Map(assignments.map((a) => [a.id, a]));
+  assertEquals(byId.get(A.id), { id: A.id, day_index: 0, order_in_day: 0 });
+  assertEquals(byId.get(B.id), { id: B.id, day_index: 0, order_in_day: 1 });
+  assertEquals(byId.get(C.id), { id: C.id, day_index: 0, order_in_day: 2 });
+  for (const p of [D, E, F]) assertEquals(byId.get(p.id)?.day_index, 1);
+
+  // Flight/ferry are never routed: the only directions call is day 1's run.
+  assertEquals(out.directionsCalls.length, 1);
+  const run = out.directionsCalls[0]!;
+  assertEquals(run.mode, 'driving');
+  assertEquals(run.perLeg, true);
+  for (const pt of [run.origin, run.destination, ...(run.intermediates ?? [])]) {
+    assert(![A, B, C].some((p) => sameSpot(pt, p)), 'no routing call touches the kept day');
+  }
+
+  const dayLegs = out.inserted.filter((r) => r.day_index >= 0);
+  const cacheRows = out.inserted.filter((r) => r.day_index < 0);
+  const flight = dayLegs.find((r) => r.from_place_id === A.id)!;
+  assertEquals([flight.to_place_id, flight.transport_mode, flight.source, flight.polyline], [B.id, 'flight', 'estimate', null]);
+  assertEquals(flight.duration_seconds, estimateLeg('flight', A, B).durationSeconds);
+  const ferry = dayLegs.find((r) => r.from_place_id === B.id)!;
+  assertEquals([ferry.to_place_id, ferry.transport_mode, ferry.source, ferry.duration_seconds], [C.id, 'ferry', 'user', 90 * 60]);
+  const day1 = dayLegs.filter((r) => r.day_index === 1);
+  assertEquals(day1.length, 2);
+  for (const r of day1) assertEquals([r.transport_mode, r.source], ['driving', 'ors']);
+  assertEquals(cacheRows.length, 6, '3x3 matrix minus the diagonal');
+  for (const r of cacheRows) assertEquals([r.transport_mode, r.source, r.day_index], ['driving', 'ors', -1]);
+  const firstDayLeg = out.inserted.findIndex((r) => r.day_index >= 0);
+  const lastCacheRow = out.inserted.map((r) => r.day_index < 0).lastIndexOf(true);
+  assert(firstDayLeg > lastCacheRow, 'cache rows are written before day legs (last-wins for pre-Y2.3 clients)');
+
+  // Day legs are replaced, the matrix cache is kept.
+  assertEquals(out.deletes.length, 1);
+  assertStringIncludes(out.deletes[0]!, 'day_index=gte.0');
+  assertEquals(out.body.legSources, { ors: 2, google: 0, estimate: 1, user: 1 });
+  assertEquals(out.body.meta.contractVersion, 2);
+  assertEquals(out.body.stateHash.length, 64, 'layout-aware hash when a day was kept');
+});
+
+test('Y2.3 manual: transit over the routing quota -> clearly-labelled estimates, still 200', async () => {
+  const p0 = y23Place(21, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+  const p1 = y23Place(22, 38.73, -9.15, { day_index: 0, order_in_day: 1 });
+  const p2 = y23Place(23, 38.76, -9.1, { day_index: 0, order_in_day: 2 });
+  const out = await runY23({
+    trip: y23Trip('transit'),
+    places: [p0, p1, p2],
+    mode: 'manual',
+    directions: () =>
+      jsonResp({ error: { code: 'quota_exceeded', message: 'Daily route calculation limit reached (2000/day).' } }, 429),
+  });
+  assertEquals(out.res.status, 200, 'a spent quota never fails the render');
+  assert(out.directionsCalls.length >= 1 && out.directionsCalls.length <= 2);
+  assertEquals(
+    out.inserted.map((r) => [r.from_place_id, r.to_place_id, r.transport_mode, r.source, r.polyline]),
+    [
+      [p0.id, p1.id, 'transit', 'estimate', null],
+      [p1.id, p2.id, 'transit', 'estimate', null],
+    ],
+  );
+  assertEquals(out.inserted[0]!.duration_seconds, estimateLeg('transit', p0, p1).durationSeconds);
+  assertEquals(out.inserted[1]!.distance_meters, estimateLeg('transit', p1, p2).distanceMeters);
+  assertEquals(out.body.legSources, { ors: 0, google: 0, estimate: 2, user: 0 });
+  assertEquals(out.body.polylineDays, 0);
+});
+
+test('Y2.3: app_config transit_routing=estimate stops Google transit calls', async () => {
+  appConfigRows = [{ value: 'estimate' }];
+  try {
+    const p0 = y23Place(31, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+    const p1 = y23Place(32, 38.73, -9.15, { day_index: 0, order_in_day: 1 });
+    const out = await runY23({
+      trip: y23Trip('transit'),
+      places: [p0, p1],
+      mode: 'manual',
+      directions: () => jsonResp({ error: 'must not be called' }, 500),
+    });
+    assertEquals(out.res.status, 200);
+    assertEquals(out.directionsCalls.length, 0);
+    assertEquals(out.inserted.map((r) => r.source), ['estimate']);
+    const cfg = out.calls.find((c) => c.url.includes('/rest/v1/app_config'));
+    assert(cfg, 'the kill switch is read');
+    assertStringIncludes(decodeURIComponent(cfg!.url), 'key=eq.transit_routing');
+    assertEquals(new Headers(cfg!.init.headers).get('Authorization'), FAKE_JWT, 'read as the caller (RLS)');
+  } finally {
+    appConfigRows = [];
+  }
+});
+
+test('Y2.3 optimized transit trip with 11 places: no matrix over the 100-element transit cap', async () => {
+  const places = Array.from({ length: 11 }, (_, i) => y23Place(40 + i, 38.7 + i * 0.002, -9.2 + i * 0.002));
+  const out = await runY23({
+    trip: y23Trip('transit', 24),
+    places,
+    mode: 'optimized',
+    matrix: () => jsonResp({ error: 'must not be called' }, 500),
+    directions: () =>
+      jsonResp({
+        polyline: null,
+        durationSeconds: 600,
+        distanceMeters: 2000,
+        transitSteps: [{ polyline: 's', travelMode: 'TRANSIT', lineName: 'B1', vehicleType: 'BUS' }],
+        provider: 'google',
+      }),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.matrixCalls.length, 0, 'a 121-element transit matrix is never sent');
+  assertEquals(out.body.days.length, 1);
+  assertEquals(out.directionsCalls.length, 10, 'one transit call per leg');
+  for (const c of out.directionsCalls) {
+    assertEquals(c.mode, 'transit');
+    assertEquals(c.intermediates, undefined);
+  }
+  const dayLegs = out.inserted.filter((r) => r.day_index >= 0);
+  assertEquals(dayLegs.length, 10);
+  for (const r of dayLegs) assertEquals([r.transport_mode, r.source], ['transit', 'google']);
+  assertEquals(out.inserted.filter((r) => r.day_index < 0).length, 0, 'estimates are never cached');
+  assertEquals(out.body.stateHash.length, 8, 'no kept day, no re-order: the optimizer hash is unchanged');
+});
+
+test('Y2.3: a run answered without a per-leg split is re-asked one leg per call', async () => {
+  const p0 = y23Place(61, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+  const p1 = y23Place(62, 38.71, -9.19, { day_index: 0, order_in_day: 1 });
+  const p2 = y23Place(63, 38.72, -9.18, { day_index: 0, order_in_day: 2 });
+  const out = await runY23({
+    trip: y23Trip('driving'),
+    places: [p0, p1, p2],
+    mode: 'manual',
+    // A pre-Y2.3 directions-polyline: ignores perLeg, sends no provider.
+    directions: (b) =>
+      b.perLeg
+        ? jsonResp({ polyline: 'whole', durationSeconds: 1000, distanceMeters: 5000 })
+        : jsonResp({ polyline: 'single', durationSeconds: 400, distanceMeters: 2000 }),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.directionsCalls.length, 3);
+  assertEquals(out.directionsCalls.filter((c) => c.perLeg).length, 1);
+  assertEquals(
+    out.inserted.map((r) => [r.source, r.duration_seconds, r.polyline]),
+    [
+      ['google', 400, 'single'],
+      ['google', 400, 'single'],
+    ],
+  );
+});
+
+test('Y2.3: a failed driving run becomes estimates instead of missing legs', async () => {
+  const p0 = y23Place(71, 38.7, -9.2, { day_index: 0, order_in_day: 0 });
+  const p1 = y23Place(72, 38.71, -9.19, { day_index: 0, order_in_day: 1 });
+  const p2 = y23Place(73, 38.72, -9.18, { day_index: 0, order_in_day: 2 });
+  const out = await runY23({
+    trip: y23Trip('driving'),
+    places: [p0, p1, p2],
+    mode: 'manual',
+    directions: () => jsonResp({ error: { code: 'upstream_error', message: 'Routes API returned an error' } }, 502),
+  });
+  assertEquals(out.res.status, 200);
+  assertEquals(out.directionsCalls.length, 1);
+  assertEquals(
+    out.inserted.map((r) => [r.transport_mode, r.source, r.polyline, r.duration_seconds]),
+    [
+      ['driving', 'estimate', null, estimateLeg('driving', p0, p1).durationSeconds],
+      ['driving', 'estimate', null, estimateLeg('driving', p1, p2).durationSeconds],
+    ],
+  );
+  assertEquals(out.body.polylineDays, 0);
+});
+
+test('Y2.3 optimized: a day whose default mode differs is re-ordered with a matrix in that mode', async () => {
+  // Four stops on one street. Walking time is the real distance; the car
+  // matrix is deliberately perverse, so the two orders differ.
+  const xs = [0, 3, 1, 2];
+  const places = xs.map((x, i) => y23Place(80 + i, 38.7, -9.2 + x * 0.01));
+  const xOf = (p: LatLngReq) => Math.round((p.lng + 9.2) / 0.01);
+  const seconds = (a: LatLngReq, b: LatLngReq, mode: string) =>
+    mode === 'walking' ? Math.abs(xOf(a) - xOf(b)) * 100 : (4 - Math.abs(xOf(a) - xOf(b))) * 100;
+  tripDayRows = [{ day_index: 0, transport_mode: 'walking' }];
+  try {
+    const out = await runY23({
+      trip: y23Trip('driving', 24),
+      places,
+      mode: 'optimized',
+      matrix: fullMatrix(seconds),
+      directions: routedRun('ors'),
+    });
+    assertEquals(out.res.status, 200);
+    assertEquals(out.matrixCalls.map((m) => m.mode), ['driving', 'walking']);
+    assertEquals(out.matrixCalls[1]!.origins.length, 4);
+
+    // Expected = phase 1 (car matrix) then phase 2 (walking matrix, one day).
+    const optPlaces = places.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, visitMinutes: 60 }));
+    const legsFor = (mode: string) =>
+      places.flatMap((a) =>
+        places.filter((b) => b.id !== a.id).map((b) => ({ fromId: a.id, toId: b.id, durationSeconds: seconds(a, b, mode) })),
+      );
+    const phase1 = optimize({ places: optPlaces, legs: legsFor('driving'), dailyBudgetMinutes: 24 * 60 });
+    const order1: string[] = phase1.days[0]!.orderedPlaceIds;
+    const phase2 = optimize({
+      places: order1.map((id) => optPlaces.find((p) => p.id === id)!),
+      legs: legsFor('walking'),
+      dailyBudgetMinutes: Number.MAX_SAFE_INTEGER,
+    });
+    const expected: string[] = phase2.days[0]!.orderedPlaceIds;
+    assertEquals(out.body.days[0]!.orderedPlaceIds, expected);
+    // And phase 2 really re-ordered: the walking time of the final order
+    // beats the car-optimized order's.
+    const walkCost = (order: string[]) => {
+      let total = 0;
+      for (let i = 1; i < order.length; i++) {
+        const a = places.find((p) => p.id === order[i - 1])!;
+        const b = places.find((p) => p.id === order[i])!;
+        total += seconds(a, b, 'walking');
+      }
+      return total;
+    };
+    assert(
+      walkCost(expected) < walkCost(order1),
+      `walking ${walkCost(expected)} s vs the car order's ${walkCost(order1)} s`,
+    );
+
+    // The day's legs use the day default (walking), one run with a split.
+    assertEquals(out.directionsCalls.length, 1);
+    assertEquals(out.directionsCalls[0]!.mode, 'walking');
+    const cacheModes = out.inserted.filter((r) => r.day_index < 0).map((r) => r.transport_mode);
+    assertEquals(cacheModes.filter((m) => m === 'driving').length, 12);
+    assertEquals(cacheModes.filter((m) => m === 'walking').length, 12);
+    assertEquals(out.body.stateHash.length, 64, 'a phase-2 re-order changes the hash rule');
+  } finally {
+    tripDayRows = [];
+  }
+});
+
+test('Y2.3 viewer in optimized mode -> 403 before day modes, kill switch, legs or routing', async () => {
+  editorRoleResult = false;
+  try {
+    const out = await runY23({
+      trip: y23Trip('driving'),
+      places: [y23Place(91, 38.7, -9.2), y23Place(92, 38.71, -9.19)],
+      mode: 'optimized',
+      matrix: fullMatrix(() => 60),
+      directions: routedRun('ors'),
+    });
+    assertEquals(out.res.status, 403);
+    assertEquals(out.body.error?.code, 'not_editor');
+    const forbidden = [
+      'claim_trip_optimize',
+      '/rest/v1/trip_places',
+      '/rest/v1/trip_days',
+      '/rest/v1/app_config',
+      '/rest/v1/trip_legs',
+      '/functions/v1/',
+      'apply_optimization',
+    ];
+    for (const c of out.calls) {
+      for (const f of forbidden) assert(!c.url.includes(f), `viewer reached ${f}`);
+    }
+  } finally {
+    editorRoleResult = true;
+  }
+});
+
+test('Y2.3: a failed trip_days read fails closed (500), no writes and no routing', async () => {
+  tripDaysStatus = 500;
+  try {
+    const out = await runY23({
+      trip: y23Trip('driving'),
+      places: [
+        y23Place(95, 38.7, -9.2, { day_index: 0, order_in_day: 0 }),
+        y23Place(96, 38.71, -9.19, { day_index: 0, order_in_day: 1 }),
+      ],
+      mode: 'manual',
+      directions: routedRun('ors'),
+    });
+    assertEquals(out.res.status, 500);
+    assertEquals(out.body.error?.code, 'db_error');
+    assertEquals(out.directionsCalls.length, 0);
+    assertEquals(out.applied.length, 0);
+    assertEquals(out.deletes.length, 0);
+    assertEquals(out.inserted.length, 0);
+    assert(out.calls.some((c) => c.url.includes('release_trip_optimize')), 'the mutex is released');
+  } finally {
+    tripDaysStatus = 200;
   }
 });

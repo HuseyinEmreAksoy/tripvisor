@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import * as Linking from 'expo-linking';
 import { supabase } from './supabase';
 import { initTier1Sync, teardownTier1Sync } from '@/sync/hydrate';
+import { startPhotoUploads, stopPhotoUploads } from './memories.upload-queue';
 
 const SESSION_KEY = ['auth', 'session'] as const;
 
@@ -22,8 +23,11 @@ export function useSession() {
           // Engine boot failures are telemetered inside src/sync — auth
           // must never fail because offline sync couldn't start.
         });
+        // M5 Y2.1: resume this user's durable photo upload queue (never throws).
+        startPhotoUploads(session.user.id);
       } else {
         teardownTier1Sync();
+        stopPhotoUploads();
       }
     });
     return () => data.subscription.unsubscribe();

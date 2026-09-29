@@ -12,6 +12,7 @@
 //     days?: int (1..14),
 //     destination?: string,
 //     idempotencyKey: string (8..64),
+//     lang?: 'en' | 'tr',         // M5 Y2.5: language of the free text (`notes`); default 'en'
 //   }
 //   -> 200 {
 //        runId: uuid,
@@ -90,6 +91,7 @@ const BodySchema = z.object({
   days: z.number().int().min(1).max(14).optional(),
   destination: z.string().min(1).max(120).optional(),
   idempotencyKey: z.string().min(8).max(64),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 // ----- LLM output validation ------------------------------------------------
@@ -203,6 +205,14 @@ const SYSTEM_PREAMBLE = [
   '- Aim for 3-6 places per day and never more than 25 places in total.',
   '- Output ONLY JSON matching the schema. No markdown, no extra keys.',
 ].join('\n');
+
+// M5 Y2.5: output language rule, picked from the closed `lang` enum (static
+// text, never user data, so D4 holds). Place names stay searchable map names
+// so grounding keeps working; only the free text follows the app language.
+const OUTPUT_LANGUAGE_RULE: Record<'en' | 'tr', string> = {
+  en: '- Write the notes field in English. Keep place names as their common, searchable map names.',
+  tr: '- Write the notes field in Turkish (Türkçe). Keep place names as their common, searchable map names; do not translate them.',
+};
 
 // ----- Domain types ----------------------------------------------------------
 
@@ -415,7 +425,7 @@ export async function handler(req: Request): Promise<Response> {
   const attempt: LlmAttempt<LlmOutput> | null = await runLlmWithFallback(
     { geminiKey, groqKey },
     {
-      system: SYSTEM_PREAMBLE,
+      system: `${SYSTEM_PREAMBLE}\n${OUTPUT_LANGUAGE_RULE[(body.lang ?? 'en') as 'en' | 'tr']}`,
       user: userPayload,
       geminiResponseSchema: GEMINI_RESPONSE_SCHEMA,
       groqJsonSchema: GROQ_JSON_SCHEMA,

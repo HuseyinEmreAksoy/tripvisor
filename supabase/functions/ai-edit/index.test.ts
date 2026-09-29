@@ -246,3 +246,45 @@ D.test('audit #8 ground: reservation RPC failure fails CLOSED -> 500 db_error, n
     mock.restore();
   }
 });
+
+// ---- M5 Y2.5: lang ---------------------------------------------------------------
+
+function editSystemText(calls: FetchCall[]): string {
+  const body = calls.find(isGemini)?.body ?? '';
+  assert(body, 'Gemini was not called');
+  const sent = JSON.parse(body) as { systemInstruction: { parts: Array<{ text: string }> } };
+  return sent.systemInstruction.parts[0]!.text;
+}
+
+D.test('Y2.5 edit: lang=tr asks for Turkish notes; default is English', async () => {
+  let mock = stub({ runsToday: 0, groundingToday: 0, reserve: 'true' });
+  try {
+    assertEquals((await handler(post({ ...editBody(), lang: 'tr' }))).status, 200);
+    const tr = editSystemText(mock.calls);
+    assert(tr.includes('Write notes in Turkish'), tr);
+    assert(tr.includes('do not translate them'));
+  } finally {
+    mock.restore();
+  }
+  mock = stub({ runsToday: 0, groundingToday: 0, reserve: 'true' });
+  try {
+    assertEquals((await handler(post({ ...editBody(), idempotencyKey: 'idem-edit-0002' }))).status, 200);
+    assert(editSystemText(mock.calls).includes('Write notes in English'));
+  } finally {
+    mock.restore();
+  }
+});
+
+D.test('Y2.5: every action validates lang (unsupported -> 400 before any network call)', async () => {
+  const mock = stub({ runsToday: 0, groundingToday: 0, reserve: 'true' });
+  try {
+    const suggest = { action: 'suggest', tripId: TRIP_ID, dayIndex: 0, slackMinutes: 60, idempotencyKey: 'idem-sugg-0001' };
+    for (const body of [editBody(), groundBody(), suggest]) {
+      const res = await handler(post({ ...body, lang: 'xx' }));
+      assertEquals(res.status, 400, String(body.action));
+    }
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});

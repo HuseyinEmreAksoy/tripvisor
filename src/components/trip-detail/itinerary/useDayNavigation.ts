@@ -7,6 +7,10 @@
  * every section reports its y via `onSectionLayout`, a chip tap scrolls
  * there. While the trip is live the list opens on today's section once per
  * mount, and `onScroll` keeps the strip's active chip in sync.
+ *
+ * M5 Y2.4: `onScroll` also feeds the phone trip hero's collapse (via
+ * HeroScrollContext, a no-op without a provider) and ticks the row
+ * thumbnails' lazy on-screen check (useSeenOnScreen).
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type {
@@ -17,6 +21,8 @@ import type {
 } from 'react-native';
 import type { Trip } from '@/api';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { notifyViewportChange } from '@/hooks/useSeenOnScreen';
+import { sampleFromScrollEvent, useHeroScrollReporter } from '../heroCollapse';
 import { haptics } from '@/lib/haptics';
 import { buildDayChips, liveDayIndex, sectionAtOffset, type DayChip } from './dayChips';
 import { useCollapsedDays, type CollapsedDays } from './useCollapsedDays';
@@ -91,11 +97,17 @@ export function useDayNavigation(
     [todayIndex, topGap],
   );
 
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsets = [...sectionY.current.entries()].map(([dayIndex, y]) => ({ dayIndex, y }));
-    const current = sectionAtOffset(offsets, e.nativeEvent.contentOffset.y);
-    if (current !== null) setActiveDay((prev) => (prev === current ? prev : current));
-  }, []);
+  const reportHero = useHeroScrollReporter();
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsets = [...sectionY.current.entries()].map(([dayIndex, y]) => ({ dayIndex, y }));
+      const current = sectionAtOffset(offsets, e.nativeEvent.contentOffset.y);
+      if (current !== null) setActiveDay((prev) => (prev === current ? prev : current));
+      reportHero?.(sampleFromScrollEvent(e));
+      notifyViewportChange();
+    },
+    [reportHero],
+  );
 
   return {
     todayIndex,

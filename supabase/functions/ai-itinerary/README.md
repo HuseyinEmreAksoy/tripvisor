@@ -6,7 +6,7 @@
 
 | method      | auth     | body                                                                                  | response                                  |
 | ----------- | -------- | ------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `POST`      | required | `{ prompt (10..2000), tripId?, days? (1..14), destination?, idempotencyKey (8..64) }` | `{ runId, status, draft, usage }`          |
+| `POST`      | required | `{ prompt (10..2000), tripId?, days? (1..14), destination?, idempotencyKey (8..64), lang? (en/tr) }` | `{ runId, status, draft, usage }`          |
 | `GET ?ping` | none     | none                                                                                   | `{ ok: true, fn: "ai-itinerary" }`        |
 
 Success response (`200`):

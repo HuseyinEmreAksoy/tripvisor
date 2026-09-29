@@ -48,6 +48,22 @@ const MIGRATED = [
   'src/components/GoogleSignInButton.tsx',
   'src/components/HeroValueChips.tsx',
   'src/components/TabBar.tsx',
+  // M5 Y2.4 (visual foundation)
+  'app/(app)/trip/new.tsx',
+  'app/(app)/trip/[id]/index.tsx',
+  'src/components/MapUnavailable.tsx',
+  'src/components/Screen.tsx',
+  'src/components/TripCard.tsx',
+  'src/components/TripCover.tsx',
+  'src/components/TripStatusChip.tsx',
+  'src/components/ai-plan/TransportModeRadio.tsx',
+  'src/components/today/DayTimelineList.tsx',
+  'src/components/today/LiveTripView.tsx',
+  'src/components/trip-detail/PlaceRow.tsx',
+  'src/components/trip-detail/PlaceThumb.tsx',
+  'src/components/trip-detail/TripHeader.tsx',
+  'src/components/trip-detail/TripHero.tsx',
+  'src/components/trip-detail/TripHubCards.tsx',
 ];
 
 /** Scanned by `--strict` with no path arguments (Y4.3 makes this the default). */

@@ -12,7 +12,8 @@ export function DateField({ label, value, onChange, error }: Props) {
   const t = useTheme();
   return (
     <View style={{ alignSelf: 'stretch' }}>
-      <Text style={[t.typography.caption, { color: t.colors.textMuted, marginBottom: 4 }]}>
+      {/* Y2.4: same overline label as TextField, so mixed forms read as one. */}
+      <Text style={[t.typography.overline, { color: t.colors.textMuted, marginBottom: 8 }]}>
         {label}
       </Text>
       <View

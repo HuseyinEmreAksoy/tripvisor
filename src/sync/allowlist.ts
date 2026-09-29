@@ -49,12 +49,14 @@ import type {
 } from '../api/types';
 import type { TripPlaceComment } from '../api/trip-place-comments';
 import type { TripPackingItem } from '../api/trip-packing';
+import type { TripJournalEntry, TripPhoto, TripPlaceReview } from '../api/memories.types';
 
 // ===========================================================================
 // Table → row-type binding (compile-time half of the C3 test)
 // ===========================================================================
 
-/** The eight Tier-1 synced roots (migration 0027). trip_legs is deliberately
+/** The Tier-1 synced roots: the eight of migration 0027 plus the three M5
+ * memory roots (0036, author-scoped). trip_legs is deliberately
  * absent: legs are server-authoritative optimizer output (C1) with a 30-day
  * Google ToS TTL — they must never enter a client persistence engine that
  * could re-sync them (risk R4). Offline leg rendering, if/when wanted, needs
@@ -68,6 +70,12 @@ export interface Tier1RowTypes {
   trip_place_reactions: TripPlaceReaction;
   trip_place_comments: TripPlaceComment;
   trip_packing_items: TripPackingItem;
+  // M5 Y2.1 (0036/0038): memory roots. AUTHOR-SCOPED — see
+  // TIER1_AUTHOR_SCOPED_TABLES below: only the signed-in user's OWN rows
+  // ever enter Tier-1; other members' shared items are Tier-2 (memory-only).
+  trip_journal_entries: TripJournalEntry;
+  trip_place_reviews: TripPlaceReview;
+  trip_photos: TripPhoto;
 }
 
 export type Tier1Table = keyof Tier1RowTypes;
@@ -221,7 +229,97 @@ export const TIER1_FIELDS: { readonly [K in Tier1Table]: FieldsOf<Tier1RowTypes[
     'created_at',
     'updated_at',
   ],
+  // M5 Y2.1 — memories (0036). User content only; no Google data.
+  trip_journal_entries: [
+    'id',
+    'trip_id',
+    'author_id',
+    'day_index',
+    'body',
+    'visibility',
+    'deleted',
+    'created_at',
+    'updated_at',
+  ],
+  // `rating` is the USER'S own 1–5 stars — the one documented exception to
+  // the restricted-name tripwire (TIER1_USER_CONTENT_EXCEPTIONS below).
+  // The two *_snapshot columns are server-owned (0038 §3): hydrated, never
+  // written. place_google_id_snapshot is a place-ID pointer (ToS-durable).
+  trip_place_reviews: [
+    'id',
+    'trip_id',
+    'trip_place_id',
+    'author_id',
+    'rating',
+    'body',
+    'visibility',
+    'place_name_snapshot',
+    'place_google_id_snapshot',
+    'deleted',
+    'created_at',
+    'updated_at',
+  ],
+  // Photo index rows. storage_path/thumb_path/bytes/thumb_bytes/status are
+  // server-owned (stamped by the 0036 guard): hydrated, never written.
+  trip_photos: [
+    'id',
+    'trip_id',
+    'author_id',
+    'day_index',
+    'trip_place_id',
+    'storage_path',
+    'thumb_path',
+    'width',
+    'height',
+    'bytes',
+    'thumb_bytes',
+    'caption',
+    'taken_at',
+    'status',
+    'visibility',
+    'deleted',
+    'created_at',
+    'updated_at',
+  ],
 };
+
+/**
+ * M5 Y2.1 — the ONE documented exception to the restricted-name tripwire:
+ * `trip_place_reviews.rating` is the USER'S OWN 1–5 rating of a place they
+ * visited (0036 §1b comment), shown apart from and never averaged with
+ * Google ratings. It is allowlisted for THIS table only; `rating` on any
+ * other table (trip_places, suggestion cards, …) still throws
+ * SyncTosViolationError. The allowlist self-consistency test asserts that
+ * every allowlisted field that trips isRestrictedFieldName is listed here,
+ * and nothing else.
+ */
+export const TIER1_USER_CONTENT_EXCEPTIONS: {
+  readonly [K in Tier1Table]?: FieldsOf<Tier1RowTypes[K]>;
+} = {
+  trip_place_reviews: ['rating'],
+};
+
+/**
+ * M5 Y2.1 (0036 "SYNC CONTRACT"): roots whose Tier-1 replica holds ONLY the
+ * signed-in user's own rows (`author_id = auth.uid()`). RLS alone would also
+ * return other members' SHARED items, but when such an item is un-shared or
+ * tombstoned it silently leaves our RLS view — an incremental
+ * `updated_at > lastSync` pull or a realtime event can never deliver the
+ * fact, so a persisted replica would keep a private ghost copy forever.
+ * hydrate.ts therefore adds `author_id = <session user>` to the pull AND the
+ * realtime channel filter for these roots and drops any foreign row that
+ * still reaches the boundary. Other members' items are Tier-2 (TanStack,
+ * refetched, never persisted) — src/api/memories.ts.
+ */
+export const TIER1_AUTHOR_SCOPED_TABLES: ReadonlySet<Tier1Table> = new Set<Tier1Table>([
+  'trip_journal_entries',
+  'trip_place_reviews',
+  'trip_photos',
+]);
+
+export function isTier1AuthorScopedTable(table: Tier1Table): boolean {
+  return TIER1_AUTHOR_SCOPED_TABLES.has(table);
+}
 
 /** Frozen Set per table for O(1) sanitize lookups. */
 const TIER1_FIELD_SETS: { [K in Tier1Table]: ReadonlySet<string> } = Object.fromEntries(
@@ -405,11 +503,19 @@ export function tier1SelectColumns(table: Tier1Table): string {
 // thrown on.
 
 /** The write-enabled slice: trips + trip_places (S2.4), plus trip_expenses +
- * trip_packing_items (M4 X2.5 — offline expense entry and packing ticks).
- * The other four roots stay read-only until a later slice widens them. */
+ * trip_packing_items (M4 X2.5 — offline expense entry and packing ticks),
+ * plus the M5 Y2.1 memory roots (journal + reviews create/update; photos
+ * update-only). trip_days, trip_accommodations, trip_place_reactions and
+ * trip_place_comments stay read-only until a later slice widens them. */
 export type Tier1WriteTable = Extract<
   Tier1Table,
-  'trips' | 'trip_places' | 'trip_expenses' | 'trip_packing_items'
+  | 'trips'
+  | 'trip_places'
+  | 'trip_expenses'
+  | 'trip_packing_items'
+  | 'trip_journal_entries'
+  | 'trip_place_reviews'
+  | 'trip_photos'
 >;
 
 /**
@@ -488,7 +594,33 @@ export const TIER1_WRITE_FIELDS: { readonly [K in Tier1WriteTable]: FieldsOf<Tie
   // X2.5. `auto` (seeded-by-template flag) is CREATE-only — see
   // TIER1_WRITE_STRUCTURAL: an existing row's provenance is not re-writable.
   trip_packing_items: ['label', 'category', 'checked', 'deleted'],
+  // M5 Y2.1 (0036). Author-only writes (RLS + guard). `day_index` here is
+  // the journal's own "which day" label, not optimizer order (C1 concerns
+  // trip_places order only). `deleted` = tombstone.
+  trip_journal_entries: ['day_index', 'body', 'visibility', 'deleted'],
+  // `rating` = the user's own stars (TIER1_USER_CONTENT_EXCEPTIONS).
+  // trip_place_id is CREATE-only (immutable server-side: immutable_column).
+  trip_place_reviews: ['rating', 'body', 'visibility', 'deleted'],
+  // trip_photos is UPDATE-only through the store (TIER1_UPDATE_ONLY_TABLES):
+  // rows are born through the upload queue (online INSERT → server-stamped
+  // paths → upload → ready). These user fields may change offline.
+  // `trip_place_id` is deliberately NOT here: the plugin sends FULL rows, so
+  // a stale place id (place hard-deleted server-side → SET NULL) would ride
+  // along on every caption/visibility edit and fail the FK/RLS check forever
+  // (infinite-retry wedge). Re-attaching a photo to a place is an online
+  // PostgREST update (src/api/memories.ts useUpdatePhoto).
+  trip_photos: ['day_index', 'caption', 'taken_at', 'visibility', 'deleted'],
 };
+
+/**
+ * M5 Y2.1: write-enabled roots whose rows are NEVER created through the
+ * store — the engine gets `actions: ['read','update']` (no create). A
+ * trip_photos row must be INSERTed online by the upload queue so the server
+ * can stamp its storage paths before the files are uploaded to them.
+ */
+export const TIER1_UPDATE_ONLY_TABLES: ReadonlySet<Tier1WriteTable> = new Set<Tier1WriteTable>([
+  'trip_photos',
+]);
 
 export const TIER1_WRITE_TABLES = Object.keys(TIER1_WRITE_FIELDS) as readonly Tier1WriteTable[];
 
@@ -533,6 +665,19 @@ const TIER1_WRITE_STRUCTURAL: {
   // template seeder, false for manual adds) and is dropped as server_only on
   // every later full-row update — nothing re-labels a row's origin.
   trip_packing_items: { always: new Set(['id']), createOnly: new Set(['trip_id', 'auto']) },
+  // M5 Y2.1: `author_id` rides on the CREATE so the unacked local row is
+  // attributable (the author-scoped facades filter on it); the 0036 guard
+  // verifies it equals auth.uid() (author_mismatch otherwise) and it is
+  // immutable afterwards, so updates drop it as server_only.
+  trip_journal_entries: { always: new Set(['id']), createOnly: new Set(['trip_id', 'author_id']) },
+  // trip_place_id: a new review names its place; immutable afterwards
+  // (0036 guard immutable_column; 0038 lets only the FK action null it).
+  trip_place_reviews: {
+    always: new Set(['id']),
+    createOnly: new Set(['trip_id', 'author_id', 'trip_place_id']),
+  },
+  // Update-only root (TIER1_UPDATE_ONLY_TABLES): nothing is create-only.
+  trip_photos: { always: new Set(['id']), createOnly: new Set() },
 };
 
 /** Why a field was dropped from a write payload:

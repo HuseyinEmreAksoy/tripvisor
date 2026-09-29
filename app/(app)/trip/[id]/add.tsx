@@ -24,13 +24,13 @@ import {
   KeyboardAvoid,
   PoweredByGoogle,
   Screen,
+  screenColumnStyle,
   TextField,
 } from '@/components';
 import { DayPicker, dayLabel, tripDayCount } from '@/components/add-place/DayPicker';
 import { noSearchResults, searchPrompt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import { useT } from '@/i18n';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useSafeBack } from '@/hooks/useSafeBack';
 import {
   PlacesError,
@@ -62,8 +62,6 @@ function useDebounced<T>(value: T, ms = 250): T {
   return debounced;
 }
 
-// Max content width for the desktop centred layout of the add-place screen.
-const ADD_DESKTOP_MAX_WIDTH = 720;
 
 // How many milliseconds the "Added to Day N" toast stays visible.
 const TOAST_DURATION_MS = 2500;
@@ -96,8 +94,6 @@ export default function AddPlace() {
   const goBack = useSafeBack(`/trip/${tripId}`);
   const t = useTheme();
   const { t: tx } = useT('errors');
-  const bp = useBreakpoint();
-  const isDesktop = bp === 'desktop';
   const { sessionToken, rotate: rotateSessionToken } = useAutocompleteSession();
 
   const [query, setQuery] = useState('');
@@ -256,12 +252,11 @@ export default function AddPlace() {
     !!picked &&
     existingPlaces.some((p) => p.google_place_id === picked.placeId);
 
-  const desktopWrap = isDesktop
-    ? { maxWidth: ADD_DESKTOP_MAX_WIDTH, width: '100%' as const, alignSelf: 'center' as const }
-    : undefined;
+  // M5 Y2.4: the shared 640 px form column (a no-op below that width).
+  const desktopWrap = screenColumnStyle('form');
 
   return (
-    <Screen padded={false}>
+    <Screen padded={false} width="form">
       <KeyboardAvoid>
         <View style={[{ padding: t.spacing.lg, gap: t.spacing.sm }, desktopWrap]}>
           <BackButton onPress={goBack} />

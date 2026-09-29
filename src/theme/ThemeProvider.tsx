@@ -19,6 +19,7 @@ import { storageAdapter } from '@/api/storage';
 import { useIsHydrating } from '@/hooks/useIsHydrating';
 import {
   brandTypography,
+  layout,
   radius,
   shadows,
   spacing,
@@ -39,6 +40,8 @@ export interface Theme {
   radius: typeof radius;
   typography: typeof typography;
   shadows: typeof shadows;
+  /** Semantic spacing + desktop column widths (M5 Y2.4). */
+  layout: typeof layout;
 }
 
 // ─── Internal context shape ───────────────────────────────────────────────────
@@ -147,6 +150,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         radius,
         typography: brandTypography(fontsLoaded),
         shadows,
+        layout,
       },
       mode: activeMode,
       setMode,

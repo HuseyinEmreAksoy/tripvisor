@@ -9,8 +9,9 @@
  *   <MapUnavailable markers={markers} polylines={polylines} />
  */
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useTheme } from '@/theme';
-import { dayColor, DAY_COLORS, type MapViewProps } from './Map/types';
+import { ON_DAY_COLOR, dayColor, dayTint, useTheme } from '@/theme';
+import { Trans, useT } from '@/i18n';
+import type { MapViewProps } from './Map/types';
 
 type Props = MapViewProps & {
   /** Env var the hint tells the developer to set. Default: the web key. */
@@ -22,6 +23,7 @@ export function MapUnavailable({
   keyName = 'EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY',
 }: Props) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   // Defensive: tolerate transient undefined during data hydration.
   const markers = maybeMarkers ?? [];
 
@@ -55,22 +57,19 @@ export function MapUnavailable({
       ]}
       accessible
       accessibilityRole="summary"
-      accessibilityLabel="Map unavailable — list of places"
+      accessibilityLabel={tx('mapUnavailable.a11y')}
     >
       {/* Title */}
       <Text style={[t.typography.subtitle, { color: t.colors.text }]}>
-        Map unavailable
+        {tx('mapUnavailable.title')}
       </Text>
       <Text style={[t.typography.body, { color: t.colors.textMuted, marginTop: t.spacing.xs }]}>
-        Set{' '}
-        <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
-          {keyName}
-        </Text>{' '}
-        to view the map — see{' '}
-        <Text style={{ fontFamily: 'monospace', color: t.colors.text }}>
-          docs/google-maps-setup.md
-        </Text>
-        . Here's the list of places:
+        <Trans
+          t={tx}
+          i18nKey="mapUnavailable.hint"
+          values={{ keyName, doc: 'docs/google-maps-setup.md' }}
+          components={{ code: <Text style={{ fontFamily: 'monospace', color: t.colors.text }} /> }}
+        />
       </Text>
 
       {markers.length === 0 ? (
@@ -80,7 +79,7 @@ export function MapUnavailable({
             { color: t.colors.textMuted, marginTop: t.spacing.md, textAlign: 'center' },
           ]}
         >
-          No places added yet.
+          {tx('mapUnavailable.empty')}
         </Text>
       ) : (
         <ScrollView
@@ -95,10 +94,8 @@ export function MapUnavailable({
                 style={[
                   styles.dayChip,
                   {
-                    backgroundColor:
-                      dayIndex < 0
-                        ? t.colors.bgMuted
-                        : `${dayColor(dayIndex)}22`, // 13% opacity hex tint
+                    // Y2.4: the theme day tint (was a raw hex-alpha suffix).
+                    backgroundColor: dayIndex < 0 ? t.colors.bgMuted : dayTint(dayIndex, t.name),
                     borderColor: dayIndex < 0 ? t.colors.border : dayColor(dayIndex),
                     borderRadius: t.radius.pill,
                     paddingHorizontal: t.spacing.sm,
@@ -113,12 +110,14 @@ export function MapUnavailable({
                   style={[
                     t.typography.caption,
                     {
-                      color: dayIndex < 0 ? t.colors.textMuted : dayColor(dayIndex),
+                      // Day colours are never text colours (AA): the chip's
+                      // border + tint carry the day; the label stays ink.
+                      color: dayIndex < 0 ? t.colors.textMuted : t.colors.text,
                       fontWeight: '600',
                     },
                   ]}
                 >
-                  {dayIndex < 0 ? 'Unscheduled' : `Day ${dayIndex + 1}`}
+                  {dayIndex < 0 ? tx('mapUnavailable.unscheduled') : tx('dayLabel', { day: dayIndex + 1 })}
                 </Text>
               </View>
 
@@ -154,7 +153,7 @@ export function MapUnavailable({
                         t.typography.small,
                         {
                           color:
-                            dayIndex < 0 ? t.colors.textMuted : '#FFFFFF',
+                            dayIndex < 0 ? t.colors.textMuted : ON_DAY_COLOR,
                           fontWeight: '700',
                           textAlign: 'center',
                         },

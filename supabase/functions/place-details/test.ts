@@ -398,3 +398,36 @@ test('upstream timeout → 504', async () => {
     globalThis.fetch = original;
   }
 });
+
+// ---- M5 Y2.5: lang -> Google languageCode ------------------------------------
+
+function detailsRequest(extra: Record<string, unknown>): Request {
+  return new Request('http://localhost/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ placeId: 'pid-lang', fields: ['id', 'displayName'], ...extra }),
+  });
+}
+
+test('Y2.5: lang=tr is sent as languageCode=tr; no lang defaults to en', async () => {
+  const mock = mockGoogle({ body: { id: 'pid-lang', displayName: { text: 'Ayasofya' } } });
+  try {
+    assertEquals((await handler(detailsRequest({ lang: 'tr' }))).status, 200);
+    assertEquals((await handler(detailsRequest({}))).status, 200);
+    const codes = mock.calls.map((c) => new URL(c.url).searchParams.get('languageCode'));
+    assertEquals(codes, ['tr', 'en']);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.5: an unsupported lang is a 400 and Google is never called', async () => {
+  const mock = mockGoogle({ body: {} });
+  try {
+    const res = await handler(detailsRequest({ lang: 'fr' }));
+    assertEquals(res.status, 400);
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});

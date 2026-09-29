@@ -14,10 +14,11 @@
 // `amount` + `currency`, and `fx_rate` = HOME units per 1 ORIGINAL unit plus
 // `fx_date`. That is exactly `fetchFxRate(original, home, date).rate`.
 //
-// Query keys are LOCAL (shared-file rule for parallel waves): Y2.2 owns
-// `_keys.ts` and the persister allowlist, and may re-home these keys there.
-// The root is 'fx'. Nothing here is Google data, so persisting it is allowed
-// (ADR-0012 §4), but that opt-in is Y2.2's, not this file's.
+// Query keys are LOCAL (shared-file rule for parallel waves). The root is
+// 'fx'. Nothing here is Google data, so it IS persisted (ADR-0012 §4): Y2.2
+// added 'fx' to the persister allowlist (offline.{web,native}.ts, successful
+// queries only) — that is the offline "last-known rate map" the expense
+// facade (expense-fx.ts) freezes rates from when there is no network.
 
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -127,6 +128,9 @@ export const fxKeys = {
     const n = normParams(p);
     return [...fxKeys.all, 'rates', n.base, n.date, n.quotes.join(',')] as const;
   },
+  /** One pair (`useFxRate`); Y2.2's expense facade reads/fills the same entry. */
+  pair: (from: string, to: string, date: string = 'latest') =>
+    [...fxKeys.all, 'pair', normCode(from), normCode(to), date] as const,
   currencies: () => [...fxKeys.all, 'currencies'] as const,
 };
 
@@ -217,6 +221,11 @@ const LATEST_STALE_MS = 6 * HOUR;
 /** A past day's rates never change; keep them for the session. */
 const HISTORICAL_STALE_MS = 24 * HOUR;
 
+/** Stale time for an fx query on `date` ('latest' refreshes every 6 h; a past day is final). */
+export function fxStaleTime(date: string = 'latest'): number {
+  return date === 'latest' ? LATEST_STALE_MS : HISTORICAL_STALE_MS;
+}
+
 function retry(failureCount: number, error: unknown): boolean {
   if (isPermanentFxError(error)) return false;
   return failureCount < 2;
@@ -246,7 +255,7 @@ export function useFxRate(
   const f = ready ? normCode(from!) : '';
   const t = ready ? normCode(to!) : '';
   return useQuery<FxPairRate, FxError | Error>({
-    queryKey: [...fxKeys.all, 'pair', f, t, date] as const,
+    queryKey: ready ? fxKeys.pair(f, t, date) : ([...fxKeys.all, 'pair', '', '', date] as const),
     enabled: (options.enabled ?? true) && ready,
     staleTime: date === 'latest' ? LATEST_STALE_MS : HISTORICAL_STALE_MS,
     gcTime: 24 * HOUR,

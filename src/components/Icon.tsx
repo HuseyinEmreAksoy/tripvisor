@@ -77,6 +77,19 @@ import {
   SunMoon,
   Trash2,
   Smartphone,
+  // M5 Y2.4: place-category tiles (PlaceThumb).
+  Binoculars,
+  Camera,
+  Castle,
+  Coffee,
+  FerrisWheel,
+  Landmark,
+  PawPrint,
+  ShoppingBag,
+  Trees,
+  UtensilsCrossed,
+  Waves,
+  Wine,
 } from 'lucide-react-native';
 import { useTheme } from '@/theme';
 
@@ -141,6 +154,18 @@ const REGISTRY = {
   'sun-moon': SunMoon,
   trash: Trash2,
   smartphone: Smartphone,
+  binoculars: Binoculars,
+  camera: Camera,
+  castle: Castle,
+  coffee: Coffee,
+  'ferris-wheel': FerrisWheel,
+  landmark: Landmark,
+  'paw-print': PawPrint,
+  'shopping-bag': ShoppingBag,
+  trees: Trees,
+  utensils: UtensilsCrossed,
+  waves: Waves,
+  wine: Wine,
 } as const;
 
 export type IconName = keyof typeof REGISTRY;

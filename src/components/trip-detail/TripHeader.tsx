@@ -1,13 +1,18 @@
 /**
- * TripHeader — shared page header for the trip detail route (extracted from
- * app/(app)/trip/[id]/index.tsx in v2 Phase N1 step 1.1 — pure refactor).
+ * TripHeader — the trip detail header (extracted in v2 N1 1.1; phone
+ * layout M4 X2.2; cover hero M5 Y2.4).
  *
- * Two layouts (v2 M4 X2.2):
- *   - `compact` (phones/tablets): one row — back · title + dates · ⋯ menu —
- *     plus a single horizontally scrolling chip row (optimize status, travel
- *     time, distance, stops). The plan gets the vertical space.
- *   - full (desktop): back + title + Print + ⋯ + meta pill + optimize pill +
- *     the time-first route summary card, as before.
+ * The hero: the trip's cover (Google cover → generated cover, `TripCover`)
+ * under a scrim, with the status chip ("Day 3 of 7" / "In 12 days" /
+ * "Relive"), the title and the dates in white.
+ *   - Phones (`compact`): a 208 px hero that collapses to the M4 one-line bar
+ *     (back · title + dates · ⋯) when the list scrolls or on the Map tab
+ *     (`collapsed`, owned by the route shell — see heroCollapse.ts). The
+ *     height animates unless the user prefers reduced motion.
+ *   - Desktop: a 200 px banner with back, Print and ⋯ on the image.
+ * Below the hero, one chip row: places · travel time · distance · the
+ * optimize status pill (a translucent pill would not hold AA on a photo,
+ * so it never sits on the image).
  *
  * The ⋯ button opens `TripMenuSheet` (below), owned by the route shell:
  * Trip settings · Print · Share · Duplicate · People.
@@ -15,23 +20,20 @@
  * Pure presentational: trip/legs data and the optimize mutation state come
  * from the route shell, which owns the auto-optimize debounce.
  */
-import { useEffect, useMemo, useRef } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import {
-  BackButton,
-  BottomSheet,
-  Button,
-  Heading,
-  Icon,
-  StatusPill,
-  TripCostRollup,
-  type IconName,
-} from '@/components';
-import { humanizeDuration } from '@/components/TripCostRollup';
+import { useEffect, useRef } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackButton, BottomSheet, Icon, StatusPill, type IconName } from '@/components';
+import { TripCover } from '@/components/TripCover';
+import { TripStatusChip } from '@/components/TripStatusChip';
+import { tripPhase } from '@/components/tripStatus';
+import { transportKey } from '@/components/transportModes';
 import { useTheme } from '@/theme';
-import { useT } from '@/i18n';
+import { formatDateRange, useT } from '@/i18n';
 import { OptimizeError, type Trip, type TripLeg } from '@/api';
 import { IOS_MODAL_HANDOFF_MS } from './modalHandoff';
+import { CollapsingHero, GlassButton, RouteChipRow, heroTextStyle } from './TripHero';
+
+const BANNER_HEIGHT = 200;
 
 export interface TripHeaderProps {
   trip: Trip;
@@ -50,8 +52,10 @@ export interface TripHeaderProps {
   onPrint: () => void;
   /** Opens the ⋯ overflow menu (TripMenuSheet). */
   onOpenMenu: () => void;
-  /** Phone layout: one-line header + chip row instead of the summary card. */
+  /** Phone layout: collapsible hero + chip row. Desktop: banner. */
   compact?: boolean;
+  /** Phones: show the one-line bar instead of the full hero. */
+  collapsed?: boolean;
 }
 
 export function TripHeader({
@@ -65,9 +69,12 @@ export function TripHeader({
   onPrint,
   onOpenMenu,
   compact = false,
+  collapsed = false,
 }: TripHeaderProps) {
   const t = useTheme();
   const { t: tx } = useT('trip');
+  const phase = tripPhase(trip.start_date, trip.end_date);
+  const dates = formatDateRange(trip.start_date, trip.end_date) ?? tx('header.noDates');
 
   const statusPill = optimizePending ? (
     <StatusPill tone="info" label={tx('optimize.running')} loading />
@@ -81,186 +88,77 @@ export function TripHeader({
   ) : null;
 
   const menuButton = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Trip menu"
-      accessibilityHint="Trip settings, print, share and more"
+    <GlassButton
+      icon="ellipsis-vertical"
+      accessibilityLabel={tx('header.menu')}
+      accessibilityHint={tx('header.menuHint')}
       onPress={onOpenMenu}
-      hitSlop={6}
-      style={({ pressed }) => [
-        styles.menuBtn,
-        {
-          backgroundColor: pressed ? t.colors.bgMuted : t.colors.bgElevated,
-          borderColor: t.colors.border,
-          borderRadius: t.radius.pill,
-        },
-      ]}
-    >
-      <Icon name="ellipsis-vertical" size={20} color={t.colors.text} />
-    </Pressable>
+    />
   );
+  const backButton = <BackButton onPress={onBack} label={tx('header.back')} tone="onImage" />;
 
   if (compact) {
     return (
-      <View style={{ backgroundColor: t.colors.gradientSubtle }}>
-        <View
-          style={{
-            paddingHorizontal: t.spacing.lg,
-            paddingTop: t.spacing.sm,
-            paddingBottom: t.spacing.sm,
-            gap: t.spacing.sm,
-          }}
-        >
-          <View style={styles.compactRow}>
-            <BackButton onPress={onBack} label="Trips" />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text
-                accessibilityRole="header"
-                numberOfLines={1}
-                style={[t.typography.bodyStrong, { color: t.colors.text, fontSize: 18 }]}
-              >
-                {trip.title}
-              </Text>
-              <Text numberOfLines={1} style={[t.typography.caption, { color: t.colors.textMuted }]}>
-                {formatRange(trip.start_date, trip.end_date)}
-              </Text>
-            </View>
-            {menuButton}
-          </View>
+      <View>
+        <CollapsingHero
+          trip={trip}
+          collapsed={collapsed}
+          phaseChip={<TripStatusChip phase={phase} tone="onImage" />}
+          dates={dates}
+          back={backButton}
+          menu={menuButton}
+        />
+        <View style={{ paddingHorizontal: t.spacing.lg, paddingVertical: t.spacing.sm }}>
           <RouteChipRow legs={legs} placesCount={placesCount} statusPill={statusPill} />
         </View>
       </View>
     );
   }
 
+  const meta = tx('header.meta', {
+    dates,
+    hours: trip.daily_hours_budget,
+    mode: tx(transportKey(trip.transport_mode)),
+  });
+
   return (
-    <View style={{ backgroundColor: t.colors.gradientSubtle }}>
-      <View style={{ padding: t.spacing.lg, gap: t.spacing.md }}>
-        <BackButton onPress={onBack} label="Trips" />
-        <View style={styles.titleRow}>
-          <View style={{ flex: 1, minWidth: 200, gap: 2 }}>
-            <Text style={[t.typography.overline, { color: t.colors.primaryInk }]}>
-              Itinerary
-            </Text>
-            <Heading level={1}>{trip.title}</Heading>
-          </View>
+    <View style={{ paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.lg, gap: t.spacing.md }}>
+      <TripCover
+        tripId={trip.id}
+        coverPlaceId={trip.cover_photo_google_place_id}
+        photoWidth={1600}
+        scrim="hero"
+        style={{ height: BANNER_HEIGHT, borderRadius: t.radius.xl }}
+      >
+        <View style={[styles.bannerTop, { padding: t.spacing.lg }]}>
+          {backButton}
           <View style={styles.actionsRow}>
-            <Button
-              label="Print"
-              variant="secondary"
-              fullWidth={false}
+            <GlassButton
+              icon="printer"
+              label={tx('header.print')}
+              accessibilityLabel={tx('header.printA11y')}
               onPress={onPrint}
-              accessibilityLabel="Print itinerary"
             />
             {menuButton}
           </View>
         </View>
-        <View style={styles.metaRow}>
-          <View style={{
-            backgroundColor: t.colors.bgElevated,
-            borderWidth: 1,
-            borderColor: t.colors.border,
-            borderRadius: t.radius.pill,
-            paddingHorizontal: t.spacing.md,
-            paddingVertical: 5,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            ...t.shadows.sm(t.colors.shadowColor),
-          }}>
-            <Icon name="calendar" size={13} color={t.colors.textMuted} />
-            <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-              {formatRange(trip.start_date, trip.end_date)} · {trip.daily_hours_budget}h/day · {trip.transport_mode}
-            </Text>
-          </View>
-          {statusPill}
-        </View>
-
-        {/* Route summary card (time-first, v2 Phase 0.1) */}
-        <TripCostRollup legs={legs} />
-      </View>
-    </View>
-  );
-}
-
-/**
- * One-line replacement for the route summary card on phones: the same
- * time-first totals (day-assigned legs only — day_index -1 rows are the
- * optimizer's matrix cache, see TripCostRollup) as compact chips.
- */
-function RouteChipRow({
-  legs,
-  placesCount,
-  statusPill,
-}: {
-  legs: TripLeg[];
-  placesCount: number;
-  statusPill: React.ReactNode;
-}) {
-  const t = useTheme();
-  const totals = useMemo(() => {
-    const routeLegs = legs.filter((l) => l.day_index >= 0);
-    if (routeLegs.length === 0) return null;
-    return {
-      seconds: routeLegs.reduce((s, l) => s + l.duration_seconds, 0),
-      km: routeLegs.reduce((s, l) => s + l.distance_meters, 0) / 1000,
-    };
-  }, [legs]);
-
-  const chips: Array<{ key: string; icon: IconName; label: string; a11y: string }> = [
-    {
-      key: 'stops',
-      icon: 'map-pin',
-      label: `${placesCount} ${placesCount === 1 ? 'place' : 'places'}`,
-      a11y: `${placesCount} places`,
-    },
-  ];
-  if (totals) {
-    chips.push(
-      {
-        key: 'time',
-        icon: 'clock',
-        label: humanizeDuration(totals.seconds),
-        a11y: `Total travel time ${humanizeDuration(totals.seconds)}`,
-      },
-      {
-        key: 'km',
-        icon: 'compass',
-        label: `${totals.km.toFixed(0)} km`,
-        a11y: `Total distance ${totals.km.toFixed(0)} kilometres`,
-      },
-    );
-  }
-
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: t.spacing.sm, alignItems: 'center' }}
-      accessibilityLabel="Route summary"
-    >
-      {chips.map((c) => (
-        <View
-          key={c.key}
-          accessible
-          accessibilityLabel={c.a11y}
-          style={[
-            styles.chip,
-            {
-              backgroundColor: t.colors.bgElevated,
-              borderColor: t.colors.border,
-              borderRadius: t.radius.pill,
-            },
-          ]}
-        >
-          <Icon name={c.icon} size={14} color={t.colors.textMuted} />
-          <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600' }]}>
-            {c.label}
+        <View style={[styles.bannerBottom, { padding: t.spacing.xl, gap: t.spacing.xs }]}>
+          <TripStatusChip phase={phase} tone="onImage" />
+          <Text
+            accessibilityRole="header"
+            aria-level={1}
+            numberOfLines={1}
+            style={[t.typography.title, heroTextStyle(t)]}
+          >
+            {trip.title}
+          </Text>
+          <Text numberOfLines={1} style={[t.typography.body, heroTextStyle(t)]}>
+            {meta}
           </Text>
         </View>
-      ))}
-      {statusPill}
-    </ScrollView>
+      </TripCover>
+      <RouteChipRow legs={legs} placesCount={placesCount} statusPill={statusPill} />
+    </View>
   );
 }
 
@@ -293,6 +191,7 @@ export function TripMenuSheet({
   onDuplicate,
   duplicating = false,
 }: TripMenuSheetProps) {
+  const { t: tx } = useT('trip');
   // iOS drops a modal presented while this one is still dismissing, so the
   // chosen action runs after the handoff delay there (settings/share sheets).
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -309,22 +208,22 @@ export function TripMenuSheet({
     else run();
   };
   const rows: Array<{ key: string; icon: IconName; label: string; a11y: string; run: () => void }> = [
-    { key: 'settings', icon: 'settings', label: 'Trip settings', a11y: 'Open trip settings', run: onOpenSettings },
-    { key: 'print', icon: 'printer', label: 'Print itinerary', a11y: 'Print itinerary', run: onPrint },
-    { key: 'share', icon: 'share-2', label: 'Share trip', a11y: 'Share this trip', run: onShare },
-    { key: 'people', icon: 'users', label: 'People', a11y: 'Manage collaborators', run: onOpenPeople },
+    { key: 'settings', icon: 'settings', label: tx('menu.settings'), a11y: tx('menu.settingsA11y'), run: onOpenSettings },
+    { key: 'print', icon: 'printer', label: tx('menu.print'), a11y: tx('menu.print'), run: onPrint },
+    { key: 'share', icon: 'share-2', label: tx('menu.share'), a11y: tx('menu.shareA11y'), run: onShare },
+    { key: 'people', icon: 'users', label: tx('menu.people'), a11y: tx('menu.peopleA11y'), run: onOpenPeople },
   ];
   if (onDuplicate) {
     rows.push({
       key: 'duplicate',
       icon: 'file-text',
-      label: duplicating ? 'Duplicating…' : 'Duplicate trip',
-      a11y: 'Duplicate this trip',
+      label: duplicating ? tx('menu.duplicating') : tx('menu.duplicate'),
+      a11y: tx('menu.duplicateA11y'),
       run: onDuplicate,
     });
   }
   return (
-    <BottomSheet visible={visible} onClose={onClose} accessibilityLabel="Trip menu">
+    <BottomSheet visible={visible} onClose={onClose} accessibilityLabel={tx('header.menu')}>
       {rows.map((r) => (
         <MenuRow
           key={r.key}
@@ -432,43 +331,18 @@ export function pillForOptimizeError(
   return { tone: 'danger', labelKey: 'optimize.failed' };
 }
 
-function formatRange(start: string | null, end: string | null): string {
-  if (start && end) return `${start} → ${end}`;
-  return start ?? end ?? 'No dates set';
-}
-
 const styles = StyleSheet.create({
-  titleRow: {
+  bannerTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
   },
+  bannerBottom: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   actionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  compactRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  menuBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
   menuRow: {
     flexDirection: 'row',
     alignItems: 'center',

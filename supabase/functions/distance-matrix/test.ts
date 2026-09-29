@@ -1,9 +1,14 @@
 // Run: deno test --allow-env --allow-net supabase/functions/distance-matrix/test.ts
+// @ts-ignore -- Deno URL import (unresolvable under the Expo tsconfig)
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import process from 'node:process';
 import { test } from 'node:test';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { handler as rawHandler } from './index.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
 import { _setQuotaRpcForTests, _setTokenVerifierForTests } from '../_shared/auth.ts';
+// @ts-ignore -- Deno `.ts`-suffixed import
+import { _resetRoutingStateForTests } from '../_shared/routing.ts';
 
 // Audit #2: the function requires a real user. Every request below is
 // authenticated as a fixed user through the verifier hook (unless it sets
@@ -238,5 +243,63 @@ test('upstream timeout → 504', async () => {
     assertEquals(res.status, 504);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+// ---- M5 Y2.3: the answering backend is named (trip_legs.source) ------------
+
+test('Y2.3: the Google path names its provider', async () => {
+  const mock = mockGoogle({
+    body: [{ originIndex: 0, destinationIndex: 0, duration: '0s', distanceMeters: 0, condition: 'ROUTE_EXISTS' }],
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origins: [{ lat: 38.7, lng: -9.1 }],
+          destinations: [{ lat: 38.7, lng: -9.1 }],
+          mode: 'walking',
+        }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as { legs: unknown[]; provider: string };
+    assertEquals(body.provider, 'google');
+    assertEquals(body.legs.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('Y2.3: the ORS path names its provider', async () => {
+  process.env.ROUTING_PROVIDER = 'ors';
+  process.env.ORS_API_KEY = 'test-ors-key';
+  _resetRoutingStateForTests();
+  const mock = mockGoogle({ body: { durations: [[0, 120.4], [130, 0]], distances: [[0, 900], [950, 0]] } });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          origins: [{ lat: 38.7, lng: -9.1 }, { lat: 38.71, lng: -9.12 }],
+          destinations: [{ lat: 38.7, lng: -9.1 }, { lat: 38.71, lng: -9.12 }],
+          mode: 'bicycling',
+        }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    assertStringIncludes(mock.calls[0]!.url, 'openrouteservice.org/v2/matrix/cycling-regular');
+    const body = (await res.json()) as { legs: Array<{ durationSeconds: number }>; provider: string };
+    assertEquals(body.provider, 'ors');
+    assertEquals(body.legs.length, 4);
+    assertEquals(body.legs[1]?.durationSeconds, 120);
+  } finally {
+    mock.restore();
+    delete process.env.ROUTING_PROVIDER;
+    delete process.env.ORS_API_KEY;
+    _resetRoutingStateForTests();
   }
 });

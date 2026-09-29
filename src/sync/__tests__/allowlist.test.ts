@@ -8,12 +8,16 @@
  */
 import { describe, expect, it } from '@jest/globals';
 import {
+  TIER1_AUTHOR_SCOPED_TABLES,
   TIER1_FIELDS,
   TIER1_TABLES,
+  TIER1_UPDATE_ONLY_TABLES,
+  TIER1_USER_CONTENT_EXCEPTIONS,
   TIER1_WRITE_FIELDS,
   TIER1_WRITE_TABLES,
   SyncTosViolationError,
   isRestrictedFieldName,
+  isTier1AuthorScopedTable,
   isTier1WriteTable,
   sanitizeForTier1,
   sanitizeForTier1Write,
@@ -111,7 +115,7 @@ describe('sanitizeForTier1 — default-deny projection', () => {
 });
 
 describe('allowlist self-consistency (the two layers cannot drift)', () => {
-  it('covers exactly the eight Tier-1 roots, and never trip_legs (R4)', () => {
+  it('covers exactly the eight 0027 roots + the three M5 memory roots, and never trip_legs (R4)', () => {
     expect([...TIER1_TABLES].sort()).toEqual(
       [
         'trips',
@@ -122,19 +126,27 @@ describe('allowlist self-consistency (the two layers cannot drift)', () => {
         'trip_place_reactions',
         'trip_place_comments',
         'trip_packing_items',
+        'trip_journal_entries',
+        'trip_place_reviews',
+        'trip_photos',
       ].sort(),
     );
     expect(TIER1_TABLES).not.toContain('trip_legs');
   });
 
-  it.each(TIER1_TABLES)('no allowlisted column on "%s" trips the restricted-name tripwire', (table) => {
+  it.each(TIER1_TABLES)('no allowlisted column on "%s" trips the restricted-name tripwire (bar the documented exception)', (table) => {
+    const exceptions = new Set<string>((TIER1_USER_CONTENT_EXCEPTIONS[table] ?? []) as readonly string[]);
     for (const field of TIER1_FIELDS[table]) {
       expect({ table, field, restricted: isRestrictedFieldName(field) }).toEqual({
         table,
         field,
-        restricted: false,
+        restricted: exceptions.has(field),
       });
     }
+  });
+
+  it('the user-content exception is exactly trip_place_reviews.rating', () => {
+    expect(TIER1_USER_CONTENT_EXCEPTIONS).toEqual({ trip_place_reviews: ['rating'] });
   });
 
   it('the sanctioned exception: *google_place_id passes despite the "photo" substring', () => {
@@ -146,7 +158,12 @@ describe('allowlist self-consistency (the two layers cannot drift)', () => {
 
   it.each(TIER1_TABLES)('tier1SelectColumns("%s") is derived from the same allowlist', (table) => {
     expect(tier1SelectColumns(table)).toBe(TIER1_FIELDS[table].join(','));
-    expect(tier1SelectColumns(table)).not.toMatch(/rating|review|photos|opening/);
+    const exceptions = new Set<string>((TIER1_USER_CONTENT_EXCEPTIONS[table] ?? []) as readonly string[]);
+    const nonException = tier1SelectColumns(table)
+      .split(',')
+      .filter((c) => !exceptions.has(c))
+      .join(',');
+    expect(nonException).not.toMatch(/rating|review|photos|opening/);
   });
 
   it.each(TIER1_TABLES)('every "%s" allowlist entry includes the sync-critical columns', (table) => {
@@ -314,10 +331,13 @@ describe('sanitizeForTier1Write — structural ids (engine requirements)', () =>
 });
 
 describe('write-allowlist self-consistency', () => {
-  it('write-enables exactly trips + trip_places (S2.4) + trip_expenses + trip_packing_items (X2.5)', () => {
+  it('write-enables trips + trip_places (S2.4), expenses + packing (X2.5) and the M5 memory roots (Y2.1)', () => {
     expect([...TIER1_WRITE_TABLES].sort()).toEqual([
       'trip_expenses',
+      'trip_journal_entries',
       'trip_packing_items',
+      'trip_photos',
+      'trip_place_reviews',
       'trip_places',
       'trips',
     ]);
@@ -363,11 +383,12 @@ describe('write-allowlist self-consistency', () => {
     // C1: day_index is OPTIMIZER order on trip_places (server-only). On
     // trip_expenses it is the user's "spent on day N" label — writable there.
     if (table === 'trip_places') expect(fields).not.toContain('day_index');
+    const exceptions = new Set<string>((TIER1_USER_CONTENT_EXCEPTIONS[table] ?? []) as readonly string[]);
     for (const field of fields) {
       expect({ table, field, restricted: isRestrictedFieldName(field) }).toEqual({
         table,
         field,
-        restricted: false,
+        restricted: exceptions.has(field),
       });
     }
   });
@@ -553,5 +574,129 @@ describe('M5 Y1.1: money + leg-mode fields', () => {
   it('trip_legs (and its new `source` provenance) never becomes a Tier-1 root (R4)', () => {
     expect(TIER1_TABLES).not.toContain('trip_legs');
     expect(Object.prototype.hasOwnProperty.call(TIER1_WRITE_FIELDS, 'trip_legs')).toBe(false);
+  });
+});
+
+// ===========================================================================
+// M5 Y2.1 — memory roots (0036/0038): author-scoped, server-owned columns
+// read-only, the review `rating` exception scoped to its table
+// ===========================================================================
+
+describe('M5 Y2.1: memory roots', () => {
+  const T = '2026-07-14T10:00:00Z';
+
+  it('are author-scoped (own rows only) and trip_photos is update-only', () => {
+    expect([...TIER1_AUTHOR_SCOPED_TABLES].sort()).toEqual(['trip_journal_entries', 'trip_photos', 'trip_place_reviews']);
+    expect(isTier1AuthorScopedTable('trip_places')).toBe(false);
+    expect(isTier1AuthorScopedTable('trip_place_comments')).toBe(false);
+    expect([...TIER1_UPDATE_ONLY_TABLES]).toEqual(['trip_photos']);
+    for (const t of ['trip_journal_entries', 'trip_place_reviews', 'trip_photos'] as const) {
+      expect(TIER1_FIELDS[t]).toContain('author_id');
+      expect(TIER1_FIELDS[t]).toContain('visibility');
+      expect(TIER1_FIELDS[t]).toContain('deleted');
+    }
+  });
+
+  it('review `rating` (USER stars) is allowed on trip_place_reviews ONLY — trip_places.rating still throws', () => {
+    expect(sanitizeForTier1('trip_place_reviews', { id: 'r1', rating: 4, body: 'Great view' })).toEqual({
+      id: 'r1',
+      rating: 4,
+      body: 'Great view',
+    });
+    expect(sanitizeForTier1Write('trip_place_reviews', { id: 'r1', rating: 5 })).toEqual({ id: 'r1', rating: 5 });
+    expect(() => sanitizeForTier1('trip_places', { id: 'p1', rating: 4.5 })).toThrow(SyncTosViolationError);
+    expect(() => sanitizeForTier1Write('trip_places', { id: 'p1', rating: 4.5 })).toThrow(SyncTosViolationError);
+    expect(() => sanitizeForTier1('trip_journal_entries', { id: 'j1', rating: 3 })).toThrow(SyncTosViolationError);
+    expect(() => sanitizeForTier1('trip_photos', { id: 'x1', rating: 3 })).toThrow(SyncTosViolationError);
+    // Google review content is still refused on the review table itself.
+    expect(() => sanitizeForTier1('trip_place_reviews', { id: 'r1', reviews: [] })).toThrow(SyncTosViolationError);
+    expect(() => sanitizeForTier1('trip_place_reviews', { id: 'r1', user_rating_count: 12 })).toThrow(
+      SyncTosViolationError,
+    );
+  });
+
+  it('journal: create carries trip_id + author_id; updates strip them and the timestamps', () => {
+    const create = { id: 'j1', trip_id: 't1', author_id: 'u1', day_index: 2, body: 'Ferry to Kadıköy', visibility: 'only_me', deleted: false };
+    expect(sanitizeForTier1Write('trip_journal_entries', create)).toEqual(create);
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trip_journal_entries',
+      { ...create, visibility: 'trip', created_at: T, updated_at: T },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    );
+    expect(out).toEqual({ id: 'j1', day_index: 2, body: 'Ferry to Kadıköy', visibility: 'trip', deleted: false });
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['trip_id', 'server_only'],
+        ['author_id', 'server_only'],
+        ['created_at', 'server_only'],
+        ['updated_at', 'server_only'],
+      ]),
+    );
+  });
+
+  it('review: trip_place_id is create-only; snapshots are server-owned (hydrated, never written)', () => {
+    const hydrated = {
+      id: 'r1',
+      trip_id: 't1',
+      trip_place_id: 'p1',
+      author_id: 'u1',
+      rating: 4,
+      body: 'Busy',
+      visibility: 'only_me',
+      place_name_snapshot: 'Galata Tower',
+      place_google_id_snapshot: 'ChIJ-galata',
+      deleted: false,
+      created_at: T,
+      updated_at: T,
+    };
+    // Hydration keeps the snapshots (read-only display data).
+    expect(sanitizeForTier1('trip_place_reviews', hydrated)).toEqual(hydrated);
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    expect(sanitizeForTier1Write('trip_place_reviews', hydrated, { onDrop: (f, k) => dropped.push([f, k]) })).toEqual({
+      id: 'r1',
+      rating: 4,
+      body: 'Busy',
+      visibility: 'only_me',
+      deleted: false,
+    });
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['trip_place_id', 'server_only'],
+        ['place_name_snapshot', 'server_only'],
+        ['place_google_id_snapshot', 'server_only'],
+      ]),
+    );
+    const { created_at: _c, updated_at: _u, place_name_snapshot: _n, place_google_id_snapshot: _g, ...create } = hydrated;
+    expect(sanitizeForTier1Write('trip_place_reviews', create)).toEqual(create);
+  });
+
+  it('photo: server-owned columns (status/bytes/paths/timestamps) and trip_place_id never go on the wire', () => {
+    const hydrated = {
+      id: 'x1',
+      trip_id: 't1',
+      author_id: 'u1',
+      day_index: 1,
+      trip_place_id: 'p1',
+      storage_path: 't1/u1/x1.jpg',
+      thumb_path: 't1/u1/x1_t.jpg',
+      width: 1600,
+      height: 1200,
+      bytes: 301234,
+      thumb_bytes: 30123,
+      caption: 'Sunset',
+      taken_at: T,
+      status: 'ready',
+      visibility: 'trip',
+      deleted: false,
+      created_at: T,
+      updated_at: T,
+    };
+    expect(sanitizeForTier1('trip_photos', hydrated)).toEqual(hydrated);
+    const out = sanitizeForTier1Write('trip_photos', hydrated) as Record<string, unknown>;
+    expect(out).toEqual({ id: 'x1', day_index: 1, caption: 'Sunset', taken_at: T, visibility: 'trip', deleted: false });
+    for (const k of ['status', 'bytes', 'thumb_bytes', 'storage_path', 'thumb_path', 'trip_place_id', 'width', 'height', 'author_id', 'trip_id']) {
+      expect(out).not.toHaveProperty(k);
+    }
   });
 });

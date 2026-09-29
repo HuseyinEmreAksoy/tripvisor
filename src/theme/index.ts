@@ -7,3 +7,6 @@ export {
   type ThemeMode,
 } from './ThemeProvider';
 export * from './tokens';
+export * from './dayColors';
+export { surfaceStyle } from './surfaces';
+export { contrastRatio, relativeLuminance } from './contrast';

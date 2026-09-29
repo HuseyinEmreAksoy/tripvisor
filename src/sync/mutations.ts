@@ -60,6 +60,7 @@ import type {
 import type { TripPackingItem } from '../api/trip-packing';
 import {
   TIER1_WRITE_FIELDS,
+  TIER1_WRITE_TABLES,
   isTier1WriteTable,
   type Tier1Table,
 } from './allowlist';
@@ -116,7 +117,7 @@ function assertWritable(table: Tier1Table): void {
   if (!isTier1WriteTable(table)) {
     throw new SyncWriteError(
       'table_not_writable',
-      `table "${table}" is not in the Tier-1 write slice (trips, trip_places, trip_expenses, trip_packing_items)`,
+      `table "${table}" is not in the Tier-1 write slice (${TIER1_WRITE_TABLES.join(', ')})`,
     );
   }
 }
@@ -130,8 +131,10 @@ function assertWritable(table: Tier1Table): void {
  * every modern browser; the fallback is the RFC4122-v4-shaped Math.random
  * pattern (same as AccommodationEditSheet.makeSessionToken) because the
  * Postgres `uuid` PK rejects anything that doesn't parse as a UUID.
+ * Exported for the M5 memory mutations (./memories.ts) and the photo upload
+ * queue (a photo's id is minted before its row exists server-side).
  */
-function mintId(): string {
+export function mintId(): string {
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();

@@ -12,13 +12,9 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, type IconName } from '@/components';
-import { dayColor } from '@/components/Map/types';
-import { useTheme } from '@/theme';
+import { ON_DAY_COLOR, dayColor, useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import type { TripPlace } from '@/api';
-
-// Day palette colors are fixed (not themed) and designed for white labels —
-// same foreground as DayPicker / the v1 catalog chips.
-const ON_DAY_COLOR = '#FFFFFF';
 
 export interface HubCardProps {
   icon: IconName;
@@ -154,6 +150,7 @@ export function ReactionCatalogSection({
   onOpenPlace: (place: TripPlace) => void;
 }) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   if (places.length === 0) return null;
   return (
     <>
@@ -162,7 +159,7 @@ export function ReactionCatalogSection({
         <Pressable
           key={place.id}
           accessibilityRole="button"
-          accessibilityLabel={`View details for ${place.user_title ?? 'place'}`}
+          accessibilityLabel={tx('hub.viewPlace', { name: place.user_title ?? tx('row.untitled') })}
           onPress={() => onOpenPlace(place)}
           style={({ pressed }) => [
             {
@@ -179,7 +176,7 @@ export function ReactionCatalogSection({
           ]}
         >
           <Text style={[t.typography.body, { color: t.colors.text, flex: 1 }]} numberOfLines={1}>
-            {place.user_title ?? 'Unknown place'}
+            {place.user_title ?? tx('row.untitled')}
           </Text>
           {place.day_index !== null ? (
             <View
@@ -191,7 +188,7 @@ export function ReactionCatalogSection({
               }}
             >
               <Text style={[t.typography.small, { color: ON_DAY_COLOR }]}>
-                {`Day ${place.day_index + 1}`}
+                {tx('dayLabel', { day: place.day_index + 1 })}
               </Text>
             </View>
           ) : null}

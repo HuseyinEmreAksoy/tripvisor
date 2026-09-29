@@ -38,6 +38,7 @@ import {
   Icon,
   KeyboardAvoid,
   Screen,
+  screenColumnStyle,
   StatusPill,
   TextField,
 } from '@/components';
@@ -54,7 +55,6 @@ import {
 import { useDeleteTrip, useGenerateItinerary, type AiUsage } from '@/api';
 import { useAiDraftCommit } from '@/hooks/useAiDraftCommit';
 import { useTheme } from '@/theme';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 // ── Form schema (client mirror of the ai-itinerary input contract) ─────────
 const FormSchema = z.object({
@@ -83,8 +83,6 @@ const DEFAULT_VALUES: FormValues = {
 
 type Stage = 'form' | 'review' | 'committing' | 'success' | 'discarded';
 
-// Desktop ≥1024 gets a centered column instead of a stretched mobile screen.
-const DESKTOP_MAX_WIDTH = 680;
 // How long the success state stays before auto-opening the trip (the undo beat).
 const SUCCESS_BEAT_MS = 2600;
 // How long "Draft discarded" stays before returning to /trips.
@@ -115,7 +113,6 @@ function deriveDefaultTitle(destination: string, dayCount: number): string {
 export default function PlanMyTrip() {
   const t = useTheme();
   const router = useRouter();
-  const isDesktop = useBreakpoint() === 'desktop';
 
   const [stage, setStage] = useState<Stage>('form');
   // Last-known per-user quota (echoed by every successful run).
@@ -263,15 +260,14 @@ export default function PlanMyTrip() {
   }, [stage, router]);
 
   // ── Layout helpers ────────────────────────────────────────────────────────
-  const desktopWrap: ViewStyle | null = isDesktop
-    ? { maxWidth: DESKTOP_MAX_WIDTH, alignSelf: 'center', width: '100%' }
-    : null;
+  // M5 Y2.4: the shared 640 px form column (a no-op below that width).
+  const desktopWrap: ViewStyle = screenColumnStyle('form');
   const remainingPlans = usage ? Math.max(0, usage.dailyLimit - usage.runsToday) : null;
   const result = generate.data;
   const showReview = stage === 'review' && result;
 
   return (
-    <Screen padded={false}>
+    <Screen padded={false} width="form">
       {/* Explicit back affordance for the interactive stages (1.8). */}
       {stage === 'form' || showReview ? (
         <View style={[{ paddingHorizontal: t.spacing.lg, paddingTop: t.spacing.lg }, desktopWrap]}>

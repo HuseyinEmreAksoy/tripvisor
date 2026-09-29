@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { supabase } from './supabase';
 import type { Uuid } from './types';
 import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
+import { requestLang } from './_lang';
 
 // ============================================================
 // AI itinerary generation (v2 Phase N3 — "Plan my trip")
@@ -155,6 +156,8 @@ export function useGenerateItinerary() {
         ...(input.days !== undefined ? { days: input.days } : {}),
         ...(input.destination ? { destination: input.destination } : {}),
         idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+        // M5 Y2.5: the draft's free text (notes) comes back in the app language.
+        lang: requestLang(),
       };
       const { data, error } = await supabase.functions.invoke<GenerateItineraryResult>(
         'ai-itinerary',
@@ -270,6 +273,8 @@ export function useAiEditTrip() {
         tripId: input.tripId,
         instruction: input.instruction,
         idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+        // M5 Y2.5: the diff's notes come back in the app language.
+        lang: requestLang(),
       };
       const { data, error } = await supabase.functions.invoke<AiEditResult>('ai-edit', { body });
       if (error) {
@@ -325,6 +330,7 @@ export function useAiSuggest() {
         dayIndex: input.dayIndex,
         slackMinutes: input.slackMinutes,
         idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+        lang: requestLang(),
       };
       const { data, error } = await supabase.functions.invoke<AiSuggestResult>('ai-edit', { body });
       if (error) {
@@ -392,6 +398,7 @@ export function useGroundPlaces() {
         names: input.names,
         ...(input.destination ? { destination: input.destination } : {}),
         idempotencyKey: input.idempotencyKey ?? makeIdempotencyKey(),
+        lang: requestLang(),
       };
       const { data, error } = await supabase.functions.invoke<GroundPlacesResult>('ai-edit', {
         body,

@@ -1,87 +1,78 @@
 /**
- * TransportModeRadio — visual transport-mode selector for the AI-plan form.
+ * TransportModeRadio — visual transport-mode selector shared by the new-trip
+ * form and the AI-plan form (M5 Y2.4: one component for both, so the two
+ * trip-creation entry points feel like one product).
  *
- * Deliberately mirrors the icon radio grid from app/(app)/trip/new.tsx (same
- * options, same active treatment) so the two trip-creation entry points feel
- * like one product. Extracted here rather than imported because trip/new
- * keeps its selector inline inside a react-hook-form Controller.
+ * Y2.4: lighter tiles (no glow or drop shadow — the 2 px teal edge and the
+ * tint carry the selection) and translated labels (`trip:transport.*`).
  *
- * Accessibility: each option is a `radio` with a text label separate from the
- * decorative emoji (the emoji is hidden from screen readers — unlike the
- * inline original, which let VoiceOver read "automobile" first).
+ * Accessibility: a `radiogroup` of `radio`s, each named by its text label;
+ * the icon is decorative.
  */
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import type { TransportMode } from '@/api';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { haptics } from '@/lib/haptics';
-import { Icon, type IconName } from '@/components/Icon';
+import { Icon } from '@/components/Icon';
+import { TRIP_TRANSPORT_MODES, transportIcon, transportKey } from '@/components/transportModes';
 
 export interface TransportModeRadioProps {
+  /** Visible group label; defaults to trip:new.fields.mode ("Travel mode"). */
   label?: string;
   value: TransportMode;
   onChange: (mode: TransportMode) => void;
 }
 
-// Same order + icons as trip/new.tsx (bicycling sits between walking and
-// transit per the Phase 23 spec).
-const OPTIONS: Array<{ value: TransportMode; icon: IconName; label: string }> = [
-  { value: 'driving', icon: 'car', label: 'Drive' },
-  { value: 'walking', icon: 'footprints', label: 'Walk' },
-  { value: 'bicycling', icon: 'bike', label: 'Bike' },
-  { value: 'transit', icon: 'train-front', label: 'Transit' },
-];
-
-export function TransportModeRadio({ label = 'Travel mode', value, onChange }: TransportModeRadioProps) {
+export function TransportModeRadio({ label, value, onChange }: TransportModeRadioProps) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
+  const groupLabel = label ?? tx('new.fields.mode');
   return (
-    <View style={{ gap: t.spacing.xs }}>
-      <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-        {label}
+    <View style={{ gap: t.spacing.sm }}>
+      <Text style={[t.typography.overline, { color: t.colors.textMuted }]}>
+        {groupLabel}
       </Text>
-      <View accessibilityRole="radiogroup" style={[styles.row, { gap: t.spacing.sm }]}>
-        {OPTIONS.map((opt) => {
-          const active = opt.value === value;
+      <View accessibilityRole="radiogroup" accessibilityLabel={groupLabel} style={[styles.row, { gap: t.spacing.sm }]}>
+        {TRIP_TRANSPORT_MODES.map((mode) => {
+          const active = mode === value;
+          const optLabel = tx(transportKey(mode));
           return (
             <Pressable
-              key={opt.value}
+              key={mode}
               accessibilityRole="radio"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={opt.label}
+              accessibilityState={{ selected: active, checked: active }}
+              accessibilityLabel={optLabel}
               onPress={() => {
                 haptics.select();
-                onChange(opt.value);
+                onChange(mode);
               }}
               style={({ pressed }) => [
                 styles.opt,
                 {
                   paddingVertical: t.spacing.md,
                   borderColor: active ? t.colors.primary : t.colors.border,
+                  borderWidth: active ? 2 : StyleSheet.hairlineWidth * 2,
                   borderRadius: t.radius.lg,
                   backgroundColor: active ? t.colors.gradientSubtle : t.colors.cardBgSolid,
-                  ...(active
-                    ? t.shadows.glow(t.colors.glowPrimary)
-                    : t.shadows.sm(t.colors.shadowColor)),
                 },
-                pressed && { opacity: 0.8 },
+                pressed && { backgroundColor: t.colors.bgMuted },
                 Platform.OS === 'web' &&
-                  ({ transition: 'all 0.2s ease', cursor: 'pointer' } as ViewStyle),
+                  ({ transition: 'background-color 0.15s ease, border-color 0.15s ease', cursor: 'pointer' } as ViewStyle),
               ]}
             >
-              <Icon
-                name={opt.icon}
-                size={26}
-                color={active ? t.colors.primary : t.colors.textMuted}
-              />
+              <Icon name={transportIcon(mode)} size={24} color={active ? t.colors.primary : t.colors.textMuted} />
               <Text
                 style={[
                   t.typography.caption,
                   {
                     color: active ? t.colors.primaryInk : t.colors.text,
                     fontWeight: active ? '700' : '500',
+                    textAlign: 'center',
                   },
                 ]}
               >
-                {opt.label}
+                {optLabel}
               </Text>
             </Pressable>
           );
@@ -99,6 +90,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     minHeight: 64,
-    borderWidth: 2,
   },
 });

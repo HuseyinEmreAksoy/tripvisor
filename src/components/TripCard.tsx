@@ -1,32 +1,31 @@
 /**
- * TripCard — v2 "Tide & Terracotta" redesign: big rounded card (radius.xl),
- * borderless soft elevation, full-bleed cover treatment.
+ * TripCard — the trips-list card: cover image on top, a light body below.
  *
- * Cover behaviour (Phase 25 Step 25.7): when `trip.cover_photo_google_place_id`
- * is set, a cover hero image fills the top of the card (~150px). The photo is
- * fetched via usePlaceDetails + usePlacePhotoUrl — one place-details call per
- * card (cached 1h). Fallback when no cover is set (or Google returns no
- * photo): one of six bundled destination-style covers, picked
- * deterministically from the trip id (src/components/tripCovers.ts), under a
- * soft bottom scrim. Decorative — hidden from assistive tech.
+ * Cover (Phase 25 Step 25.7, M5 Y2.4): `TripCover` shows the Google cover
+ * when `trip.cover_photo_google_place_id` is set (one photos-only
+ * place-details call per card, cached 1 h), else the bundled generated cover
+ * picked from the trip id. Y2.4 fixed the web overflow that let the
+ * fallback image spill over the body (dark text on a photo, unreadable in
+ * light mode) and added the trip status chip ("Day 2 of 4" / "In 12 days"
+ * / "Relive") on the cover.
  *
- * Contract notes (Jest queries by role/label/text — do not change):
- *   - role "link", accessible name `Open trip ${trip.title}`
- *   - date text renders as "📅 " + "YYYY-MM-DD → YYYY-MM-DD"
- *   - meta pill text: `${emoji} ${hours}h / day · ${mode}`
- *   - overflow trigger: role "button", label "Trip actions"
+ * Contract notes (Jest queries by role/label — keep stable):
+ *   - role "link", accessible name = trip:card.open (`Open trip ${title}`)
+ *   - overflow trigger: role "button", label = trip:card.actions
  */
 import { useRef, useState, type ComponentProps } from 'react';
-import { Animated, Image, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { useTheme } from '@/theme';
+import { Animated, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { surfaceStyle, useTheme } from '@/theme';
+import { formatDateRange, useT } from '@/i18n';
 import { StatusPill } from './StatusPill';
-import { Icon, type IconName } from './Icon';
+import { Icon } from './Icon';
 import { TripActionsSheet } from './TripActionsSheet';
-import { usePlaceDetails } from '@/api/places';
-import { usePlacePhotoUrl } from '@/api/place-photos';
+import { TripCover } from './TripCover';
+import { TripStatusChip } from './TripStatusChip';
+import { tripPhase } from './tripStatus';
+import { transportIcon, transportKey } from './transportModes';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { Trip } from '@/api';
-import { fallbackCoverFor } from './tripCovers';
 
 export interface TripCardProps {
   trip: Trip;
@@ -37,77 +36,7 @@ export interface TripCardProps {
   onDelete?: (id: string) => void;
 }
 
-const TRANSPORT_ICON: Record<string, IconName> = {
-  driving: 'car',
-  walking: 'footprints',
-  bicycling: 'bike',
-  transit: 'train-front',
-};
-
-const COVER_HEIGHT = 150;
-
-// ── CoverHero ────────────────────────────────────────────────────────────────
-// Fetches place details (photos field only) then builds the photo URL.
-// Documented perf note: one place-details call per card in the list.
-// With staleTime=1h, a cold list of 20 cards triggers 20 parallel calls once;
-// subsequent renders are instant from cache. Future optimisation: batch fetch
-// via a list-level useQueries or prefetch on the trips list screen.
-function CoverHero({ placeId, tripId }: { placeId: string; tripId: string }) {
-  const t = useTheme();
-  // Fetch only the photos field to minimise billing.
-  const { data: placeDetails, isLoading } = usePlaceDetails({
-    placeId,
-    fields: ['photos'],
-    enabled: Boolean(placeId),
-  });
-  const firstPhotoName = placeDetails?.photos?.[0]?.name ?? null;
-  const { url } = usePlacePhotoUrl(firstPhotoName, { maxWidthPx: 400 });
-
-  if (isLoading) {
-    // Skeleton while the photo URL resolves.
-    return (
-      <View
-        style={[styles.coverHero, { backgroundColor: t.colors.bgMuted }]}
-        accessibilityElementsHidden
-        importantForAccessibility="no"
-      />
-    );
-  }
-
-  if (!url) {
-    // No photo returned by Google — fall through to the bundled cover.
-    return <FallbackCover tripId={tripId} />;
-  }
-
-  return (
-    <Image
-      source={{ uri: url }}
-      style={styles.coverHero}
-      resizeMode="cover"
-      accessibilityElementsHidden
-      importantForAccessibility="no"
-    />
-  );
-}
-
-// ── FallbackCover ────────────────────────────────────────────────────────────
-// Decorative bundled destination photo (stable per trip id) + a soft bottom
-// scrim so the card's cover→content edge reads cleanly in light and dark.
-function FallbackCover({ tripId }: { tripId: string }) {
-  const t = useTheme();
-  return (
-    <View
-      style={[styles.coverHero, { backgroundColor: t.colors.gradientSubtle }]}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      aria-hidden
-      testID="trip-card-fallback-cover"
-    >
-      <Image source={fallbackCoverFor(tripId)} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      <View style={[styles.scrim, { backgroundColor: t.colors.heroOverlay }]} />
-    </View>
-  );
-}
+const COVER_HEIGHT = 148;
 
 export function TripCard({
   trip,
@@ -118,11 +47,12 @@ export function TripCard({
   onDelete,
 }: TripCardProps) {
   const t = useTheme();
+  const { t: tx } = useT('trip');
   const reducedMotion = useReducedMotion();
   const [sheetOpen, setSheetOpen] = useState(false);
   const dateRange = formatDateRange(trip.start_date, trip.end_date);
   const isArchived = trip.archived_at != null;
-  const hasCover = Boolean(trip.cover_photo_google_place_id);
+  const phase = tripPhase(trip.start_date, trip.end_date);
 
   // Press animation (skipped under reduced motion)
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -150,13 +80,17 @@ export function TripCard({
     setSheetOpen(true);
   };
 
-  const transportIcon = TRANSPORT_ICON[trip.transport_mode] ?? 'car';
+  const modeIcon = transportIcon(trip.transport_mode);
+  const modeLabel = tx(transportKey(trip.transport_mode));
 
   return (
     <>
+      {/* The shadow lives on the outer view and the clip on the inner one:
+          iOS drops a shadow on a view that clips its own bounds. */}
       <Animated.View
         style={[
-          { transform: [{ scale: scaleAnim }] },
+          surfaceStyle(t, 'raised'),
+          { borderRadius: t.radius.xl, transform: [{ scale: scaleAnim }] },
           Platform.OS === 'web' && ({
             transition: 'transform 0.2s ease, box-shadow 0.2s ease',
           } as ViewStyle),
@@ -164,56 +98,53 @@ export function TripCard({
       >
         <Pressable
           accessibilityRole="link"
-          accessibilityLabel={`Open trip ${trip.title}`}
+          accessibilityLabel={tx('card.open', { title: trip.title })}
           onPress={onPress}
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
           style={({ pressed }) => [
             styles.card,
-            {
-              backgroundColor: t.colors.cardBgSolid,
-              borderRadius: t.radius.xl,
-              ...t.shadows.md(t.colors.shadowColor),
-            },
-            pressed && { ...t.shadows.sm(t.colors.shadowColor) },
-            Platform.OS === 'web' && ({
-              cursor: 'pointer',
-            } as ViewStyle),
+            { borderRadius: t.radius.xl },
+            pressed && { backgroundColor: t.colors.bgMuted },
+            Platform.OS === 'web' && ({ cursor: 'pointer' } as ViewStyle),
           ]}
         >
-          {/* Full-bleed cover: Google photo when set, bundled destination cover otherwise */}
-          {hasCover && trip.cover_photo_google_place_id ? (
-            <CoverHero placeId={trip.cover_photo_google_place_id} tripId={trip.id} />
-          ) : (
-            <FallbackCover tripId={trip.id} />
-          )}
+          <TripCover
+            tripId={trip.id}
+            coverPlaceId={trip.cover_photo_google_place_id}
+            photoWidth={400}
+            scrim="soft"
+            fallbackTestID="trip-card-fallback-cover"
+            style={{ height: COVER_HEIGHT }}
+          >
+            {!isArchived ? (
+              <View style={[styles.coverChip, { top: t.spacing.md, left: t.spacing.md }]}>
+                <TripStatusChip phase={phase} tone="onImage" />
+              </View>
+            ) : null}
+          </TripCover>
 
-          {/* Content block */}
-          <View style={[styles.content, { padding: t.spacing.lg, gap: t.spacing.sm }]}>
-            {/* Header row: title + overflow trigger */}
+          <View style={{ padding: t.layout.cardPadding, gap: t.spacing.sm }}>
             <View style={styles.headerRow}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Text
-                  style={[t.typography.subtitle, { color: t.colors.text }]}
-                  numberOfLines={1}
-                >
+              <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+                <Text style={[t.typography.subtitle, { color: t.colors.text }]} numberOfLines={1}>
                   {trip.title}
                 </Text>
-                {dateRange ? (
-                  <View style={styles.dateRow}>
-                    <Icon name="calendar" size={13} color={t.colors.textMuted} />
-                    <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
-                      {dateRange}
-                    </Text>
-                  </View>
-                ) : null}
+                {/* Always one date line (even "No dates set") so cards in a
+                    desktop grid row line up. */}
+                <View style={styles.dateRow}>
+                  <Icon name="calendar" size={13} color={t.colors.textMuted} />
+                  <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}>
+                    {dateRange ?? tx('header.noDates')}
+                  </Text>
+                </View>
               </View>
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Trip actions"
+                accessibilityLabel={tx('card.actions')}
                 onPress={handleOverflowPress}
-                hitSlop={8}
+                hitSlop={6}
                 style={({ pressed }) => [
                   styles.overflowTrigger,
                   {
@@ -222,30 +153,29 @@ export function TripCard({
                   },
                 ]}
               >
-                <Text style={[t.typography.subtitle, { color: t.colors.textMuted }]}>
-                  ⋮
-                </Text>
+                <Icon name="ellipsis-vertical" size={20} color={t.colors.textMuted} />
               </Pressable>
             </View>
 
-            {/* Meta row — pill chip language */}
             <View style={styles.metaRow}>
-              <View style={[
-                styles.metaPill,
-                {
-                  backgroundColor: t.colors.gradientSubtle,
-                  borderRadius: t.radius.pill,
-                  paddingHorizontal: t.spacing.md,
-                  paddingVertical: 4,
-                },
-              ]}>
-                <Icon name={transportIcon} size={13} color={t.colors.primaryInk} />
+              <View
+                style={[
+                  styles.metaPill,
+                  {
+                    backgroundColor: t.colors.gradientSubtle,
+                    borderRadius: t.radius.pill,
+                    paddingHorizontal: t.spacing.md,
+                    paddingVertical: 4,
+                  },
+                ]}
+              >
+                <Icon name={modeIcon} size={13} color={t.colors.primaryInk} />
                 <Text style={[t.typography.small, { color: t.colors.primaryInk, fontWeight: '700' }]}>
-                  {trip.daily_hours_budget}h / day · {trip.transport_mode}
+                  {tx('card.meta', { hours: trip.daily_hours_budget, mode: modeLabel })}
                 </Text>
               </View>
 
-              {isArchived ? <StatusPill tone="info" label="Archived" /> : null}
+              {isArchived ? <StatusPill tone="info" label={tx('card.archived')} /> : null}
             </View>
           </View>
         </Pressable>
@@ -264,34 +194,16 @@ export function TripCard({
   );
 }
 
-function formatDateRange(start: string | null, end: string | null): string | null {
-  if (!start && !end) return null;
-  if (start && end) return `${start} → ${end}`;
-  return start ?? end;
-}
-
 const styles = StyleSheet.create({
   card: {
     overflow: 'hidden',
   },
-  coverHero: {
-    width: '100%',
-    height: COVER_HEIGHT,
-  },
-  // Bottom ~40% band — keeps the photo vivid while grounding the edge.
-  scrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '40%',
-    opacity: 0.55,
-  },
-  content: {},
+  coverChip: { position: 'absolute' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 4,
   },
   dateRow: {
     flexDirection: 'row',
@@ -300,12 +212,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   overflowTrigger: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
-    marginTop: -2,
+    marginRight: -8,
+    marginTop: -8,
   },
   metaRow: {
     flexDirection: 'row',

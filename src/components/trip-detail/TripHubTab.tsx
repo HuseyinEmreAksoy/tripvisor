@@ -27,6 +27,7 @@ import { ShareLinkCard } from '@/components/ShareLinkCard';
 import { useTheme } from '@/theme';
 import { useT } from '@/i18n';
 import { formatCurrency } from '@/lib/formatCurrency';
+import { sampleFromScrollEvent, useHeroScrollReporter } from './heroCollapse';
 import { toLocalDateString } from '@/lib/tripToday';
 import { useDeleteTripExpense, useTripPlaces, type TripCurrency, type TripPlace } from '@/api';
 import { useTripExpenseRollup, useTripExpenses } from '@/api/trip-expenses';
@@ -81,6 +82,7 @@ export function TripHubTab({
   const t = useTheme();
   const { t: tx } = useT('share');
   const router = useRouter();
+  const reportHero = useHeroScrollReporter();
   const [open, setOpen] = useState<ReadonlySet<HubSection>>(() => new Set(initialExpanded));
   const toggle = (s: HubSection) =>
     setOpen((prev) => {
@@ -155,6 +157,9 @@ export function TripHubTab({
 
   return (
     <ScrollView
+      // M5 Y2.4: collapses the phone trip hero (no-op on desktop).
+      onScroll={reportHero ? (e) => reportHero(sampleFromScrollEvent(e)) : undefined}
+      scrollEventThrottle={64}
       contentContainerStyle={{ padding: t.spacing.lg, gap: t.spacing.md, paddingBottom: t.spacing.lg + bottomInset }}
     >
       <HubCard

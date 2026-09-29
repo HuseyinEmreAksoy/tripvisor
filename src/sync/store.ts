@@ -33,6 +33,11 @@ export interface Tier1Store {
   tripPlaceReactions: Record<string, Tier1RowTypes['trip_place_reactions']>;
   tripPlaceComments: Record<string, Tier1RowTypes['trip_place_comments']>;
   tripPackingItems: Record<string, Tier1RowTypes['trip_packing_items']>;
+  // M5 Y2.1 memory roots — AUTHOR-SCOPED (own rows only; allowlist.ts
+  // TIER1_AUTHOR_SCOPED_TABLES). Other members' shared items never land here.
+  tripJournalEntries: Record<string, Tier1RowTypes['trip_journal_entries']>;
+  tripPlaceReviews: Record<string, Tier1RowTypes['trip_place_reviews']>;
+  tripPhotos: Record<string, Tier1RowTypes['trip_photos']>;
 }
 
 export type Tier1StoreKey = keyof Tier1Store;
@@ -47,6 +52,9 @@ export const TABLE_FOR_KEY: { readonly [K in Tier1StoreKey]: Tier1Table } = {
   tripPlaceReactions: 'trip_place_reactions',
   tripPlaceComments: 'trip_place_comments',
   tripPackingItems: 'trip_packing_items',
+  tripJournalEntries: 'trip_journal_entries',
+  tripPlaceReviews: 'trip_place_reviews',
+  tripPhotos: 'trip_photos',
 } as const;
 
 export const TIER1_STORE_KEYS = Object.keys(TABLE_FOR_KEY) as readonly Tier1StoreKey[];
@@ -60,4 +68,7 @@ export const tier1Store$ = observable<Tier1Store>({
   tripPlaceReactions: {},
   tripPlaceComments: {},
   tripPackingItems: {},
+  tripJournalEntries: {},
+  tripPlaceReviews: {},
+  tripPhotos: {},
 });

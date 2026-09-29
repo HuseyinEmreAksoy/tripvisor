@@ -1,7 +1,14 @@
 export { Button } from './Button';
 export { Icon, type IconName, type IconProps } from './Icon';
 export { TextField } from './TextField';
-export { Screen, TAB_SCREEN_EDGES } from './Screen';
+export {
+  Screen,
+  ScreenScrollView,
+  TAB_SCREEN_EDGES,
+  screenColumnStyle,
+  useScreenWidth,
+  type ScreenWidth,
+} from './Screen';
 export { Skeleton, SkeletonGroup, type SkeletonProps } from './Skeleton';
 export { themedRefresh } from './themedRefresh';
 export { KeyboardAvoid } from './KeyboardAvoid';

@@ -6,7 +6,7 @@ import { Platform } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { ThemeProvider } from '@/theme';
-import { i18n, setLanguagePreference } from '@/i18n';
+import { formatDateRange, i18n, setLanguagePreference } from '@/i18n';
 import type { Trip, TripLeg } from '@/api';
 import { TripHeader, TripMenuSheet, pillForOptimizeError } from '../TripHeader';
 import { IOS_MODAL_HANDOFF_MS } from '../modalHandoff';
@@ -69,7 +69,8 @@ describe('TripHeader — compact', () => {
       />,
     );
     expect(getByText('Lisbon long weekend')).toBeTruthy();
-    expect(getByText('2026-10-01 → 2026-10-04')).toBeTruthy();
+    // M5 Y2.4: localized range (was raw ISO "2026-10-01 → 2026-10-04").
+    expect(getByText(formatDateRange('2026-10-01', '2026-10-04')!)).toBeTruthy();
     expect(getByLabelText('5 places')).toBeTruthy();
     expect(getByLabelText('Total travel time 1h')).toBeTruthy();
     expect(getByLabelText('Total distance 5 kilometres')).toBeTruthy();
@@ -97,6 +98,44 @@ describe('TripHeader — compact', () => {
     fireEvent.press(getByRole('button', { name: 'Print itinerary' }));
     expect(onPrint).toHaveBeenCalledTimes(1);
     expect(getByRole('button', { name: 'Trip menu' })).toBeTruthy();
+  });
+});
+
+describe('TripHeader — cover hero (M5 Y2.4)', () => {
+  function renderHero(props: Partial<Parameters<typeof TripHeader>[0]> = {}) {
+    return wrap(
+      <TripHeader
+        trip={trip}
+        legs={legs}
+        placesCount={5}
+        canEdit
+        optimizePending={false}
+        optimizeError={null}
+        onBack={jest.fn()}
+        onPrint={jest.fn()}
+        onOpenMenu={jest.fn()}
+        compact
+        {...props}
+      />,
+    );
+  }
+
+  it('exposes exactly one visible title heading, expanded or collapsed', () => {
+    const expanded = renderHero();
+    expect(expanded.getAllByRole('header', { name: 'Lisbon long weekend' })).toHaveLength(1);
+    const collapsed = renderHero({ collapsed: true });
+    expect(collapsed.getAllByRole('header', { name: 'Lisbon long weekend' })).toHaveLength(1);
+    // Back and menu stay reachable in both states.
+    expect(collapsed.getByRole('button', { name: 'Go back to Trips' })).toBeTruthy();
+    expect(collapsed.getByRole('button', { name: 'Trip menu' })).toBeTruthy();
+  });
+
+  it('shows the trip status on the hero', () => {
+    const past = renderHero({ trip: { ...trip, start_date: '2001-05-01', end_date: '2001-05-03' } as Trip });
+    expect(past.getByLabelText('Trip status: Relive')).toBeTruthy();
+    const undated = renderHero({ trip: { ...trip, start_date: null, end_date: null } as Trip });
+    expect(undated.queryByLabelText(/Trip status/)).toBeNull();
+    expect(undated.getByText('No dates set')).toBeTruthy();
   });
 });
 

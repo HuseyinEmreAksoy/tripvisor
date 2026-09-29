@@ -8,6 +8,14 @@
  * writes through src/sync/mutations.ts via the src/api facades. With the
  * flags.ts switch off this module does nothing at all.
  *
+ * M5 Y2.1 memory roots (trip_journal_entries, trip_place_reviews: create +
+ * update; trip_photos: update only — rows are born through the online upload
+ * queue) are AUTHOR-SCOPED: the pull filters `author_id = <session user>`,
+ * the realtime channel filters `author_id=eq.<uid>`, and a foreign row that
+ * still reaches the boundary is dropped (allowlist.ts
+ * TIER1_AUTHOR_SCOPED_TABLES explains the ghost-row problem this prevents).
+ * Their writes go through src/sync/memories.ts.
+ *
  * ── Write path (S2.4)
  * Local store writes flow: observable change → syncedCrud diff →
  * `transform.save` = sanitizeForTier1Write (the C1/C3 WRITE firewall:
@@ -94,6 +102,8 @@ import { observable, syncState } from '@legendapp/state';
 import { syncedSupabase } from '@legendapp/state/sync-plugins/supabase';
 import { supabase } from '../api/supabase';
 import {
+  TIER1_UPDATE_ONLY_TABLES,
+  isTier1AuthorScopedTable,
   isTier1WriteTable,
   sanitizeForTier1,
   sanitizeForTier1Write,
@@ -149,6 +159,34 @@ function sanitizeRow(table: Tier1Table, row: Record<string, unknown>): Record<st
 }
 
 /**
+ * M5 Y2.1 — is this row foreign to an AUTHOR-SCOPED root (allowlist.ts
+ * TIER1_AUTHOR_SCOPED_TABLES)? The pull and the realtime channel are already
+ * filtered to `author_id = <session user>` server-side; this is the
+ * client-side backstop so another member's shared memory can never be
+ * persisted into our replica (it could not be evicted after an un-share).
+ * A row without author_id (a partial projection) is not judged here.
+ */
+function isForeignAuthoredRow(table: Tier1Table, row: Record<string, unknown>, userId: string): boolean {
+  if (!isTier1AuthorScopedTable(table)) return false;
+  const author = row['author_id'];
+  return typeof author === 'string' && author !== userId;
+}
+
+/**
+ * Network-path load for author-scoped roots: a foreign row becomes a
+ * tombstone stub `{ id, deleted: true }`, which the crud plugin maps to
+ * "remove this id" (resultsToOutType treats fieldDeleted rows as deletes),
+ * so it is dropped instead of merged.
+ */
+function loadRow(table: Tier1Table, row: Record<string, unknown>, userId: string): Record<string, unknown> {
+  if (isForeignAuthoredRow(table, row, userId)) {
+    recordDroppedField(table, 'author_id', false);
+    return { id: row['id'], deleted: true };
+  }
+  return sanitizeRow(table, row);
+}
+
+/**
  * The C1 boundary, write direction: every create/update payload the sync
  * engine emits passes through here (syncedCrud's transformOut) before
  * PostgREST. Same throw→strip degrade as sanitizeRow: a restricted-name
@@ -199,6 +237,12 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
   const table = TABLE_FOR_KEY[key];
   const obs$ = tier1Store$[key];
   const writable = isTier1WriteTable(table);
+  // M5 Y2.1: trip_photos rows are born online through the upload queue
+  // (server-stamped storage paths), so the engine never gets a create fn.
+  const canCreate = writable && !TIER1_UPDATE_ONLY_TABLES.has(table);
+  // M5 Y2.1: memory roots replicate ONLY the session user's own rows (see
+  // allowlist.ts TIER1_AUTHOR_SCOPED_TABLES for why RLS alone is not enough).
+  const authorScoped = isTier1AuthorScopedTable(table);
 
   // F5 (S2.8.13): own the plugin's dev-only config warning for trips. The
   // very next call below makes syncedSupabase print "[legend-state]
@@ -224,14 +268,22 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
       // requested. RLS scopes rows to the JWT (owner + accepted
       // collaborators) — no client-side filter needed or wanted.
       select: (from: { select: (cols: string) => unknown }) => from.select(tier1SelectColumns(table)),
+      // M5 Y2.1: author scoping for the memory roots — the pull asks for own
+      // rows only (served by 0036's (author_id, updated_at) indexes).
+      ...(authorScoped
+        ? { filter: (q: { eq: (col: string, v: string) => unknown }) => q.eq('author_id', userId) }
+        : {}),
       as: 'object',
       // S2.4: trips + trip_places gained create/update. 'delete' is
       // deliberately ABSENT everywhere — with fieldDeleted set the plugin
       // never hard-deletes anyway (store deletes become tombstone updates),
       // and trips (no tombstone) must never be hard-deleted through sync
       // (archive is its lifecycle).
-      actions: writable ? ['read', 'create', 'update'] : ['read'],
-      realtime: true,
+      actions: canCreate ? ['read', 'create', 'update'] : writable ? ['read', 'update'] : ['read'],
+      // Realtime re-checks each subscriber's SELECT policy, so for the memory
+      // roots it would ALSO push other members' shared rows: filter the
+      // channel to the author (postgres_changes `author_id=eq.<uid>`).
+      realtime: authorScoped ? { filter: `author_id=eq.${userId}` } : true,
       // Incremental pulls: WHERE updated_at > lastSync (server-stamped by
       // handle_times(), indexed by 0027's *_updated_at_idx).
       changesSince: 'last-sync',
@@ -275,7 +327,7 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
       // 1s → 30s cap). See header for the RLS-rejection caveat.
       ...(writable ? { retry: { infinite: true, backoff: 'exponential', maxDelay: 30000 } } : {}),
       transform: {
-        load: (row: Record<string, unknown>) => sanitizeRow(table, row),
+        load: (row: Record<string, unknown>) => loadRow(table, row, userId),
         ...(writable
           ? { save: (row: Record<string, unknown>) => sanitizeWriteRow(table, row, userId) }
           : {}),
@@ -306,6 +358,9 @@ function attachEntity(key: Tier1StoreKey, userId: string): void {
                   if (!tableValue || typeof tableValue !== 'object') return tableValue;
                   const out: Record<string, Record<string, unknown>> = {};
                   for (const [id, row] of Object.entries(tableValue)) {
+                    // M5 Y2.1: a foreign row on disk (author-scoped root) is
+                    // dropped outright — it must never resurface offline.
+                    if (row && typeof row === 'object' && isForeignAuthoredRow(table, row, userId)) continue;
                     out[id] = row && typeof row === 'object' ? sanitizeRow(table, row) : row;
                   }
                   return out;

@@ -34,6 +34,11 @@
 //              unresolved: string[],
 //              usage: { groundingToday, dailyLimit } }      // 100-name/day budget
 //
+//   Every action also accepts `lang?: 'en' | 'tr'` (M5 Y2.5, default 'en';
+//   anything else is 400). 'edit' writes its `notes` in that language;
+//   'suggest' has no free text (names stay searchable map names) and
+//   'ground' is LLM-free, so both only validate it.
+//
 //   GET ?ping -> { ok: true, fn: 'ai-edit' }
 //
 //   AiDraftPlace = { name, googlePlaceId, lat, lng, visitMinutes, category, dayHint }
@@ -128,6 +133,7 @@ const EditSchema = z.object({
   tripId: z.string().uuid(),
   instruction: z.string().min(5).max(1000),
   idempotencyKey: z.string().min(8).max(64),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 const SuggestSchema = z.object({
@@ -137,6 +143,7 @@ const SuggestSchema = z.object({
   dayIndex: z.number().int().min(0).max(365),
   slackMinutes: z.number().int().min(30).max(480),
   idempotencyKey: z.string().min(8).max(64),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 const GroundSchema = z.object({
@@ -144,6 +151,7 @@ const GroundSchema = z.object({
   names: z.array(z.string().min(2).max(120)).min(1).max(30),
   destination: z.string().min(1).max(120).optional(),
   idempotencyKey: z.string().min(8).max(64),
+  lang: z.enum(['en', 'tr']).optional(),
 });
 
 const BodySchema = z.discriminatedUnion('action', [EditSchema, SuggestSchema, GroundSchema]);
@@ -385,6 +393,14 @@ const EDIT_PREAMBLE = [
   '- notes: at most one short sentence summarising the change (or null).',
   '- Output ONLY JSON matching the schema. No markdown, no extra keys.',
 ].join('\n');
+
+// M5 Y2.5: language rule for the edit `notes`, picked from the closed `lang`
+// enum (static text, never user data, so D4 holds). Place names stay
+// searchable map names so grounding keeps working.
+const EDIT_LANGUAGE_RULE: Record<'en' | 'tr', string> = {
+  en: '- Write notes in English. Keep place names as their common, searchable map names.',
+  tr: '- Write notes in Turkish (Türkçe). Keep place names as their common, searchable map names; do not translate them.',
+};
 
 const SUGGEST_PREAMBLE = [
   'You are a travel itinerary assistant filling spare time in one day of a trip.',
@@ -755,7 +771,7 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
   const attempt: LlmAttempt<LlmEdit> | null = await runLlmWithFallback(
     { geminiKey, groqKey },
     {
-      system: EDIT_PREAMBLE,
+      system: `${EDIT_PREAMBLE}\n${EDIT_LANGUAGE_RULE[(body.lang ?? 'en') as 'en' | 'tr']}`,
       user: userPayload,
       geminiResponseSchema: GEMINI_EDIT_SCHEMA,
       groqJsonSchema: GROQ_EDIT_SCHEMA,
