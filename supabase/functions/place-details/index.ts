@@ -7,8 +7,33 @@
 //
 // Reviews, photos, rating, hours etc. are returned live and MUST NOT be
 // persisted by the client beyond the React Query cache (Google ToS).
+//
+// Auth + quota (security audit 2026-09-29 #2): requires a real signed-in
+// user (`requireUser`; the public anon key -> 401 not_authenticated) and
+// meters DAILY_QUOTA.place_details per user per UTC day (-> 429
+// quota_exceeded). `?ping` stays public.
+//
+// Signed photo URLs (audit #3, ADDITIVE contract change): when `photos` is
+// in the field mask and PHOTO_URL_SECRET is configured, each
+// `photos[i]` carries an optional
+//   signature: { exp: <unix s>, sig: { '200': s, '400': s, '800': s, '1600': s } }
+// minted by this authenticated path. The client builds the self-
+// authenticating place-photo URL from it (src/api/place-photos.ts). The
+// field is omitted when the secret is unset; clients then fall back to
+// POST place-photo, which returns 500 server_misconfigured the same way.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import {
+  consumeQuota,
+  describeInvalidInput,
+  quotaDeniedResponse,
+  requireUser,
+} from '../_shared/auth.ts';
+import {
+  PHOTO_NAME_PATTERN,
+  type PhotoSignatureSet,
+  signPhotoAllWidths,
+} from '../_shared/photo-signature.ts';
 import { handlePreflight } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
 import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
@@ -136,6 +161,9 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('method_not_allowed', 'Only POST is allowed', 405, origin);
   }
 
+  const auth = await requireUser(req, { fn: 'place-details', requestId, origin });
+  if (!auth.ok) return auth.response;
+
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'place-details', level: 'error', err: 'missing_server_key' });
@@ -151,18 +179,23 @@ export async function handler(req: Request): Promise<Response> {
   try {
     body = BodySchema.parse(await req.json());
   } catch (err) {
-    return errorResponse(
-      'invalid_input',
-      err instanceof z.ZodError ? err.issues.map((i) => i.message).join('; ') : 'Invalid JSON',
-      400,
-      origin,
-    );
+    return errorResponse('invalid_input', describeInvalidInput(err), 400, origin);
   }
 
   const requestedFields = body.fields?.filter((f) => ALLOWED_FIELDS.has(f)) ?? DEFAULT_FIELDS;
   if (requestedFields.length === 0) {
     return errorResponse('invalid_input', 'No valid fields requested', 400, origin);
   }
+
+  // Metered BEFORE the Google call; a rejected request consumes nothing.
+  const quota = await consumeQuota({
+    userId: auth.user.id,
+    kind: 'place_details',
+    units: 1,
+    requestId,
+    fn: 'place-details',
+  });
+  if (quota !== 'ok') return quotaDeniedResponse(quota, 'place_details', origin);
 
   const fieldMask = requestedFields.join(',');
   const placeUrl = new URL(
@@ -200,6 +233,20 @@ export async function handler(req: Request): Promise<Response> {
 
     const raw = (await googleRes.json()) as GooglePlaceResponse;
 
+    // Audit #3: mint the self-authenticating place-photo signatures here,
+    // on the authenticated path. One bucketed `exp` for the whole response.
+    // Names that fail the photo-name pattern get no signature (place-photo
+    // would reject them anyway).
+    const photoSecret = Deno.env.get('PHOTO_URL_SECRET');
+    const signedAt = Date.now();
+    const photoSignatures: Array<PhotoSignatureSet | null> = await Promise.all(
+      (raw.photos ?? []).map((p) =>
+        photoSecret && PHOTO_NAME_PATTERN.test(p.name)
+          ? signPhotoAllWidths(photoSecret, p.name, signedAt)
+          : Promise.resolve(null),
+      ),
+    );
+
     const place = {
       placeId: raw.id ?? body.placeId,
       displayName: raw.displayName?.text ?? '',
@@ -212,12 +259,16 @@ export async function handler(req: Request): Promise<Response> {
       rating: raw.rating ?? null,
       userRatingCount: raw.userRatingCount ?? null,
       priceLevel: raw.priceLevel ?? null,
-      photos: (raw.photos ?? []).map((p) => ({
-        name: p.name,
-        widthPx: p.widthPx,
-        heightPx: p.heightPx,
-        attributions: p.authorAttributions ?? [],
-      })),
+      photos: (raw.photos ?? []).map((p, i) => {
+        const signature = photoSignatures[i];
+        return {
+          name: p.name,
+          widthPx: p.widthPx,
+          heightPx: p.heightPx,
+          attributions: p.authorAttributions ?? [],
+          ...(signature ? { signature } : {}),
+        };
+      }),
       reviews: (raw.reviews ?? []).map((r) => ({
         name: r.name,
         rating: r.rating ?? 0,
@@ -247,9 +298,11 @@ export async function handler(req: Request): Promise<Response> {
       requestId,
       fn: 'place-details',
       level: 'info',
+      userId: auth.user.id,
       placeId: place.placeId,
       reviewCount: place.reviews.length,
       photoCount: place.photos.length,
+      photosSigned: photoSignatures.filter(Boolean).length,
       durationMs: Date.now() - start,
     });
 

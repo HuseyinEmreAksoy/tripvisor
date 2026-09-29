@@ -3,7 +3,7 @@
 > **Purpose:** the canonical, persistent tracker for the v2 rewrite. Every step is listed here with status; updated after each step so progress survives across sessions.
 > **Legend:** ✅ done · 🟡 in progress · ☐ todo · ⏸ blocked (needs decision) · ⏭ deferred
 > **Process notes:** `test-specialist` is **DISABLED** (renamed `test-specialist.md.disabled`). The **verification gate** below replaces it. All agents + orchestrator run on **Opus 5.5** (switched from Fable 2026-09-28, `090bfb5`; agent prompts slimmed + gate moved to `reviewer`). **QA model (user decision 2026-09-28): no agent-run smoke tests** — the user tests on web + a local APK. Per wave: one `reviewer` gate (tsc count vs recorded, targeted Jest, `sync:validate` when `src/sync/` changes, web export when config changes, plus a code read) and a short **"What to try"** list in this log. Gate ③/⑤ smoke items below are superseded by that list.
-> **Now (2026-09-29):** M4 is code-complete through Wave 3 (`8dd2ae4`). **Next action:** the user runs the X3.4 "needs from user" list in §M4, then tests with the M4 "What to try" list.
+> **Now (2026-09-29):** M4 is code-complete through Wave 3 (`8dd2ae4`). **M5 (Y-track) is planned** in §M5 below: 4 waves, 19 steps + the M5.S security slot. **Next action:** the user runs the X3.4 "needs from user" list in §M4 (preferably before M5 Wave 2); the orchestrator fills M5.S from the audit and starts M5 Wave 1.
 > Plan: [`../../plan-v2.md`](../../plan-v2.md) (v2.1, Fable-revised 2026-06-10) · Risks: [`risks-and-decisions.md`](risks-and-decisions.md) · UX bar: [`ux-principles.md`](ux-principles.md)
 
 ## Verification gate (every phase, tester disabled)
@@ -28,6 +28,7 @@
 | Uncommitted blueprint (ux-principles.md, planner.md→fable, this revision) | ✅ committed 2026-06-10 (`e9e0715`) | 0.5a |
 | Zero native verification (all of v1) | ☐ (M4 preview APK = first user device test, pending X3.4 EAS setup) | spot-checks + P4 |
 | M4 follow-ups: resend-invite API, share-link read, editable trip dates, 6 files > 500 lines, orphaned pre-`8dd2ae4` `trip-docs` objects | ☐ 2026-09-29 | see §M4 "known follow-ups" |
+| M5 accepted debt: OSM places with no Google match can't be added, the 1 GB global Storage ceiling, web photo uploads need a connection, the optimizer orders by the day default mode, transit falls back to an estimate, agent-translated legal text | ☐ 2026-09-29 | see §M5 "known debt" |
 | e2e/Playwright re-enablement | ⏭ | post-GA (tracked, not silent) |
 
 ---
@@ -52,6 +53,236 @@
 - ✅ **0.5d v1-docs banner pass** — superseded-by-v2 banners on `docs/architecture.md` + `docs/features/{cost-and-print,expenses,trip-crud,collaboration}.md`.
 - ✅ **0.5e v2 self-contradiction fixes** (done 2026-06-10, with the panel synthesis) — features.md B2 "CRDT" → `manual_rank` wording; "~1000-line" → 2442 everywhere; expo-sqlite pinned (MMKV removed from diagrams); plan-v2 "planner stays inherit" claim fixed by the v2.1 rewrite.
 - ✅ **0.5f CI posture** — conventions.md updated (with the panel synthesis) + `ci.yml` header comment now states the posture: Jest required through S1, tsc `continue-on-error` acknowledged, Playwright TODO re-pointed at the BUILD-LOG debt register (old "phase-6" was v1 numbering).
+
+## 🧳 M5 — Memories, multi-currency, flexible routes, recommendations, i18n  (Y-track · planned 2026-09-29 · ☐ not started)
+> **Why:** the user's product vision (2026-09-29) is a holiday **planning** app **and** an after-trip **memory and review** app. That means routes and days, expenses in several currencies against a home currency, photos/journal/personal reviews, place ratings (Google on tap) plus the user's own reviews, sharing with friends and family with per-trip on/off controls, per-leg transport modes ("drive half, transit the rest"), interest-based suggestions, full **Turkish + English**, and still **$0** (free tiers only).
+> **Fixed user decisions (not re-asked):** i18n TR+EN (auto, Profile switch, all strings in files, locale-aware formatting) → [ADR-0011](../adr/0011-i18n-i18next-expo-localization.md). Recommendations from OSM Overpass + Wikipedia/Wikidata, Google only on tap, never persisted → [ADR-0013](../adr/0013-recommendations-osm-wikipedia.md). Memories: ~300 KB client-compressed photos in Storage, a day journal, per-place 1–5 rating and review → [ADR-0014](../adr/0014-memories-storage.md). FX from Frankfurter with a daily Postgres cache, rate frozen per expense → [ADR-0012](../adr/0012-fx-frankfurter-cached-rates.md). Per-leg mode override with an estimate fallback. Granular share toggles.
+> **QA model (unchanged):** no agent smoke tests. One `reviewer` gate per wave: tsc ≤ the count recorded at wave start (M4 ended at **1109**), targeted Jest, `sync:validate` whenever `src/sync/` or synced tables change, a web export when config or deps change, **`npm run i18n:check`** from Wave 1 on, and Deno tests for touched Edge Functions *if Deno is installed* (still a user item from X3.4). Each wave ends with a "What to try" list.
+> **i18n ordering decision: infra first, bulk extraction last.** Y1.4 lands the i18n runtime, formatters and the extraction of the shell/auth/onboarding/Profile, so every M5 screen (Waves 2–4) is **born translated** and nothing is written twice. The legacy screens that M5 doesn't otherwise touch are extracted in **Wave 4** (Y4.2 ‖ Y4.3), after the feature steps stop churning those areas, so no two agents edit the same file in the same wave. **Rule for every UI step:** use `t()` for all new strings, extract any string in a file you touch, and add keys only to *your own* namespace JSON (`src/i18n/locales/{en,tr}/<ns>.json`).
+> **Migration slots:** `0031` is reserved for **M5.S** (security). Y uses `0032`–`0035`. If the audit needs more, it uses `0036+`.
+> **Shared-file rule for parallel waves:** new `src/api/*` modules define their own query keys and types locally, following the `trip-place-comments.ts` pattern. `src/api/_keys.ts`, `src/api/index.ts` and `src/api/types.ts` are edited **only by the step that names them**, and consumers import modules directly.
+
+### ⏸ Blockers / needs the user
+1. **X3.4 go-live first (or at least before the M5 cloud push).** M5 adds 4 migrations and 2 new Edge Functions on top of the M4 backlog that hasn't been pushed. Pushing both phases together multiplies the drift risk. Recommended: run the X3.4 list before M5 Wave 2 starts. Agents can build Wave 1 locally meanwhile.
+2. **Turkish review:** agents write the `tr` JSON. The user, as a native speaker, reviews the tone and terms before the phase exits (Y4.G). Budget about 1 h, reading the JSON files or the app in TR.
+3. **Memory visibility interpretation (veto window until Y1.2 starts):** by default a memory is **visible to trip members, never public**. An item-level **"Only me"** toggle makes it private to the author. The public link shows memories only when the trip's `show_memories` toggle is on, and never shows "Only me" items. If you meant "each item private until I share it", say so; the fix is a one-line default flip.
+4. **Nothing paid, no new keys.** Frankfurter, Overpass and Wikipedia are keyless. Google usage is limited to the Places **IDs-only** Text Search for "resolve" and the existing place-details and Routes transit calls. Check both against the per-SKU monthly free caps in Cloud Console once. Optional: an `OVERPASS_URLS` secret for a second instance.
+5. **Codex image quota:** the orchestrator runs Codex GPT-6 for about 8 new images in prep step **Y-P** (your ChatGPT plan quota).
+
+### Free-tier budget (per external service)
+| Service | Free limit | M5 usage and guard |
+|---|---|---|
+| Supabase Storage | 1 GB total, shared by all users | photos about 300 KB + a 40 KB thumbnail, so about 2,900 photos. Per-user cap 300 and per-trip cap 500 (`app_config`); inserts are refused above 900 MB ("storage full") |
+| Supabase egress | ~5 GB/mo | grids load thumbnails only; full images load on open; signed URLs are cached in memory for 1 h |
+| Supabase DB | 500 MB | `fx_rates` (~200 rows per used day), `poi_cache` (trimmed JSON, 30-day TTL, purged by the existing pg_cron) |
+| Edge Functions | 500k invocations/mo | 2 new functions (`fx-rates`, `poi-recommend`); the client caches FX for 6 h |
+| Frankfurter (ECB+) | no key, no quota, abuse rate-limit | about 1 upstream call per distinct date across all users; jsDelivr `currency-api` as fallback |
+| Overpass (public) | about 10k requests and 1 GB per day per IP (guideline) | geohash-5 × interest tile cache for 30 days; **global cap of 2,000 a day** (`service_usage`); 40 per user per day; failover to a secondary instance and then Wikipedia GeoSearch; kill switch `recommendations='off'` |
+| Wikipedia / Wikidata REST | keyless; descriptive User-Agent required | summaries cached per `wikidata × lang` for 30 days; lazy, top N cards only |
+| ORS | 2,000 directions and 500 matrix calls a day | unchanged path; per-leg modes add at most one directions call per overridden leg |
+| Google (Places/Routes) | per-SKU monthly free caps | transit legs (existing) + IDs-only resolve on "add"; place details only on tap; **no Google photos as thumbnails** |
+| Codex GPT-6 | user's ChatGPT plan | Y-P: about 8 images in one batched prompt |
+
+### New surface area (summary)
+- **Migrations:**
+  - `0032_v2_m5_multicurrency.sql`: `fx_rates`; `trip_expenses.{currency, fx_rate, fx_date, fx_home_currency}`; `trips.currency` check widened to `^[A-Z]{3}$`; analytics MV redefined to `amount*coalesce(fx_rate,1)`.
+  - `0033_v2_m5_leg_modes.sql`: `trip_places.{arrival_mode, arrival_minutes}`, `trip_days.transport_mode`, `trip_legs.source`; `duplicate_trip` redefined to copy the new expense and place columns (memories are not copied).
+  - `0034_v2_m5_memories.sql`: `trip_journal_entries`, `trip_place_reviews`, `trip_photos` + the private `trip-memories` bucket + storage policies + the quota/guard trigger + realtime + tombstone/`updated_at` triggers.
+  - `0035_v2_m5_sharing_prefs_poi.sql`: `trip_shares.{show_itinerary default true, show_expenses default false, show_memories default false}`; `user_preferences(user_id pk, locale, home_currency, interests text[])`; `poi_cache`; `service_usage` + a SECURITY DEFINER increment; `ai_usage.poi_requests`; pg_cron purge of `poi_cache` rows older than 30 days.
+- **New Edge Functions:** `fx-rates`, `poi-recommend` (actions `search`, `resolve`).
+- **Changed Edge Functions (additive, contract minor bump):** `optimize-trip` + `_shared/routing.ts` (per-leg modes, `legs[].source`, `keptOrderDays`), `share-trip` (toggles, a "current link" read, signed memory URLs, expenses summary), `place-details`, `places-autocomplete`, `ai-itinerary`, `ai-edit` (optional `lang`), `delete-account` (the `trip-memories` bucket), `export-account` (new tables).
+- **Tier-1 allowlist changes (`src/sync/allowlist.ts`):**
+  - Hydration fields: `trip_expenses` += `currency, fx_rate, fx_date, fx_home_currency`; `trip_places` += `arrival_mode, arrival_minutes`; `trip_days` += `transport_mode`.
+  - Write fields: `trip_expenses` += the same 4; `trip_places` += `arrival_mode, arrival_minutes`. Both are user intent and C1-safe; legs stay server-only.
+  - **New roots:** `trip_journal_entries` (write-enabled: `body, day_index, only_me, deleted`), `trip_place_reviews` (write-enabled: `rating, body, only_me, deleted`), `trip_photos` (read-only root; created through the upload path; `caption`/`only_me`/`deleted` changed through an online mutation).
+  - None of these are Google fields. The C3 `isRestrictedFieldName` tripwire must still pass: `rating` on `trip_place_reviews` is a **user** rating. Add a documented allowlist exception for that table only, with a test proving `trip_places.rating` still throws.
+- **New deps (all iOS/Android/web):** `i18next`, `react-i18next`, `expo-localization`, `intl-pluralrules` (native, only if Hermes lacks PluralRules), `expo-image-manipulator`, `expo-image-picker`.
+
+### Prep (orchestrator, before Wave 3; not an agent step)
+- ☐ **Y-P Image batch (Codex GPT-6, see memory `tripvisor-codex-images`)**: one batched prompt in the Tide & Terracotta style, saved to `assets/images/`: `empty-memories.png`, `empty-journal.png`, `empty-discover.png`, `empty-expenses.png`, `recap-backdrop.png`, `onboarding-interests.png`, and 2 more default covers (`cover-nature.png`, `cover-food.png`) for trips without a cover. The steps that use them reference these names; until the files exist, `EmptyState` falls back to icons.
+
+### Wave 1: Schema, new Edge Functions, i18n runtime, security  *(Y1.1 ‖ Y1.2 ‖ Y1.3 ‖ Y1.4 ‖ M5.S in parallel; files disjoint)*
+- ☐ **Y1.1 Money + routes schema, types and Tier-1 allowlist** — Agent: backend-specialist · Size: M · Depends: none
+  Task: Write migrations `0032` and `0033` exactly as listed above. `arrival_mode` is checked to `driving|walking|bicycling|transit|flight|ferry`, `arrival_minutes` to 1–1440, and `trip_days.transport_mode` to the 4 trip modes. `trip_legs.source` is `ors|google|estimate|user`, defaulting to `ors`. Editor-trigger parity: editors **may** set expense currency and place `arrival_mode`, but `trips.currency` stays owner-only. The migration also redefines the MV and `duplicate_trip`. Update **`src/api/types.ts`** (the only Wave-1 editor of this file) for all M5 columns on existing tables, and `src/sync/allowlist.ts` for the new hydration and write fields on *existing* roots, with allowlist Jest updated. Extend `sync:validate` with an expense-with-currency create→edit round trip and an `arrival_mode` write.
+  Output: 2 migrations, types, allowlist. Verify: `supabase db reset` applies cleanly (local); allowlist Jest passes; `sync:validate` passes; tsc ≤ count.
+  Risks: [Med] the MV redefinition drops dependent grants or indexes. Mitigation: copy 0029's grant and index block verbatim. [Med] legacy rows have `currency NULL`. Mitigation: NULL is defined as "trip currency with rate 1" everywhere (documented in the types JSDoc).
+- ☐ **Y1.2 Memories, sharing and preferences schema + account lifecycle** — Agent: backend-specialist · Size: M · Depends: blocker 3 (veto window)
+  Task: Write migrations `0034` and `0035` as listed above and in ADR-0014:
+  - RLS: select = `user_can_access_trip(trip, uid, 'viewer')` AND (`only_me = false` OR `author_id = uid`); insert = the author is uid and the user is a trip member; update = author only; delete/tombstone = author or owner.
+  - Storage policies join `trip_photos`; the path is `<trip_id>/<author_id>/<photo_id>`.
+  - Quota trigger: caps from `app_config` (`memories_user_cap=300`, `memories_trip_cap=500`) plus the 900 MB global guard via `storage.objects` metadata, with error code `storage_full`/`quota_exceeded`.
+  - `user_preferences` is owner-only RLS. `poi_cache`, `service_usage` and `fx_rates` are readable by `authenticated` and writable only by the service role.
+  - Extend `delete-account` to remove the user's `trip-memories` objects, and `export-account` to include the journal, reviews and photo metadata. Update the Deno tests for both.
+  Output: 2 migrations + 2 function updates. Verify: local reset applies; SQL assertions in the migration's test block (a member sees the item, a non-member doesn't, `only_me` is hidden from others, the quota trigger fires); the Deno tests are written (run if Deno is present).
+  Risks: [High] a storage policy that joins a metadata row inserted after upload leaves orphans or denies reads. Mitigation: the order is **row first (`status='pending'`), upload, then mark `ready`**; a pg_cron job deletes `pending` rows older than 24 h. [Med] the `storage.objects` size sum is slow at scale. Mitigation: it's fine at ≤ 3k objects; noted in debt.
+- ☐ **Y1.3 `fx-rates` + `poi-recommend` Edge Functions** — Agent: backend-specialist · Size: M · Depends: none (codes against the DDL above; the gate checks it against Y1.1/Y1.2)
+  Task:
+  - `supabase/functions/fx-rates/` per ADR-0012: Frankfurter `api.frankfurter.dev` (verify the v1/v2 response shape during the build), jsDelivr `currency-api` fallback, EUR-based upsert, cross rates, weekend/holiday resolution, `GET currencies`, `meta.contractVersion: 1`.
+  - `supabase/functions/poi-recommend/` + `_shared/interests.ts` per ADR-0013: `search` (Overpass QL built from the tag map, geohash-5 tiles, `poi_cache`, trimmed payload, ranking, lang-aware names, lazy Wikipedia summaries via Wikidata sitelinks with tr→en fallback), `resolve` (Places Text Search, IDs-only field mask, 300 m acceptance), per-user and global caps, instance failover then Wikipedia GeoSearch, the `recommendations` kill switch, a descriptive User-Agent.
+  - Deno tests with mocked upstreams.
+  Output: 2 new functions. Verify: Deno tests (if Deno is present) or a reviewer read of the handlers against the contract; `supabase functions serve` + one curl each (local, reviewer).
+  Risks: [High] Overpass slowness or 429s under load. Mitigation: `[timeout:25]`, tile cache, failover chain, global cap. [Med] Google may no longer treat the IDs-only SKU as free. Mitigation: `resolve` is only called on "add" or on a tap, not per card, and it counts in `ai_usage`.
+- ☐ **Y1.4 i18n runtime, formatters, and first extraction** — Agent: ui-specialist · Size: M · Depends: none
+  Task: Per ADR-0011:
+  - Install deps. Add `src/i18n/{index.ts,format.ts}` and `locales/{en,tr}/{common,shell,auth,onboarding,profile,legal,errors}.json`, with init in `app/_layout.tsx` before first render.
+  - Language resolution: stored choice → device language; a **Profile → Language** row (System / Türkçe / English). Changing it re-renders and re-formats without a restart.
+  - `src/lib/formatCurrency.ts` and `formatDuration.ts` delegate to `src/i18n/format.ts`; callers don't change.
+  - Add `scripts/i18n-check.ts` + `npm run i18n:check` (key parity, empty values, JSX-literal scan in the migrated directories list).
+  - **Extract** these, including the Turkish text: tabs `_layout` + `TabBar`, `(auth)/*`, `app/index.tsx`, `components/onboarding/*`, `(tabs)/settings.tsx` (Profile), `app/legal/*` (legal text translated in full; flag it for review by the user's lawyer or the user).
+  - Jest for `format.ts` (tr-TR `₺1.234,50`, en `€1,234.50`, dates, `İ`/`ı` collation) and a language-switch test.
+  Output: TR/EN switchable shell. Verify: tsc ≤ count; `i18n:check` passes; web export is clean (new deps); Jest passes.
+  Risks: [Med] Hermes lacks `Intl.PluralRules`, which breaks plurals only on native. Mitigation: a guarded polyfill plus a Jest case that simulates its absence. [Med] string concatenation ("Day " + n) can't be translated. Mitigation: interpolation only; the reviewer greps `' + t(`.
+- ☐ **M5.S Security fixes (from audit)** — Agent: *TBD by the orchestrator* · Size: *TBD* · Depends: the parallel security audit
+  Placeholder, filled by the orchestrator with the audit findings. Constraints: migration slot `0031` (then `0036+`). The files must be disjoint from Y1.1–Y1.4. If a fix lands in a file a Y step owns (`allowlist.ts`, `types.ts`, `delete-account`, `export-account`, `share-trip`), fold the fix into that step's brief instead of running a parallel edit. `share-trip` fixes should go to Y2.5 (Wave 2) unless they are urgent.
+- ☐ **Y1.G Wave-1 gate** — Agent: reviewer. The gate items above, plus: migrations 0031–0035 apply in order on a fresh local reset; the RLS read matrix (owner/editor/viewer/non-member × `only_me`); allowlist tests including the review-`rating` exception; `i18n:check`; the web export with new deps. **User "what to try":** switch Profile → Language to Türkçe, and the tabs, auth, onboarding and Profile are all Turkish, with dates and money formatted `1.234,50 ₺` style; set it back to System; the sign-in page on a Turkish-language phone opens in Turkish.
+
+### Wave 2: Data layers, routing engine, visual foundation  *(Y2.1 ‖ Y2.2 ‖ Y2.3 ‖ Y2.4 ‖ Y2.5 in parallel; files disjoint)*
+- ☐ **Y2.1 Memories data layer + photo pipeline** — Agent: backend-specialist · Size: M · Depends: Y1.2
+  Task:
+  - `src/api/trip-memories.ts`: journal, review and photo hooks with local keys and types; signed-URL hook with memory-only caching.
+  - Tier-1 roots `trip_journal_entries` and `trip_place_reviews` (write-enabled) and `trip_photos` (read) in `allowlist.ts`, `hydrate.ts`, `store.ts` and `mutations.ts` (create/update/tombstone with `UndoEntry`, client UUIDs), following the X2.5 pattern.
+  - `src/lib/photoPipeline.ts`: `expo-image-manipulator` compress to ≤ 350 KB full plus a 400 px thumbnail, EXIF stripped, `taken_at` from picker EXIF read before the strip. Upload flow: row pending → 2 uploads → ready.
+  - A native persisted retry queue (AsyncStorage + `expo-file-system` cache copy). Web uploads online only.
+  - Tombstoning a photo deletes its objects when online.
+  - Extend `sync:validate` with journal and review round trips. Jest for pipeline size targets (mocked manipulator) and the queue.
+  Output: offline journal and reviews; reliable photo upload. Verify: sync Jest; `sync:validate`; tsc.
+  Risks: [High] a new Tier-1 root breaks boot or account switching. Mitigation: copy the X2.5 root checklist (hydrate order, wipe, teardown), and `sync:validate` must stay all-green. [Med] web canvas compression of HEIC from iPhones. Mitigation: `expo-image-picker` converts to JPEG on iOS; on web, reject unsupported types with a translated error.
+- ☐ **Y2.2 Money + preferences data layer** — Agent: backend-specialist · Size: M · Depends: Y1.1, Y1.3
+  Task:
+  - `src/api/fx.ts`: rates hook plus a last-known map persisted through the persister allowlist (edit that allowlist and **`src/api/_keys.ts`**; this step alone owns `_keys.ts` in Wave 2).
+  - The `trip-expenses.ts` facade captures `currency/fx_rate/fx_date/fx_home_currency` on create; if no rate is known, `fx_rate=null` and a reconciler fills it on reconnect.
+  - Pure `src/lib/money.ts`: `toHome`, `totalsInHome`, `breakdownByCurrency`, `atTodaysRate`, `parseAmount(locale)` (so `12,50` works in TR), `rederiveOnHomeChange`, with thorough Jest.
+  - `src/api/user-preferences.ts` (locale, home currency, interests; upsert own row).
+  Output: every money consumer can call one lib. Verify: Jest for money (including rounding to the currency's minor units, JPY with 0 decimals); tsc.
+  Risks: [Med] floating-point drift in totals. Mitigation: sum in minor units and round once at display.
+- ☐ **Y2.3 Flexible routes engine (per-leg modes)** — Agent: backend-specialist · Size: M · Depends: Y1.1
+  Task: In `optimize-trip/index.ts`, `_shared/routing.ts` and `directions-polyline` as needed:
+  - Effective leg mode = `to_place.arrival_mode ?? day.transport_mode ?? trip.transport_mode`.
+  - The leg cache is keyed by mode (today it filters on `trip.transport_mode`).
+  - Driving, walking and cycling use ORS, with Google as the in-request fallback. Transit uses Google, and on error, quota or the kill switch falls back to an **estimate** (haversine × 1.3 at 25 km/h + 5 min).
+  - Flight: `arrival_minutes`, or distance / 700 km/h + 90 min, with source `user`/`estimate` and no polyline (the client draws the arc). Ferry: `arrival_minutes`, or distance / 30 km/h, as an estimate.
+  - Ordering: the optimizer matrix uses the day's effective default mode. **Days that contain a flight or ferry leg keep the user's `manual_rank` order** and only recompute legs; the response lists them in `keptOrderDays`.
+  - Additive response fields + a `contractVersion` minor bump. Update `src/api/routes.ts` and `src/components/trip-detail/computeDayTimeline.ts` (pure; this step owns it) to consume `source` (an estimate shows as ≈).
+  - Deno + Jest cases: mixed-mode day, transit fallback, flight day kept in order.
+  Output: "drive half, transit half" produces correct legs and ETAs. Verify: optimize-trip Deno tests (if Deno is present); `computeDayTimeline` Jest; tsc.
+  Risks: [High] the optimize-trip leg wipe and rewrite regresses the 0026 mutex or `manual_rank` branch. Mitigation: no change to the claim/release or manual-branch control flow, only to the per-leg mode argument; the existing 11+ Deno cases must pass. [Med] a mode change isn't reflected until re-route. Mitigation: the client triggers the existing recompute; offline shows the existing "pending route recompute" chip.
+- ☐ **Y2.4 Visual foundation** — Agent: ui-specialist · Size: M · Depends: Y1.4
+  Task:
+  - **Tokens:** a lighter surface and elevation scale in `src/theme/tokens.ts`. Dark fills are reserved for the hero and map chrome; cards use a lighter raised surface; more whitespace.
+  - **Day color system:** a single `dayColor(i)` source shared by the map, chips, timeline rail and place-row accent (the current definition lives in `Map/types.ts`; move it to the theme and re-export).
+  - **Desktop widths:** `Screen` gains `width="form" (640) | "content" (960) | "full"`. Apply `form` to `trip/new.tsx`, `trip/plan.tsx` and `trip/[id]/add.tsx`.
+  - **Trip hero:** `TripHeader` shows the cover image (generated covers, `tripCovers.ts`) with a scrim, title, dates and a "Day 3 of 7" / "in 12 days" / "Relive" status. It collapses to the M4 compact header on scroll on phones and sits as a banner on desktop.
+  - **Place thumbnail slot:** `PlaceThumb` (own memory photo thumbnail if one exists, via an optional prop, otherwise a category-icon tile in the day color). No Google photos in rows (cost + ToS). Wire it into `PlaceRow`.
+  - Extract strings in every touched file.
+  Output: a lighter, more visual trip surface. Verify: tsc; touched component Jest; a code read of desktop widths at 1440 px; contrast AA on the new tokens.
+  Risks: [Med] the token change ripples across M4's WCAG work. Mitigation: change surface tokens only (not `primaryInk`, `dangerText` or `scrim`), and the reviewer spot-checks 5 screens in both themes.
+- ☐ **Y2.5 Sharing + locale plumbing + recommendations client** — Agent: backend-specialist · Size: M · Depends: Y1.2, Y1.3
+  Task:
+  - `share-trip`: owner sets `show_itinerary/show_expenses/show_memories`; a **"get current link"** read (closes the M4 debt); the public payload includes an expenses summary (home-currency totals by category plus the per-currency breakdown; line items never included) when on, and memories (non-`only_me` journal, reviews, and photo thumbnails + full images as 1 h signed URLs) when on.
+  - An optional `lang` in `place-details` and `places-autocomplete` (Google `languageCode`), and in `ai-itinerary`/`ai-edit` (output language instruction).
+  - `src/api/share.ts` and `src/api/places.ts`/`ai.ts` pass `lang` from the i18n locale.
+  - New `src/api/recommendations.ts`: `useRecommendations` (Tier-2 memory-only, **excluded from the persister**) and `useResolvePlace`.
+  - Deno tests for share-trip toggles (expenses hidden by default, `only_me` never public).
+  Output: all server contracts the Wave-3 UI needs. Verify: Deno tests (if present); a reviewer read that the share payload has no Google content; tsc.
+  Risks: [High] leaking private memories publicly. Mitigation: the service-role query filters `only_me=false AND deleted=false`, with an explicit Deno test.
+- ☐ **Y2.G Wave-2 gate** — Agent: reviewer. The gate items, plus `sync:validate` (the new roots), the persister allowlist diff (fx is in, recommendations are out), and a read of the optimize-trip diff for C1. **User "what to try":** the trip screen shows a cover hero and the day colors match the map; "new trip" on desktop is a centered form, not full width; offline, write a journal entry (via a dev hook or the Wave-3 UI if available), reload, and it persists; re-optimize a trip with Turkish language set and the AI/place text comes back in Turkish.
+
+### Wave 3: Feature UIs  *(Y3.1 ‖ Y3.2 ‖ Y3.3 ‖ Y3.4 ‖ Y3.5 in parallel; file ownership listed per step)*
+- ☐ **Y3.1 Memories UI** — Agent: ui-specialist · Size: M · Depends: Y2.1, Y-P
+  Task:
+  - Owns `app/(app)/trip/[id]/memories.tsx`, `src/components/memories/*`, `app/(app)/place/[placeId].tsx`, `TripHubTab`/`TripHubCards` and `(tabs)/today.tsx`.
+  - **Memories screen:** a timeline by day (day color rail), photo grid with thumbnails and a lightbox, the day journal editor, and an "Only me" toggle on every item.
+  - **Place detail:** a "Your rating & review" block (1–5 stars + text), kept visually separate from "Reviews from Google".
+  - **Hub:** a Memories card (count + latest thumbnail) and a **Discover** card linking to `/trip/[id]/discover` (the Y3.4 route).
+  - **Today:** "Add photo" and "Write today's journal" quick actions.
+  - Upload progress, queue state, `storage_full`/`quota_exceeded` messages, and the empty states (`empty-memories`, `empty-journal`).
+  Verify: tsc; component Jest (the review block, the only-me toggle); `i18n:check`.
+- ☐ **Y3.2 Multi-currency UI** — Agent: ui-specialist · Size: M · Depends: Y2.2
+  Task:
+  - Owns `src/components/budget/*` (incl. `ExpenseEditSheet`), `TripSettingsSheet` (home currency picker with the widened list), `(tabs)/analytics.tsx` + `components/analytics/*`.
+  - The expense sheet has a currency chip row: home currency + recently used (e.g. EUR, TRY) + "More…" searchable. The keypad accepts the locale decimal separator, and a live "≈ 1.234,50 ₺" preview shows while typing.
+  - Budget card: the home-currency total, a **per-currency breakdown**, an "at entry rate / today's rate" toggle, and a "rate pending" chip.
+  - Analytics shows everything in home currency.
+  - Changing the home currency shows a confirm explaining the re-derivation.
+  Verify: tsc; existing BudgetCard/CategoryBreakdown Jest updated; `i18n:check`.
+- ☐ **Y3.3 Flexible routes UI** — Agent: ui-specialist · Size: M · Depends: Y2.3
+  Task:
+  - Owns `ItineraryTab.tsx`, `itinerary/*`, `PlaceRow.tsx`, `DaySummaryCard.tsx`, `DayStartTimeControl.tsx`, `MapTab.tsx`, `src/components/Map/*`.
+  - A **leg chip between consecutive stops** (mode icon + duration, with ≈ when estimated); tapping it opens a mode sheet (drive, walk, bike, transit, flight, ferry, plus optional minutes for flight, ferry and transit) that writes `arrival_mode`/`arrival_minutes` via Tier-1 and triggers a recompute.
+  - A per-day default mode in the day header.
+  - Map: per-mode polyline styles (walk dotted, transit dashed, flight geodesic arc, ferry dashed in blue), with legend chips.
+  - A "Kept your order because this day has a flight" note, from `keptOrderDays`.
+  - The drag path is unchanged.
+  Verify: tsc; `dragRank`/timeline Jest; a code read that the C1 write path only touches `arrival_*` and `manual_rank`.
+  Risks: [Med] ItineraryTab (~860 lines) grows further. Mitigation: the leg chip, mode sheet and day-mode control go into new files under `itinerary/`, and ItineraryTab only mounts them.
+- ☐ **Y3.4 Recommendations + interests UI** — Agent: ui-specialist · Size: M · Depends: Y2.2, Y2.5, Y-P
+  Task:
+  - Owns `app/(app)/trip/[id]/discover.tsx`, `src/components/discover/*`, `QuickAddSheet.tsx`, `components/onboarding/*` (the interests card), and the Profile preferences section in `(tabs)/settings.tsx` (interests, default home currency, and the locale mirror to `user_preferences`).
+  - Discover: interest chips (pre-selected from preferences), a center selector (trip day's centroid / current location / map center), a card list with the Wikipedia extract and thumbnail and attributions, and a map toggle.
+  - **Tap → a RecDetailSheet** that resolves the place and shows the Google rating and reviews through the existing place-details hook (Tier-2; "Powered by Google").
+  - "Add to Ideas / Day N" through the existing add path.
+  - A "couldn't match to a map place" state, a quota-exhausted state, a kill-switch state, and the empty state (`empty-discover`).
+  - QuickAddSheet gets a "Discover nearby" entry.
+  Verify: tsc; component Jest (the interest mapping and attribution rendered); a code read that no Google field reaches Tier-1 or the persister.
+- ☐ **Y3.5 Sharing controls + public page** — Agent: ui-specialist · Size: M · Depends: Y2.5
+  Task:
+  - Owns `ShareLinkCard.tsx`, `src/components/share/*`, `app/share/[token].tsx`.
+  - The share card: link on/off, **show itinerary / show expenses (off by default) / show memories (off by default)** toggles, and re-showing the current link after reload (the new read). This fixes the stale header comment from M4.
+  - Public page: an Expenses section (home-currency totals + currency breakdown) and a Memories section (gallery, journal quotes, star reviews), each rendered only when the payload includes it. It stays mobile-first, with OG tags unchanged.
+  Verify: tsc; ShareLinkCard Jest updated; a code read that the page renders nothing for missing sections and has no auth dependency.
+- ☐ **Y3.G Wave-3 gate** — Agent: reviewer. The gate items plus the file-ownership check (no two Wave-3 diffs touch the same file). **User "what to try":**
+  - Add 3 photos from your phone to a day, write a journal entry, and rate a place 4★ with a review; a collaborator sees them, and "Only me" items stay hidden from them.
+  - Add expenses in EUR and TRY on a trip with home currency TRY; the totals, the per-currency breakdown and the today's-rate toggle all work; enter "12,50" in Turkish.
+  - Set Day 2 to transit and one leg to "drive"; set a flight leg with 120 min; the map shows the arc, the timeline shows ≈, and the order is kept.
+  - Pick History and Food interests, open Discover in a city, tap a card to see the Google rating, and add it to Day 1.
+  - Turn on "show memories" for a share link, open it in a private window, and expenses stay hidden until toggled on.
+
+### Wave 4: Recap story, full extraction, non-UI strings  *(Y4.1 ‖ Y4.2 ‖ Y4.3 ‖ Y4.4 in parallel)*
+- ☐ **Y4.1 Trip recap "story" + past-trip visuals** — Agent: ui-specialist · Size: M · Depends: Wave 3
+  Task:
+  - Owns `app/(app)/trip/[id]/recap.tsx`, `src/components/recap/*`, pure `src/lib/recap.ts` (+ Jest), `(tabs)/trips.tsx`, `TripCard.tsx` and `(tabs)/today.tsx`.
+  - A full-screen swipeable story that works on a phone, desktop (centered 9:16 frame with keyboard arrows) and native. The slides: cover; days, places, km and hours; money spent in home currency with the top category; top-rated places (your stars); a photo per day; journal quotes; a "Plan the next one" CTA.
+  - Entry points: past trips in the list get a **"Relive"** badge and use the best memory photo as the card cover (falling back to the generated cover); Today shows a "Your trip recap is ready" card after a trip ends.
+  - Reduced motion shows static slides.
+  Verify: tsc; `recap` Jest (empty memories, no expenses, 1-day trips); `i18n:check`.
+- ☐ **Y4.2 i18n extraction A: trip and place surfaces** — Agent: ui-specialist · Size: M · Depends: Wave 3
+  Task: Extract every remaining literal in `app/(app)/trip/**` (excluding the M5 routes already born translated), `app/(app)/place/*`, `app/invite/*`, `src/components/{trip-detail (files not touched in M5), DraggableItinerary, add-place, ai-edit, ai-plan, collaborators, accommodation, packing}`, and `print.tsx` (print dates use the app locale). Namespaces: `trip`, `place`, `ai`, `collab`, `stays`, `packing`. Add the TR translations.
+  Verify: `i18n:check --strict` over those directories = 0 literals; tsc; touched Jest updated for text changes (prefer `testID` or role queries).
+- ☐ **Y4.3 i18n extraction B: everything else** — Agent: ui-specialist · Size: M · Depends: Wave 3
+  Task: Extract the rest, **excluding the files Y4.1 and Y4.2 own**: `components/{home, today, analytics (non-M5), charts, navigation, permissions}`, the root components (`EmptyState`, `emptyStates.ts`, `FilterSheet`, `TripActionsSheet`, `UndoToast`, `SyncStatusPill`, `StatusPill`, `TripCostRollup`, `ReactionChip`, `MapUnavailable`, `PlaceActionsSheet`, `PoweredByGoogle` stays English per Google's branding), and `app/(app)/_layout.tsx`. (`src/lib/tripsFilters.ts` belongs to Y4.4.) Add the TR translations. Then flip `i18n:check --strict` to cover **all** of `app/` and `src/components/`.
+  Verify: the repo-wide strict check = 0; tsc; Jest.
+  Risks: [Med] Jest suites assert English text. Mitigation: the test setup pins `en`; assertions use keys or roles where cheap.
+- ☐ **Y4.4 Non-UI strings, collation, CI** — Agent: backend-specialist · Size: S · Depends: Y1.4
+  Task:
+  - `src/api/_errors.ts`: typed error codes mapped to `errors` namespace keys (Edge Functions keep English codes).
+  - `.ics` event text (`src/lib/ics/*`, `src/api/ics*`) and the share-summary text (`src/lib/buildSummary.ts`) use the app locale.
+  - Trips-list sorting and search use `Intl.Collator(appLocale)`, and the sort/filter labels move to i18n keys. This step owns all of `src/lib/tripsFilters.ts`.
+  - Add `npm run i18n:check -- --strict` to `.github/workflows/ci.yml` as a required job.
+  Verify: Jest for the error mapping, ics TR output and collation (`İstanbul` sorts under I/İ correctly); tsc.
+- ☐ **Y4.G Wave-4 gate + phase close** — Agent: reviewer, then docs-specialist (features docs for memories, currency, routes, discover, i18n, recap; `overview.md`) and git-committer. **User "what to try":**
+  - The whole app in Türkçe, with no English leftovers on any screen you visit (report any).
+  - A finished trip shows "Relive"; open the story on a phone and on desktop.
+  - Export a trip `.ics` in Turkish.
+  - **Review the TR JSON** (blocker 2).
+  - Cloud push: migrations 0031–0035; deploy `fx-rates`, `poi-recommend`, `optimize-trip`, `share-trip`, `place-details`, `places-autocomplete`, `ai-itinerary`, `ai-edit`, `delete-account`, `export-account`; confirm the `trip-memories` bucket exists on cloud.
+
+### 📌 M5 known debt (accepted at planning)
+- OSM candidates with no confident Google match can't be added (ADR-0013).
+- The 1 GB Storage ceiling is global. R2 is the documented escape hatch (ADR-0014).
+- Web photo uploads need a connection (native has a queue).
+- The optimizer ignores per-leg overrides when *ordering* (it uses the day default) and keeps manual order on flight and ferry days.
+- Transit is an estimate whenever Google transit isn't available.
+- Legal text translated by an agent. Needs a human or legal read before store submission.
+
+**Phase exit criteria (M5):**
+1. With Profile → Language set to Türkçe, every screen is Turkish. `i18n:check --strict` passes repo-wide in CI. Dates, numbers and money follow the app language (`1.234,50 ₺` vs `€1,234.50`). System mode follows the device.
+2. A trip with EUR and TRY expenses shows the home-currency total using the frozen rates, a per-currency breakdown, and a today's-rate view. An expense added offline gets its rate after reconnecting.
+3. A day with mixed modes (a drive leg, a transit leg, a flight with minutes) renders correct legs, ETAs (≈ on estimates) and per-mode map styles. Flight and ferry days keep the user's order.
+4. Photos upload at ≤ 350 KB with a thumbnail and no EXIF GPS. The journal and reviews work offline and sync. "Only me" items are invisible to other members and to the public. The quota and 900 MB guard produce clear messages.
+5. Discover returns interest-matched OSM places with attributions. A tap shows the Google rating live (never persisted). Adding resolves to a `google_place_id`. The caps and kill switch work.
+6. Share link toggles (itinerary, expenses off by default, memories off by default) control the public page, and the current link can be re-shown.
+7. The visual track has shipped: trip hero, unified day colors, place thumbnails, desktop form widths, memory timeline, recap story, and the new empty-state art.
+8. Every wave's gate is green: tsc ≤ recorded, Jest, `sync:validate` (including the new roots), web export, and Deno where available.
 
 ## 📱 M4 — Mobile-first experience & useful features  (X-track · planned 2026-09-28 · 🟡 code-complete 2026-09-29 through Wave 3 — X3.4 go-live pending user)
 > **Why now:** the user's direction (2026-09-28) is to rework features, older code and the mobile design so the app is more useful day to day, test it on web plus a local APK, deploy on free tools, and then publish to Google Play and the App Store. **Name note:** "M4" is this phase's number. It is *not* part of the Monetization M1–M3 track, and its step ids use the prefix **X**.
@@ -355,3 +586,4 @@ Gates after fixes: deno optimize-trip 11/11, jest 25/268, live re-optimize of th
 - 2026-06-10 — **Phases 0.5 + N1 + N2 + N3 SHIPPED** (commits `7572d32`, `ada5d6d`, `13f17bf`, `cb2e9c4`, `6313d2a`, +Wave 3). All gates green throughout (tsc baseline-identical; jest 25 suites / 268 tests). Session-limit interruption mid-Wave-2 recovered with zero loss. **Next:** user actions above (migrations/secrets/dashboard) + web smoke; then **N4 (AI editing + import)** ⏸ or **N5 (free maps)** ⏸ D2 or **S1 (SDK epic)** ⏸ D1.
 - 2026-06-12 — **S2 Waves 3a+3b SHIPPED** (`5b830a1` + `a8466a8`): mutations/undo/auth lifecycle, offline drag with pending-recompute pill, SyncStatusPill, metro.config.js web-export fix. R6 re-verified 7/7 post-Wave-3. Flag stays OFF. **Next:** S2.8 flag-flip phase, or P4 native parity (S1 device smoke still owed by user), or grounding-quality tuning.
 - 2026-06-12 — **G6 live-auth hotfix SHIPPED + REDEPLOYED** (user's first live report): env-inlining bug — computed/optional-chained `process.env` reads are not inlined by Expo at build time; live bundle ran with REPLACE_ME Supabase URL. 8 sites fixed to static-first reads; gates green (tsc 1341 ±0, jest 28/346); fresh cloud-env export verified then deployed → tripvisor.pages.dev. Google provider (G2b) + Resend SMTP still user-owed.
+- 2026-09-29 — **M5 planned** (Y-track: memories, multi-currency, flexible routes, recommendations, TR+EN i18n, visual track). 4 waves, 19 steps + M5.S security placeholder; migrations 0032–0035 (0031 reserved for M5.S); new Edge Fns `fx-rates` + `poi-recommend`; ADR-0011…0014.

@@ -37,6 +37,9 @@ The function uses `makeUserClient(req)` for owner checks (so RLS proves ownershi
 | `already_accepted`    | 409    | Cannot decline an already-accepted invite (owner must revoke) |
 | `invite_revoked`      | 410    | Invite was revoked or declined                                |
 | `invite_expired`      | 410    | Pending invite older than 7 days                              |
+| `invite_rate_limited` | 429    | Owner already sent `DAILY_INVITE_CAP` (20) invites this UTC day; `Retry-After` = seconds to UTC midnight |
+| `trip_invite_limit`   | 429    | Trip already holds `MAX_PENDING_INVITES_PER_TRIP` (50) live pending invites |
+| `quota_unavailable`   | 503    | Invite-quota RPC failed — fails closed (migration 0033 missing / DB error) |
 | `email_failed`        | 200    | Returned with `ok:true, emailSent:false` (best-effort)        |
 | `db_error`            | 500    | Postgres failure                                              |
 | `internal_error`      | 500    | Unexpected exception                                          |
@@ -52,6 +55,15 @@ Avoids the revoke + re-invite churn previously required to flip a collaborator b
 `invite` calls `supabase.auth.admin.inviteUserByEmail` with `redirectTo` set to the invite URL. If the invitee already has a Supabase auth account, the call may fail — we surface that as `emailSent: false` along with the inviteUrl in the response so the owner can copy / paste the link as a fallback. Email failures NEVER roll back the row.
 
 A future iteration may add an SMTP-based custom email containing the token URL directly. For MVP, the response carries `inviteUrl` so the UI can offer "copy invite link".
+
+## Invite spam caps (security audit #14)
+
+Every new invite can create an `auth.users` row and send an email (`inviteUserByEmail`), so `invite` is bounded twice, after the owner / duplicate checks and before any row or email is created:
+
+1. **Per trip:** at most `MAX_PENDING_INVITES_PER_TRIP` (50) live pending invites (pending rows older than the 7-day TTL don't count). Refusal → `429 trip_invite_limit`; no quota is consumed.
+2. **Per owner, per UTC day:** at most `DAILY_INVITE_CAP` (20) invites across all trips, consumed atomically by the `consume_invite_quota(p_user, p_cap)` RPC (migration `0033_v2_invite_quota.sql`, counter `ai_usage.collaborator_invites`, EXECUTE for service_role only). Keyed on the owner, so deleting a trip does not reset it, and the `INSERT … ON CONFLICT … WHERE counter + 1 <= cap` shape cannot be raced past the cap. Refusal → `429 invite_rate_limited` with `Retry-After`; a refused call consumes nothing. RPC failure → `503 quota_unavailable` (fail closed).
+
+Both caps are constants in `index.ts` (tuning is a redeploy). Apply migration 0033 **before** deploying this function.
 
 ## Pending invite TTL
 
@@ -70,4 +82,4 @@ See `src/api/trip-collaborators.ts` — exposes `useTripCollaborators`, `useInvi
 
 ## Migrations
 
-Depends on `0011_trip_collaborators.sql` for the `trip_collaborators` table, the `user_can_access_trip` helper, and the rewritten RLS on `trip_places` / `trip_days` / `trip_legs` / `trip_expenses` / `trips`.
+Depends on `0011_trip_collaborators.sql` for the `trip_collaborators` table, the `user_can_access_trip` helper, and the rewritten RLS on `trip_places` / `trip_days` / `trip_legs` / `trip_expenses` / `trips`, and on `0033_v2_invite_quota.sql` for the invite quota RPC.

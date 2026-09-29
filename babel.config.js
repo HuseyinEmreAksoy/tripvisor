@@ -1,7 +1,21 @@
 module.exports = function (api) {
   api.cache(true);
   return {
-    presets: ['babel-preset-expo'],
+    presets: [
+      [
+        'babel-preset-expo',
+        {
+          // Web only: rewrite `import.meta` to Expo's runtime registry.
+          // maplibre-gl v6 is ESM-only and reads `import.meta.url` (worker
+          // auto-detect). Metro loads web chunks as CLASSIC scripts, where raw
+          // `import.meta` is a parse-time SyntaxError that kills the whole
+          // maplibre chunk (verified on an export). The polyfilled value is never
+          // used for the worker: MapLibreMap.web.tsx pins `workerUrl`.
+          // Native keeps the preset default (build error on `import.meta`).
+          web: { unstable_transformImportMeta: true },
+        },
+      ],
+    ],
     // No explicit worklets/reanimated plugin here — on purpose.
     //
     // SDK 54's babel-preset-expo auto-registers `react-native-worklets/plugin`

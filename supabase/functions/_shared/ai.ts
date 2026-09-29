@@ -250,8 +250,8 @@ export async function callGroq<T>(
 
 /**
  * Gemini first, Groq on 4xx/5xx/timeout/garbage. Returns null when every
- * configured provider failed (caller maps that to `llm_failed` and still
- * increments the runs ledger — spend was dispatched).
+ * configured provider failed. The caller maps that to `llm_failed`. The run
+ * reserved before this call stays counted, because spend was dispatched.
  */
 export async function runLlmWithFallback<T>(
   keys: { geminiKey: string | undefined; groqKey: string | undefined },
@@ -447,16 +447,113 @@ export async function groundNames(
 }
 
 // ----- ai_usage ledger (C4 quota) ---------------------------------------------
+//
+// Enforcement model (migration 0031, audit #8). Before 0031 the flow was
+// read, then check, then LLM, then increment, so N concurrent requests at
+// 9/10 all passed the check. Now:
+//   1. readUsageToday: a cheap early 429 plus the `usage` numbers in
+//      responses. Display and fast-fail only, NEVER the gate.
+//   2. consumeAiQuota: the gate. An ATOMIC check-and-reserve RPC runs
+//      immediately BEFORE the first upstream spend (the LLM call, or the
+//      Google grounding loop for ai-edit `ground`). It fails CLOSED:
+//      'error' -> the caller returns 500 db_error and spends nothing.
+//   3. incrementAiUsage: post-hoc, uncapped spend recorded after the fact
+//      (grounding details calls made after a reserved LLM run).
+//   4. refundAiQuota: gives back the unused part of a reservation (ground
+//      names that never reached a details call). It clamps at 0 in SQL.
+// A failed LLM run is NOT refunded. Dispatched spend counts, so a failure
+// loop can't burn unmetered provider quota (0020 §b policy, unchanged).
 
 export interface UsageToday {
   aiRuns: number;
   groundingCalls: number;
 }
 
+/** Outcome of an atomic quota reservation (consume_ai_quota, migration 0031). */
+export type QuotaReservation = 'reserved' | 'blocked' | 'error';
+
+export interface QuotaRequest {
+  /** AI runs to reserve (1 for plan/edit/suggest, 0 for ground). */
+  runs: number;
+  /** Grounding (Places details) calls to reserve up front (ground: one per name). */
+  grounding: number;
+  /** Cap on today's ai_runs after the reservation; null = uncapped. */
+  runCap: number | null;
+  /** Cap on today's grounding_calls after the reservation; null = uncapped. */
+  groundingCap: number | null;
+}
+
+/**
+ * ATOMIC check-and-reserve on today's ledger row (service-role RPC
+ * `consume_ai_quota`, migration 0031). A single INSERT … ON CONFLICT DO
+ * UPDATE … WHERE under-caps statement, so concurrent callers serialize on the
+ * row and at most `cap` of them win. `blocked` means nothing was written.
+ * Never throws: RPC/transport failures return 'error', and callers must
+ * FAIL CLOSED (no upstream spend) on it.
+ */
+export async function consumeAiQuota(
+  admin: SupabaseClient,
+  userId: string,
+  quota: QuotaRequest,
+  requestId: string,
+  fn: string,
+): Promise<QuotaReservation> {
+  try {
+    const { data, error } = await admin.rpc('consume_ai_quota', {
+      p_user: userId,
+      p_runs: quota.runs,
+      p_grounding: quota.grounding,
+      p_run_cap: quota.runCap,
+      p_grounding_cap: quota.groundingCap,
+    });
+    if (error) {
+      log({ requestId, fn, level: 'error', stage: 'quota_reserve', err: error.message });
+      return 'error';
+    }
+    return data === true ? 'reserved' : 'blocked';
+  } catch (err) {
+    log({ requestId, fn, level: 'error', stage: 'quota_reserve', err: String(err) });
+    return 'error';
+  }
+}
+
+/**
+ * Give back an UNUSED part of a reservation (service-role RPC
+ * `refund_ai_quota`, migration 0031; clamped at 0 server-side). `day` is the
+ * UTC day captured just BEFORE the reservation. At a midnight straddle this
+ * can only under-refund, never credit the wrong day. No-op for zero amounts.
+ * Never throws (fail-safe: a missed refund only over-counts the caller's own
+ * usage).
+ */
+export async function refundAiQuota(
+  admin: SupabaseClient,
+  userId: string,
+  refund: { runs: number; grounding: number; day: string },
+  requestId: string,
+  fn: string,
+): Promise<void> {
+  const runs = Math.max(0, Math.trunc(refund.runs));
+  const grounding = Math.max(0, Math.trunc(refund.grounding));
+  if (runs === 0 && grounding === 0) return;
+  try {
+    const { error } = await admin.rpc('refund_ai_quota', {
+      p_user: userId,
+      p_runs: runs,
+      p_grounding: grounding,
+      p_day: refund.day,
+    });
+    if (error) {
+      log({ requestId, fn, level: 'warn', stage: 'quota_refund', err: error.message });
+    }
+  } catch (err) {
+    log({ requestId, fn, level: 'warn', stage: 'quota_refund', err: String(err) });
+  }
+}
+
 /**
  * Today's ledger row for the caller (zeros when no row yet). Best-effort: a
- * read failure logs and returns zeros rather than failing the run — the
- * ledger is a soft guard, not a billing system.
+ * read failure logs and returns zeros rather than failing the run. Since 0031
+ * this read is display/fast-fail only; consumeAiQuota is the gate.
  */
 export async function readUsageToday(
   user: SupabaseClient,
@@ -477,10 +574,12 @@ export async function readUsageToday(
 }
 
 /**
- * Ledger write via the SECURITY DEFINER RPC (migration 0020 §c) under the
- * service-role client — auth.uid() is NULL for service role, which is what
- * lets the function stamp the caller's row. Never throws (fail-open
- * bookkeeping; the worst case is one uncounted run).
+ * Uncapped post-hoc ledger write via the SECURITY DEFINER RPC (migration 0020
+ * §c) under the service-role client. auth.uid() is NULL for service role,
+ * which is what lets the function stamp the caller's row. Since 0031 it only
+ * records spend that happened AFTER a consumeAiQuota reservation (grounding
+ * details calls following a reserved LLM run). It never gates. Never throws
+ * (fail-open bookkeeping).
  */
 export async function incrementAiUsage(
   admin: SupabaseClient,
@@ -490,6 +589,7 @@ export async function incrementAiUsage(
   requestId: string,
   fn: string,
 ): Promise<void> {
+  if (runs <= 0 && grounding <= 0) return; // nothing spent: skip the round trip
   const { error } = await admin.rpc('increment_ai_usage', {
     p_user_id: userId,
     p_runs: runs,

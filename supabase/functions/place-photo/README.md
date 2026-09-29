@@ -1,76 +1,89 @@
 # `place-photo` Edge Function
 
-Phase 25 Step 25.4. Server-side proxy for Google Places API (New) photo media. Streams image bytes back to the caller without ever exposing the Google server key to the client.
+Phase 25 Step 25.4, hardened by security audit 2026-09-29 #3. This is the server-side proxy for Google Places API (New) photo media. It streams the image bytes back to the caller, so the Google server key never reaches the client.
 
 ## Why
 
-Google's photo media endpoint embeds the API key directly in the URL (`/v1/{photoName}/media?key=<API_KEY>`). Returning that URL to the client (or even a redirect to it) leaks the server key into network traces, browser history, and the `<img>` referrer chain. This function fetches the bytes server-side and streams them back so the client only ever sees `${SUPABASE_URL}/functions/v1/place-photo?...`.
+Google's photo media endpoint puts the API key directly in the URL (`/v1/{photoName}/media?key=<API_KEY>`). If we returned that URL to the client, or even redirected to it, the key would leak into network traces, browser history and the `<img>` referrer chain. This function fetches the bytes server-side and streams them back.
+
+## Security model
+
+`verify_jwt = false` is required for the GET, because an `<Image src>` cannot send an Authorization header. Before the audit this made the function a **public, unlimited, billed proxy**. An arbitrary `maxWidthPx` from 1 to 4800 also defeated every cache. The fixes:
+
+- **Signed URLs.** Every GET must carry `exp` and `sig`, where `sig = base64url(HMAC-SHA256(PHOTO_URL_SECRET, "<photoName>|<w>|<exp>"))`.
+  - Only authenticated paths mint signatures. `place-details` embeds `photos[].signature`, and the metered `POST place-photo` below is the fallback.
+  - `exp` is at most 24h out. It is bucketed to 12h windows, so a photo keeps the same URL, and therefore the same cache entry, for about 12h across refetches and users.
+- **Width allowlist.** Only 200, 400, 800 and 1600 are served. Requests snap UP to the next allowed width, so each photo has at most four cache variants.
+- **Replay cap.** Each isolate keeps a fixed-window rate limit: 20 fetches per signature and 300 per client IP, per 10 minutes. Going over returns `429 rate_limited`.
+- **The key stays server-side.** It never leaves the function.
+
+Pure signing logic lives in `_shared/photo-signature.ts`. Caller auth and quota live in `_shared/auth.ts`.
 
 ## Contract
 
-```
-GET /place-photo?photoName=<encoded>&maxWidthPx=<n>
-```
-
-| Param | Required | Description |
-|---|---|---|
-| `photoName` | yes | Google photo resource name, format `places/{placeId}/photos/{photoRef}`. Validated against a regex; arbitrary URLs are rejected so we are not a generic Google CDN proxy. |
-| `maxWidthPx` | no | Default `400`. Clamped to `1..4800` (Google's documented bounds). |
-| `ping` | no | Health check — any value triggers `{ ok: true, fn: 'place-photo' }` JSON. |
-
-### Responses
+### `GET /place-photo?photoName=…&maxWidthPx=…&exp=…&sig=…` (public, signature-gated)
 
 | Status | Body | Notes |
 |---|---|---|
-| `200` | image bytes | `Content-Type: image/jpeg` (or upstream); `Cache-Control: public, max-age=21600` |
-| `400` | `{ error: { code: 'invalid_input', message } }` | photoName missing/malformed OR maxWidthPx not an integer |
-| `405` | `{ error: { code: 'method_not_allowed' } }` | non-GET request |
-| `500` | `{ error: { code: 'server_misconfigured' } }` | `GOOGLE_MAPS_SERVER_KEY` missing on the Edge host |
-| `502` | `{ error: { code: 'photo_not_found' \| 'google_places_disabled' \| 'google_key_restricted' \| 'google_places_forbidden' \| 'upstream_error' } }` | upstream Google failures |
-| `504` | `{ error: { code: 'upstream_timeout' } }` | Google fetch exceeded `TIMEOUT_MS` (8s) |
+| `200` | image bytes | Upstream `Content-Type`, with `Cache-Control: public, max-age=21600` |
+| `400` | `invalid_input` | `photoName` is missing or not `places/<id>/photos/<ref>` |
+| `403` | `invalid_signature` \| `signature_expired` | Missing, tampered, wrong-width or expired signature. The client re-signs. |
+| `429` | `rate_limited` | Per-signature or per-IP window exceeded. Sent with `Retry-After`. |
+| `500` | `server_misconfigured` | `GOOGLE_MAPS_SERVER_KEY` or `PHOTO_URL_SECRET` is unset. The function fails closed. |
+| `502` | `photo_not_found` (404) \| `google_places_*` \| `upstream_error` | Google rejected the request or failed |
+| `504` | `upstream_timeout` | Google took longer than 8s |
 
-## Auth model
+### `POST /place-photo` (authenticated fallback signer)
 
-`verify_jwt = false` (set in `supabase/config.toml`). The `<Image src>` element cannot set `Authorization` headers, and photo names are tied to public Google Place ids — there is nothing user-specific in the request. Key safety is preserved because the Google API key never leaves the function.
+```json
+{ "photos": [{ "name": "places/…/photos/…", "maxWidthPx": 600 }] }
+```
 
-## Field mask coupling
+The request takes 1 to 20 photos. It returns `{ "photos": [{ "name", "maxWidthPx": 800, "exp", "sig" }] }` and consumes `DAILY_QUOTA.photo_sign` (300 names per user per UTC day).
 
-`place-details` already returns `photos[].name` (the Google resource name) when callers include `'photos'` in their requested `fields`. The client builds the `place-photo` URL by URL-encoding that name (see `src/api/place-photos.ts`'s `usePlacePhotoUrl` hook).
+| Status | Code |
+|---|---|
+| `400` | `invalid_input` |
+| `401` | `not_authenticated` |
+| `429` | `quota_exceeded` |
+| `503` | `quota_unavailable` |
+| `500` | `server_misconfigured` |
 
-## Caching
+## Client
 
-`Cache-Control: public, max-age=21600` (6h). Google's CDN URLs (the destination of the redirect we follow) typically expire within hours; 6h is a conservative ceiling that lets the browser / CDN cache without serving stale 404s for too long.
+`src/api/place-photos.ts` provides `usePlacePhotoUrl(photoName, { maxWidthPx }) → { url }`. Its signature is the same as before the audit.
+
+1. It builds the signed URL synchronously from the signatures that `usePlaceDetails` registered.
+2. Otherwise it batches one `POST place-photo` for all rows missing a signature.
+
+`url` is `null` until a signature is available. Callers render their placeholder in that case.
+
+## Secrets
+
+`PHOTO_URL_SECRET` is a random value of at least 32 bytes (`openssl rand -base64 32`). Set it for the hosted project with `npx supabase secrets set PHOTO_URL_SECRET=…`. Locally it lives in `supabase/.env`.
+
+Rotating the secret invalidates every URL already issued. Clients pick up new signatures on their next `place-details` fetch, or when the fallback signer runs.
 
 ## Curl examples
 
-Happy path:
-
 ```bash
-curl -i "$SUPABASE_URL/functions/v1/place-photo?photoName=places/ChIJN1t_tDeuEmsRUsoyG83frY4/photos/AciI...&maxWidthPx=400" \
-  -H "apikey: $SUPABASE_ANON_KEY" \
-  -o cover.jpg
-# 200 OK, image/jpeg
-```
+# Fallback signer (needs a signed-in user's access token)
+curl -s -X POST "$SUPABASE_URL/functions/v1/place-photo" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $USER_JWT" -H "Content-Type: application/json" \
+  -d '{"photos":[{"name":"places/ChIJN1t_tDeuEmsRUsoyG83frY4/photos/AciI...","maxWidthPx":400}]}'
+# -> {"photos":[{"name":"…","maxWidthPx":400,"exp":1790726400,"sig":"…"}]}
 
-Validation failure (malformed photoName):
+# Fetch bytes with the signed tuple
+curl -i "$SUPABASE_URL/functions/v1/place-photo?photoName=places/…/photos/…&maxWidthPx=400&exp=1790726400&sig=…&apikey=$ANON_KEY" -o cover.jpg
 
-```bash
-curl -i "$SUPABASE_URL/functions/v1/place-photo?photoName=https://evil.example/x" \
-  -H "apikey: $SUPABASE_ANON_KEY"
-# 400 { "error": { "code": "invalid_input", ... } }
-```
+# Unsigned -> 403 invalid_signature
+curl -i "$SUPABASE_URL/functions/v1/place-photo?photoName=places/…/photos/…&maxWidthPx=400&apikey=$ANON_KEY"
 
-Server key missing:
-
-```bash
-# (with GOOGLE_MAPS_SERVER_KEY unset on the function host)
-curl -i "$SUPABASE_URL/functions/v1/place-photo?photoName=places/.../photos/..."
-# 500 { "error": { "code": "server_misconfigured", ... } }
-```
-
-Health check:
-
-```bash
+# Health check
 curl -i "$SUPABASE_URL/functions/v1/place-photo?ping=1"
-# 200 { "ok": true, "fn": "place-photo" }
 ```
+
+## Tests
+
+- `deno test --allow-env --allow-net supabase/functions/place-photo/test.ts`
+- `node --experimental-strip-types --test supabase/functions/_shared/photo-signature.test.mjs`. This file also runs under `deno test`.

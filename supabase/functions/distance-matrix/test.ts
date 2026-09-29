@@ -1,6 +1,25 @@
 // Run: deno test --allow-env --allow-net supabase/functions/distance-matrix/test.ts
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { handler } from './index.ts';
+import process from 'node:process';
+import { test } from 'node:test';
+import { handler as rawHandler } from './index.ts';
+import { _setQuotaRpcForTests, _setTokenVerifierForTests } from '../_shared/auth.ts';
+
+// Audit #2: the function requires a real user. Every request below is
+// authenticated as a fixed user through the verifier hook (unless it sets
+// its own Authorization), and the quota RPC passes unless a test overrides it.
+const TEST_USER_ID = '00000000-0000-4000-8000-0000000000aa';
+// The well-known PUBLIC local-demo anon key: role=anon, no `sub`.
+const ANON_KEY_JWT =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+_setTokenVerifierForTests(() => Promise.resolve({ ok: true, userId: TEST_USER_ID }));
+_setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+function handler(req: Request): Promise<Response> {
+  if (req.headers.has('Authorization')) return rawHandler(req);
+  const headers = new Headers(req.headers);
+  headers.set('Authorization', 'Bearer test-user-token');
+  return rawHandler(new Request(req, { headers }));
+}
 
 function mockGoogle(response: { status?: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -17,14 +36,14 @@ function mockGoogle(response: { status?: number; body?: unknown }) {
   return { calls, restore: () => { globalThis.fetch = original; } };
 }
 
-Deno.env.set('GOOGLE_MAPS_SERVER_KEY', 'test-key');
+process.env.GOOGLE_MAPS_SERVER_KEY = 'test-key';
 
-Deno.test('?ping returns ok', async () => {
+test('?ping returns ok', async () => {
   const res = await handler(new Request('http://localhost/?ping=1'));
   assertEquals(res.status, 200);
 });
 
-Deno.test('invalid input returns 400', async () => {
+test('invalid input returns 400', async () => {
   const res = await handler(
     new Request('http://localhost/', {
       method: 'POST',
@@ -35,7 +54,7 @@ Deno.test('invalid input returns 400', async () => {
   assertEquals(res.status, 400);
 });
 
-Deno.test('happy path: field mask + waypoint shape + duration parsing', async () => {
+test('happy path: field mask + waypoint shape + duration parsing', async () => {
   const mock = mockGoogle({
     body: [
       { originIndex: 0, destinationIndex: 0, duration: '0s', distanceMeters: 0, condition: 'ROUTE_EXISTS' },
@@ -77,7 +96,57 @@ Deno.test('happy path: field mask + waypoint shape + duration parsing', async ()
   }
 });
 
-Deno.test('unreachable routes are filtered out', async () => {
+test('audit #2: public anon key alone -> 401, no upstream call', async () => {
+  const mock = mockGoogle({ body: [] });
+  try {
+    const res = await rawHandler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${ANON_KEY_JWT}` },
+        body: JSON.stringify({
+          origins: [{ lat: 38.7, lng: -9.1 }],
+          destinations: [{ lat: 38.71, lng: -9.12 }],
+          mode: 'driving',
+        }),
+      }),
+    );
+    assertEquals(res.status, 401);
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('audit #2: meters origins x destinations elements; spent quota -> 429', async () => {
+  const seen: unknown[] = [];
+  _setQuotaRpcForTests((args) => {
+    seen.push(args);
+    return Promise.resolve({ data: false, error: null });
+  });
+  const mock = mockGoogle({ body: [] });
+  try {
+    const three = [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }, { lat: 3, lng: 3 }];
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origins: three, destinations: three.slice(0, 2), mode: 'walking' }),
+      }),
+    );
+    assertEquals(res.status, 429);
+    const body = (await res.json()) as { error: { code: string } };
+    assertEquals(body.error.code, 'quota_exceeded');
+    assertEquals(seen, [
+      { p_user: TEST_USER_ID, p_kind: 'routing_elements', p_units: 6, p_cap: 2000 },
+    ]);
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+    _setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+  }
+});
+
+test('unreachable routes are filtered out', async () => {
   const mock = mockGoogle({
     body: [
       { originIndex: 0, destinationIndex: 0, condition: 'ROUTE_NOT_FOUND' },
@@ -105,7 +174,7 @@ Deno.test('unreachable routes are filtered out', async () => {
 
 // ---- gap #12: upstream 5xx → 502 (Step 5.2) ------------------------------
 
-Deno.test('upstream 5xx becomes 502', async () => {
+test('upstream 5xx becomes 502', async () => {
   const mock = mockGoogle({ status: 500, body: { error: 'internal server error' } });
   try {
     const res = await handler(
@@ -127,8 +196,8 @@ Deno.test('upstream 5xx becomes 502', async () => {
 
 // ---- gap #8: CORS deny (Step 5.2) ----------------------------------------
 
-Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
-  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+test('CORS deny: disallowed origin is not echoed in response', async () => {
+  process.env.ALLOWED_ORIGINS = 'http://localhost:8081,https://tripvisor.app';
 
   const res = await handler(new Request('http://localhost/?ping=1', {
     headers: { origin: 'https://evil.example' },
@@ -139,12 +208,12 @@ Deno.test('CORS deny: disallowed origin is not echoed in response', async () => 
     acao !== 'https://evil.example',
     `CORS must not echo disallowed origin; got: ${acao}`,
   );
-  Deno.env.set('ALLOWED_ORIGINS', '*');
+  process.env.ALLOWED_ORIGINS = '*';
 });
 
 // ---- gap #9: timeout → 504 (Step 5.2) ------------------------------------
 
-Deno.test('upstream timeout → 504', async () => {
+test('upstream timeout → 504', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = ((_url: string, init: RequestInit) => {
     return new Promise<Response>((_resolve, reject) => {

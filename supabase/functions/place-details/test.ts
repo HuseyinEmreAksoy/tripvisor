@@ -4,8 +4,28 @@ import {
   assertEquals,
   assertStringIncludes,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { handler } from './index.ts';
+import process from 'node:process';
+import { test } from 'node:test';
+import { handler as rawHandler } from './index.ts';
 import { assertNotMatch } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import { _setQuotaRpcForTests, _setTokenVerifierForTests } from '../_shared/auth.ts';
+import { verifyPhotoSignature } from '../_shared/photo-signature.ts';
+
+// Audit #2: the function requires a real user. Every request below is
+// authenticated as a fixed user through the verifier hook (unless it sets
+// its own Authorization), and the quota RPC passes unless a test overrides it.
+const TEST_USER_ID = '00000000-0000-4000-8000-0000000000aa';
+// The well-known PUBLIC local-demo anon key: role=anon, no `sub`.
+const ANON_KEY_JWT =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+_setTokenVerifierForTests(() => Promise.resolve({ ok: true, userId: TEST_USER_ID }));
+_setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+function handler(req: Request): Promise<Response> {
+  if (req.headers.has('Authorization')) return rawHandler(req);
+  const headers = new Headers(req.headers);
+  headers.set('Authorization', 'Bearer test-user-token');
+  return rawHandler(new Request(req, { headers }));
+}
 
 function mockGoogle(response: { status?: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -27,16 +47,16 @@ function mockGoogle(response: { status?: number; body?: unknown }) {
   };
 }
 
-Deno.env.set('GOOGLE_MAPS_SERVER_KEY', 'test-key');
+process.env.GOOGLE_MAPS_SERVER_KEY = 'test-key';
 
-Deno.test('?ping returns ok', async () => {
+test('?ping returns ok', async () => {
   const res = await handler(new Request('http://localhost/?ping=1'));
   assertEquals(res.status, 200);
   const body = (await res.json()) as { ok: boolean };
   assert(body.ok);
 });
 
-Deno.test('missing placeId returns 400', async () => {
+test('missing placeId returns 400', async () => {
   const res = await handler(
     new Request('http://localhost/', {
       method: 'POST',
@@ -47,7 +67,7 @@ Deno.test('missing placeId returns 400', async () => {
   assertEquals(res.status, 400);
 });
 
-Deno.test('happy path: field mask + session token propagate', async () => {
+test('happy path: field mask + session token propagate', async () => {
   const mock = mockGoogle({
     body: {
       id: 'pid-1',
@@ -114,7 +134,7 @@ Deno.test('happy path: field mask + session token propagate', async () => {
   }
 });
 
-Deno.test('lean field mask respects caller request', async () => {
+test('lean field mask respects caller request', async () => {
   const mock = mockGoogle({
     body: { id: 'pid-2', displayName: { text: 'Sintra' } },
   });
@@ -137,7 +157,7 @@ Deno.test('lean field mask respects caller request', async () => {
   }
 });
 
-Deno.test('bogus field is rejected from the mask', async () => {
+test('bogus field is rejected from the mask', async () => {
   const mock = mockGoogle({
     body: { id: 'pid-3', displayName: { text: 'X' } },
   });
@@ -164,7 +184,7 @@ Deno.test('bogus field is rejected from the mask', async () => {
 // The default field mask must NOT include fields that trigger billing-intensive
 // Google SKUs or that our ToS constraints forbid persisting server-side.
 
-Deno.test('default field mask does NOT include forbidden over-broad fields', async () => {
+test('default field mask does NOT include forbidden over-broad fields', async () => {
   const mock = mockGoogle({ body: { id: 'pid-mask', displayName: { text: 'X' } } });
   try {
     await handler(
@@ -203,7 +223,121 @@ Deno.test('default field mask does NOT include forbidden over-broad fields', asy
 // status directly for fidelity). This test asserts a 5xx upstream results
 // in a non-200 response with an upstream_error code.
 
-Deno.test('upstream 5xx yields a non-2xx error response', async () => {
+test('audit #2: public anon key alone -> 401, Google never called', async () => {
+  const mock = mockGoogle({ body: { id: 'pid-1' } });
+  try {
+    const res = await rawHandler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${ANON_KEY_JWT}` },
+        body: JSON.stringify({ placeId: 'pid-1' }),
+      }),
+    );
+    assertEquals(res.status, 401);
+    const body = (await res.json()) as { error: { code: string } };
+    assertEquals(body.error.code, 'not_authenticated');
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('audit #2: daily quota spent -> 429 quota_exceeded, Google never called', async () => {
+  let kind = '';
+  _setQuotaRpcForTests((args) => {
+    kind = args.p_kind;
+    return Promise.resolve({ data: false, error: null });
+  });
+  const mock = mockGoogle({ body: { id: 'pid-1' } });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ placeId: 'pid-1' }),
+      }),
+    );
+    assertEquals(res.status, 429);
+    const body = (await res.json()) as { error: { code: string } };
+    assertEquals(body.error.code, 'quota_exceeded');
+    assertEquals(kind, 'place_details');
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+    _setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+  }
+});
+
+test('audit #3: photos carry verifiable signatures for every allowed width', async () => {
+  process.env.PHOTO_URL_SECRET = 'test-photo-secret';
+  const photoName = 'places/pid-1/photos/ref_A-1';
+  const mock = mockGoogle({
+    body: {
+      id: 'pid-1',
+      photos: [
+        { name: photoName, widthPx: 1200, heightPx: 800 },
+        { name: 'not/a/photo name', widthPx: 1, heightPx: 1 },
+      ],
+    },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ placeId: 'pid-1', fields: ['photos'] }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as {
+      place: {
+        photos: Array<{ name: string; signature?: { exp: number; sig: Record<string, string> } }>;
+      };
+    };
+    const signed = body.place.photos[0]!.signature;
+    assert(signed, 'valid photo name must be signed');
+    assertEquals(Object.keys(signed.sig).sort(), ['1600', '200', '400', '800']);
+    for (const w of ['200', '400', '800', '1600']) {
+      const check = await verifyPhotoSignature({
+        secret: 'test-photo-secret',
+        photoName,
+        maxWidthPx: w,
+        exp: String(signed.exp),
+        sig: signed.sig[w]!,
+        nowMs: Date.now(),
+      });
+      assert(check.ok, `width ${w} must verify`);
+    }
+    assertEquals(body.place.photos[1]!.signature, undefined, 'malformed names are never signed');
+  } finally {
+    mock.restore();
+    delete process.env.PHOTO_URL_SECRET;
+  }
+});
+
+test('audit #3: no PHOTO_URL_SECRET -> photos returned without signature (additive)', async () => {
+  delete process.env.PHOTO_URL_SECRET;
+  const mock = mockGoogle({
+    body: { id: 'pid-1', photos: [{ name: 'places/pid-1/photos/ref', widthPx: 10, heightPx: 10 }] },
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ placeId: 'pid-1', fields: ['photos'] }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = (await res.json()) as { place: { photos: Array<Record<string, unknown>> } };
+    assertEquals(body.place.photos.length, 1);
+    assertEquals('signature' in body.place.photos[0]!, false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('upstream 5xx yields a non-2xx error response', async () => {
   const mock = mockGoogle({ status: 500, body: { error: 'internal server error' } });
   try {
     const res = await handler(
@@ -224,8 +358,8 @@ Deno.test('upstream 5xx yields a non-2xx error response', async () => {
 
 // ---- gap #8: CORS deny (Step 5.2) ----------------------------------------
 
-Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
-  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+test('CORS deny: disallowed origin is not echoed in response', async () => {
+  process.env.ALLOWED_ORIGINS = 'http://localhost:8081,https://tripvisor.app';
 
   const res = await handler(new Request('http://localhost/?ping=1', {
     headers: { origin: 'https://evil.example' },
@@ -236,12 +370,12 @@ Deno.test('CORS deny: disallowed origin is not echoed in response', async () => 
     acao !== 'https://evil.example',
     `CORS must not echo disallowed origin; got: ${acao}`,
   );
-  Deno.env.set('ALLOWED_ORIGINS', '*');
+  process.env.ALLOWED_ORIGINS = '*';
 });
 
 // ---- gap #9: timeout → 504 (Step 5.2) ------------------------------------
 
-Deno.test('upstream timeout → 504', async () => {
+test('upstream timeout → 504', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = ((_url: string, init: RequestInit) => {
     return new Promise<Response>((_resolve, reject) => {

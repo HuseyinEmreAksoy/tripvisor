@@ -7,8 +7,20 @@
 //
 // The sessionToken MUST be forwarded to the subsequent place-details call
 // by the client — otherwise Google bills both calls separately.
+//
+// Auth + quota (security audit 2026-09-29 #2): the gateway's verify_jwt
+// accepts the PUBLIC anon key, so the function itself requires a real user
+// (`requireUser` -> GoTrue getUser; anon/service keys -> 401
+// not_authenticated) and meters DAILY_QUOTA.places_autocomplete per user per
+// UTC day (-> 429 quota_exceeded). `?ping` stays public for health checks.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import {
+  consumeQuota,
+  describeInvalidInput,
+  quotaDeniedResponse,
+  requireUser,
+} from '../_shared/auth.ts';
 import { handlePreflight } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
 import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
@@ -103,6 +115,9 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('method_not_allowed', 'Only POST is allowed', 405, origin);
   }
 
+  const auth = await requireUser(req, { fn: 'places-autocomplete', requestId, origin });
+  if (!auth.ok) return auth.response;
+
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'places-autocomplete', level: 'error', err: 'missing_server_key' });
@@ -119,13 +134,18 @@ export async function handler(req: Request): Promise<Response> {
     const raw = await req.json();
     body = BodySchema.parse(raw);
   } catch (err) {
-    return errorResponse(
-      'invalid_input',
-      err instanceof z.ZodError ? err.issues.map((i) => i.message).join('; ') : 'Invalid JSON',
-      400,
-      origin,
-    );
+    return errorResponse('invalid_input', describeInvalidInput(err), 400, origin);
   }
+
+  // Metered BEFORE the Google call; a rejected request consumes nothing.
+  const quota = await consumeQuota({
+    userId: auth.user.id,
+    kind: 'places_autocomplete',
+    units: 1,
+    requestId,
+    fn: 'places-autocomplete',
+  });
+  if (quota !== 'ok') return quotaDeniedResponse(quota, 'places_autocomplete', origin);
 
   const start = Date.now();
   try {
@@ -192,6 +212,7 @@ export async function handler(req: Request): Promise<Response> {
       requestId,
       fn: 'places-autocomplete',
       level: 'info',
+      userId: auth.user.id,
       count: suggestions.length,
       durationMs: Date.now() - start,
     });

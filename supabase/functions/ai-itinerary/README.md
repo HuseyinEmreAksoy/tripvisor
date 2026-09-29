@@ -51,10 +51,10 @@ Success response (`200`):
 ## Pipeline
 
 1. **Idempotency replay** — `SELECT trip_ai_runs` by `(user_id, idempotency_key)`; a hit with status `ok`/`partial` returns the stored draft with **zero** LLM/grounding spend. Concurrent duplicates converge via the UNIQUE constraint (the loser's insert hits 23505 and returns the winner's draft).
-2. **Quota** — today's `ai_usage.ai_runs >= 10` → 429. Read-then-spend (soft guard; the ledger always records true spend).
+2. **Quota** — today's `ai_usage.ai_runs >= 10` → 429 (an early fast-fail read). The **gate** is an atomic `consume_ai_quota(user, 1, 0, 10, null)` reservation (migration `0031`, audit #8). It is taken after the config and trip checks and **before** the LLM call. Blocked → the same 429. An RPC failure fails closed (`500 db_error`, no spend). A failed LLM run keeps its reservation.
 3. **LLM** — primary **Gemini 2.5 Flash** (`generationConfig.responseSchema`, JSON mime) with 20s timeout; on 4xx/5xx/timeout/garbage falls back to **Groq `openai/gpt-oss-20b`** (`response_format: json_schema, strict`). Output schema deliberately has **no lat/lng — LLM coordinates are never trusted or used**.
 4. **Grounding** — each unique name: Places (New) `:autocomplete` (input = `"<name>, <destination>"` for text location bias) → `:get` with field mask **`id,location,displayName` only**, one session token per name (the pair bills as one Details session). Batched 5 names per batch, max 2 batches in flight. Unresolved names go to `unresolved[]` (partial-grounding UX). Duplicate names / duplicate resolved place-ids collapse to one draft entry.
-5. **Persist** — `increment_ai_usage(userId, 1, <details calls>, 0)` via the service-role RPC, then INSERT `trip_ai_runs` **under the caller's JWT** (RLS-enforced, append-only). Failed runs (llm_failed / 504) increment the ledger but write **no** row — the idempotency key stays free for the retry (see migration `0020` §b).
+5. **Persist** — `increment_ai_usage(userId, 0, <details calls>, 0)` via the service-role RPC (the run itself was reserved in step 2), then INSERT `trip_ai_runs` **under the caller's JWT** (RLS-enforced, append-only). Failed runs (llm_failed / 504) stay counted but write **no** row — the idempotency key stays free for the retry (see migration `0020` §b).
 
 ## Data-minimization & Google ToS (D4 — ACCEPTED)
 
@@ -114,4 +114,4 @@ curl -s -X POST 'http://127.0.0.1:54321/functions/v1/ai-itinerary' \
 
 ## Migrations
 
-Depends on `0020_v2_ai_and_day_start.sql` (`trip_ai_runs`, `ai_usage`, `increment_ai_usage()`), `0011_trip_collaborators.sql` (`user_can_access_trip` used by the `trip_ai_runs` insert policy).
+Depends on `0031_v2_security_rls_grants.sql` (`consume_ai_quota()`), `0020_v2_ai_and_day_start.sql` (`trip_ai_runs`, `ai_usage`, `increment_ai_usage()`), `0011_trip_collaborators.sql` (`user_can_access_trip` used by the `trip_ai_runs` insert policy).

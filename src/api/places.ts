@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import type { PlaceAutocompleteSuggestion, PlaceDetails } from './types';
 import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
+import { registerPhotoSignatures } from './place-photos';
 
 export const placesKeys = {
   autocomplete: (input: string) => ['places', 'autocomplete', input] as const,
@@ -34,6 +35,13 @@ export const placesKeys = {
  *   - `upstream_error`       — 502 — Google Places returned a non-2xx
  *   - `upstream_timeout`     — 504 — request to Google exceeded timeout
  *   - `place_not_found`      — 404 — place-details only; placeId is unknown
+ *   - `not_authenticated`    — 401 — (audit 2026-09-29 #2) no signed-in user
+ *                              session; the public anon key alone is rejected
+ *   - `auth_unavailable`     — 503 — GoTrue unreachable; transient
+ *   - `quota_exceeded`       — 429 — the per-user daily limit is reached
+ *                              (places_autocomplete 300 / place_details 150
+ *                              per UTC day). Not retryable. See
+ *                              {@link isPlacesQuotaExceeded} for the UI check.
  *
  * Network-only failures (no envelope / parse failure) fall through to the
  * original `Error` thrown by `supabase.functions.invoke` — query consumers
@@ -51,10 +59,25 @@ const nonRetryablePlaceErrorCodes = new Set([
   'google_places_disabled',
   'google_key_restricted',
   'google_places_forbidden',
+  // Audit #2: retrying a spent daily quota or a missing session only adds
+  // load. Neither resolves within TanStack's retry window.
+  'quota_exceeded',
+  'not_authenticated',
 ]);
 
 function isNonRetryablePlacesError(error: PlacesError | Error): boolean {
   return error instanceof PlacesError && nonRetryablePlaceErrorCodes.has(error.code);
+}
+
+/**
+ * True when a places hook failed because the caller's daily Places quota
+ * (autocomplete or details) is spent. The UI should show a friendly "daily
+ * search limit reached, try again tomorrow" notice instead of "no results"
+ * or a setup banner. The server message is English-only. Use a `t()` key
+ * for the copy.
+ */
+export function isPlacesQuotaExceeded(error: unknown): error is PlacesError {
+  return error instanceof PlacesError && error.code === 'quota_exceeded';
 }
 
 function generateSessionToken(): string {
@@ -179,6 +202,9 @@ export function usePlaceDetails(params: {
         if (typed) throw typed;
         throw error;
       }
+      // Audit #3: remember the photo URL signatures this authenticated
+      // response carries, so usePlacePhotoUrl can build URLs synchronously.
+      registerPhotoSignatures(data?.place?.photos);
       return data?.place ?? null;
     },
   });

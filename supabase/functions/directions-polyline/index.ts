@@ -51,8 +51,21 @@
 // contract — and the client decoder — are unchanged. Transit ALWAYS uses
 // Google (polyline-null behavior preserved). GOOGLE_MAPS_SERVER_KEY stays
 // required even when ORS is primary — it backs the automatic failover.
+//
+// Auth + quota (security audit 2026-09-29 #2): requires a real signed-in
+// user (`requireUser`; the public anon key -> 401 not_authenticated). Every
+// call consumes DAILY_QUOTA.routing_elements per user per UTC day: 1 unit,
+// or 2 when there are > 10 intermediates (Google prices that as the Pro SKU,
+// about 2x) (-> 429 quota_exceeded). optimize-trip forwards the CALLER's
+// Authorization header, so its per-day polylines are metered to that user.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import {
+  consumeQuota,
+  describeInvalidInput,
+  quotaDeniedResponse,
+  requireUser,
+} from '../_shared/auth.ts';
 import { handlePreflight } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
 import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
@@ -197,6 +210,9 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('method_not_allowed', 'Only POST is allowed', 405, origin);
   }
 
+  const auth = await requireUser(req, { fn: 'directions-polyline', requestId, origin });
+  if (!auth.ok) return auth.response;
+
   const apiKey = Deno.env.get('GOOGLE_MAPS_SERVER_KEY');
   if (!apiKey) {
     log({ requestId, fn: 'directions-polyline', level: 'error', err: 'missing_server_key' });
@@ -212,13 +228,19 @@ export async function handler(req: Request): Promise<Response> {
   try {
     body = BodySchema.parse(await req.json());
   } catch (err) {
-    return errorResponse(
-      'invalid_input',
-      err instanceof z.ZodError ? err.issues.map((i) => i.message).join('; ') : 'Invalid JSON',
-      400,
-      origin,
-    );
+    return errorResponse('invalid_input', describeInvalidInput(err), 400, origin);
   }
+
+  // Metered BEFORE any upstream call (ORS or Google); a rejected request
+  // consumes nothing.
+  const quota = await consumeQuota({
+    userId: auth.user.id,
+    kind: 'routing_elements',
+    units: routeQuotaUnits(body.intermediates?.length ?? 0),
+    requestId,
+    fn: 'directions-polyline',
+  });
+  if (quota !== 'ok') return quotaDeniedResponse(quota, 'routing_elements', origin);
 
   const start = Date.now();
 
@@ -252,6 +274,7 @@ export async function handler(req: Request): Promise<Response> {
           level: 'info',
           provider: 'ors',
           provider_source: providerSource,
+          userId: auth.user.id,
           mode: body.mode,
           polyline: 'present',
           intermediates: body.intermediates?.length ?? 0,
@@ -370,6 +393,7 @@ export async function handler(req: Request): Promise<Response> {
       level: 'info',
       provider: 'google',
       provider_source: providerSource,
+      userId: auth.user.id,
       mode: body.mode,
       polyline: result.polyline === null ? 'null' : 'present',
       transitSteps: transitSteps.length,
@@ -396,6 +420,15 @@ export async function handler(req: Request): Promise<Response> {
       origin,
     );
   }
+}
+
+/**
+ * Quota units for one computeRoutes request. Google bills a route with
+ * more than 10 intermediates at the Pro SKU, about 2x Essentials, so it
+ * counts double. Exported for tests.
+ */
+export function routeQuotaUnits(intermediates: number): number {
+  return intermediates > 10 ? 2 : 1;
 }
 
 function latLngWaypoint(p: { lat: number; lng: number }) {

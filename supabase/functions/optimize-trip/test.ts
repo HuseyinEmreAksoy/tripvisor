@@ -28,16 +28,19 @@ import {
   assertEquals,
   assertStringIncludes,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import process from 'node:process';
+import { test } from 'node:test';
 import { handler } from './index.ts';
+import { _setTokenVerifierForTests } from '../_shared/auth.ts';
 
 // ---- Environment setup -----------------------------------------------------
 
-Deno.env.set('SUPABASE_URL', 'http://127.0.0.1:54321');
-Deno.env.set('SUPABASE_ANON_KEY', 'test-anon-key');
-Deno.env.set('SUPABASE_SERVICE_ROLE_KEY', 'test-service-role-key');
+process.env.SUPABASE_URL = 'http://127.0.0.1:54321';
+process.env.SUPABASE_ANON_KEY = 'test-anon-key';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
 // ALLOWED_ORIGINS deliberately does NOT include https://evil.example so the
 // CORS-deny test below can verify fail-closed behaviour.
-Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+process.env.ALLOWED_ORIGINS = 'http://localhost:8081,https://tripvisor.app';
 
 // ---- Shared helpers --------------------------------------------------------
 
@@ -48,6 +51,26 @@ const FAKE_JWT =
 
 const TRIP_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-00000000aaaa';
+
+// Audit #2: requireUser resolves the caller through GoTrue. Tests swap in a
+// verifier that maps FAKE_JWT to USER_ID and rejects anything else.
+_setTokenVerifierForTests((token) =>
+  Promise.resolve(
+    `Bearer ${token}` === FAKE_JWT
+      ? { ok: true as const, userId: USER_ID }
+      : {
+          ok: false as const,
+          status: 401 as const,
+          code: 'not_authenticated',
+          message: 'Invalid or expired token',
+        },
+  ),
+);
+
+// Audit #6: every captureFetch answers the editor-role RPC from this flag
+// (true = owner/editor) so the pre-existing tests keep their shape. The
+// role tests flip it and restore it.
+let editorRoleResult: unknown = true;
 
 interface FetchCall {
   url: string;
@@ -74,6 +97,7 @@ function captureFetch(
             String(rawBody);
     const call: FetchCall = { url, init: init ?? {}, method, body };
     calls.push(call);
+    if (url.includes('/rest/v1/rpc/user_can_access_trip')) return jsonResp(editorRoleResult);
     return await Promise.resolve(handle(call));
   }) as typeof fetch;
   return {
@@ -93,7 +117,7 @@ function jsonResp(body: unknown, status = 200, extra: Record<string, string> = {
 
 // ---- ?ping -----------------------------------------------------------------
 
-Deno.test('?ping returns { ok: true, fn: "optimize-trip" }', async () => {
+test('?ping returns { ok: true, fn: "optimize-trip" }', async () => {
   const res = await handler(new Request('http://localhost/?ping=1'));
   assertEquals(res.status, 200);
   const body = (await res.json()) as { ok: boolean; fn: string };
@@ -103,7 +127,7 @@ Deno.test('?ping returns { ok: true, fn: "optimize-trip" }', async () => {
 
 // ---- Input validation ------------------------------------------------------
 
-Deno.test('POST with missing tripId returns 400 with invalid_input', async () => {
+test('POST with missing tripId returns 400 with invalid_input', async () => {
   const res = await handler(
     new Request('http://localhost/', {
       method: 'POST',
@@ -116,7 +140,7 @@ Deno.test('POST with missing tripId returns 400 with invalid_input', async () =>
   assertEquals(body.error.code, 'invalid_input');
 });
 
-Deno.test('POST with malformed tripId (not a UUID) returns 400', async () => {
+test('POST with malformed tripId (not a UUID) returns 400', async () => {
   const res = await handler(
     new Request('http://localhost/', {
       method: 'POST',
@@ -131,13 +155,10 @@ Deno.test('POST with malformed tripId (not a UUID) returns 400', async () => {
 
 // ---- Auth / RLS ------------------------------------------------------------
 
-Deno.test('unauthenticated POST — RLS hides trip → 404 not_found', async () => {
-  // Without a valid JWT, the user-client's SELECT on trips returns no rows.
-  // supabase-js v2 maybeSingle() maps an empty PostgREST array to `null`.
-  const mock = captureFetch((call) => {
-    if (call.url.includes('/rest/v1/trips')) return jsonResp([]);
-    return jsonResp({ error: `unexpected ${call.url}` }, 500);
-  });
+test('unauthenticated POST → 401 not_authenticated before any DB read (audit #2)', async () => {
+  // Pre-audit this fell through to an RLS-hidden 404. requireUser now
+  // rejects before the trip is even queried.
+  const mock = captureFetch((call) => jsonResp({ error: `unexpected ${call.url}` }, 500));
   try {
     const res = await handler(
       new Request('http://localhost/', {
@@ -146,15 +167,213 @@ Deno.test('unauthenticated POST — RLS hides trip → 404 not_found', async () 
         body: JSON.stringify({ tripId: TRIP_ID }),
       }),
     );
-    assertEquals(res.status, 404);
+    assertEquals(res.status, 401);
     const body = (await res.json()) as { error: { code: string } };
-    assertEquals(body.error.code, 'not_found');
+    assertEquals(body.error.code, 'not_authenticated');
+    assertEquals(mock.calls.length, 0, 'no PostgREST / Edge traffic for an anonymous caller');
   } finally {
     mock.restore();
   }
 });
 
-Deno.test('trip not visible to caller (RLS returns empty) → 404', async () => {
+test('public anon key as bearer → 401 (audit #2)', async () => {
+  const ANON_KEY_JWT =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+  const mock = captureFetch((call) => jsonResp({ error: `unexpected ${call.url}` }, 500));
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${ANON_KEY_JWT}` },
+        body: JSON.stringify({ tripId: TRIP_ID }),
+      }),
+    );
+    assertEquals(res.status, 401);
+    assertEquals(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+// ---- Role gate (audit #6) --------------------------------------------------
+
+test('viewer (can see trip, not editor) → 403 not_editor; no lock, no writes, no Edge calls', async () => {
+  editorRoleResult = false;
+  let roleArgs: string | null = null;
+  const mock = captureFetch((call) => {
+    if (call.url.includes('/rest/v1/trips') && !call.url.includes('trip_')) {
+      return jsonResp([
+        {
+          id: TRIP_ID,
+          user_id: '00000000-0000-4000-8000-00000000bbbb', // someone else's trip
+          daily_hours_budget: 8,
+          transport_mode: 'driving',
+          anchor_place_id: null,
+        },
+      ]);
+    }
+    return jsonResp({ error: `unexpected ${call.url}` }, 500);
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+        body: JSON.stringify({ tripId: TRIP_ID, mode: 'manual' }),
+      }),
+    );
+    assertEquals(res.status, 403);
+    const body = (await res.json()) as { error: { code: string } };
+    assertEquals(body.error.code, 'not_editor');
+
+    const roleCall = mock.calls.find((c) => c.url.includes('/rpc/user_can_access_trip'));
+    assert(roleCall, 'user_can_access_trip must be consulted');
+    roleArgs = roleCall.body;
+    const parsed = JSON.parse(roleArgs ?? '{}') as Record<string, string>;
+    assertEquals(parsed.p_trip_id, TRIP_ID);
+    assertEquals(parsed.p_user_id, USER_ID, "checked with the caller's OWN id");
+    assertEquals(parsed.p_min_role, 'editor');
+    // Caller-scoped client (the user JWT), never the service role.
+    assertEquals(new Headers(roleCall.init.headers).get('Authorization'), FAKE_JWT);
+
+    for (const c of mock.calls) {
+      assert(!c.url.includes('claim_trip_optimize'), 'viewer must not take the mutex');
+      assert(!c.url.includes('/rest/v1/trip_places'), 'viewer must not reach the place load');
+      assert(!c.url.includes('/functions/v1/'), 'viewer must not trigger billed routing');
+      assert(!c.url.includes('apply_optimization'), 'viewer must not write');
+    }
+  } finally {
+    editorRoleResult = true;
+    mock.restore();
+  }
+});
+
+test('role RPC error → 500 (fails closed, never proceeds)', async () => {
+  const mock = captureFetch((call) => {
+    if (call.url.includes('/rest/v1/trips') && !call.url.includes('trip_')) {
+      return jsonResp([
+        { id: TRIP_ID, user_id: USER_ID, daily_hours_budget: 8, transport_mode: 'driving', anchor_place_id: null },
+      ]);
+    }
+    return jsonResp({ error: `unexpected ${call.url}` }, 500);
+  });
+  // Make the role RPC itself fail at the HTTP level.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/rest/v1/rpc/user_can_access_trip')) {
+      return Promise.resolve(jsonResp({ message: 'permission denied', code: '42501' }, 403));
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+        body: JSON.stringify({ tripId: TRIP_ID }),
+      }),
+    );
+    assertEquals(res.status, 500);
+    assert(!mock.calls.some((c) => c.url.includes('claim_trip_optimize')));
+  } finally {
+    globalThis.fetch = originalFetch;
+    mock.restore();
+  }
+});
+
+// ---- Caller auth forwarding (audit #2) -------------------------------------
+
+test("sibling calls forward the CALLER's Authorization (never the anon key)", async () => {
+  const p1 = { id: '00000000-0000-4000-8000-000000000501', lat: 38.7, lng: -9.2, visit_duration_minutes: 60 };
+  const p2 = { id: '00000000-0000-4000-8000-000000000502', lat: 38.71, lng: -9.21, visit_duration_minutes: 45 };
+  const edgeAuth: string[] = [];
+  const mock = captureFetch((call) => {
+    if (call.url.includes('/rest/v1/trips') && !call.url.includes('trip_')) {
+      return jsonResp([
+        { id: TRIP_ID, user_id: USER_ID, daily_hours_budget: 8, transport_mode: 'driving', anchor_place_id: null },
+      ]);
+    }
+    if (call.url.includes('/rest/v1/trip_places')) return jsonResp([p1, p2]);
+    if (call.url.includes('/rest/v1/trip_legs') && call.method === 'GET') return jsonResp([]);
+    if (call.url.includes('/functions/v1/')) {
+      edgeAuth.push(new Headers(call.init.headers).get('Authorization') ?? '');
+      if (call.url.includes('distance-matrix')) {
+        return jsonResp({
+          legs: [
+            { fromIndex: 0, toIndex: 1, durationSeconds: 600, distanceMeters: 1000 },
+            { fromIndex: 1, toIndex: 0, durationSeconds: 600, distanceMeters: 1000 },
+          ],
+        });
+      }
+      return jsonResp({ polyline: 'abc', durationSeconds: 600, distanceMeters: 1000 });
+    }
+    if (call.url.includes('/rest/v1/rpc/apply_optimization')) return jsonResp(2);
+    if (call.url.includes('/rest/v1/trip_legs') && call.method === 'POST') return jsonResp([], 201);
+    return jsonResp({ error: `unexpected ${call.url}` }, 500);
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+        body: JSON.stringify({ tripId: TRIP_ID }),
+      }),
+    );
+    assertEquals(res.status, 200);
+    assert(edgeAuth.length >= 1, 'at least the matrix call must happen');
+    for (const a of edgeAuth) {
+      assertEquals(a, FAKE_JWT, 'must forward the caller JWT');
+      assert(!a.includes('test-anon-key'), 'must never send the anon key as bearer');
+    }
+  } finally {
+    mock.restore();
+  }
+});
+
+test('matrix 429 quota_exceeded → optimize-trip 429 quota_exceeded (not matrix_failed)', async () => {
+  const p1 = { id: '00000000-0000-4000-8000-000000000601', lat: 38.7, lng: -9.2, visit_duration_minutes: 60 };
+  const p2 = { id: '00000000-0000-4000-8000-000000000602', lat: 38.71, lng: -9.21, visit_duration_minutes: 45 };
+  let applied = false;
+  const mock = captureFetch((call) => {
+    if (call.url.includes('/rest/v1/trips') && !call.url.includes('trip_')) {
+      return jsonResp([
+        { id: TRIP_ID, user_id: USER_ID, daily_hours_budget: 8, transport_mode: 'driving', anchor_place_id: null },
+      ]);
+    }
+    if (call.url.includes('/rest/v1/trip_places')) return jsonResp([p1, p2]);
+    if (call.url.includes('/rest/v1/trip_legs') && call.method === 'GET') return jsonResp([]);
+    if (call.url.includes('/functions/v1/distance-matrix')) {
+      return jsonResp(
+        { error: { code: 'quota_exceeded', message: 'Daily route calculation limit reached (2000/day).' } },
+        429,
+      );
+    }
+    if (call.url.includes('apply_optimization')) {
+      applied = true;
+      return jsonResp(2);
+    }
+    return jsonResp({ error: `unexpected ${call.url}` }, 500);
+  });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: FAKE_JWT },
+        body: JSON.stringify({ tripId: TRIP_ID }),
+      }),
+    );
+    assertEquals(res.status, 429);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    assertEquals(body.error.code, 'quota_exceeded');
+    assertStringIncludes(body.error.message, '2000');
+    assertEquals(applied, false, 'no layout write when routing is refused');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('trip not visible to caller (RLS returns empty) → 404', async () => {
   const mock = captureFetch((call) => {
     if (call.url.includes('/rest/v1/trips')) return jsonResp([]);
     return jsonResp({ error: `unexpected ${call.url}` }, 500);
@@ -175,7 +394,7 @@ Deno.test('trip not visible to caller (RLS returns empty) → 404', async () => 
 
 // ---- Zero places — early short-circuit -------------------------------------
 
-Deno.test('trip with 0 places short-circuits and writes nothing', async () => {
+test('trip with 0 places short-circuits and writes nothing', async () => {
   let placesQueried = false;
   let rpcCalled = false;
   let legsInserted = false;
@@ -243,7 +462,7 @@ Deno.test('trip with 0 places short-circuits and writes nothing', async () => {
 
 // ---- >25 places cap --------------------------------------------------------
 
-Deno.test('trip with >25 places → 400 too_many_places', async () => {
+test('trip with >25 places → 400 too_many_places', async () => {
   const twentySix = Array.from({ length: 26 }, (_, i) => ({
     id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
     lat: 38.7 + i * 0.001,
@@ -288,7 +507,7 @@ Deno.test('trip with >25 places → 400 too_many_places', async () => {
 
 // ---- Leg TTL — stale legs re-fetched via distance-matrix -------------------
 
-Deno.test('stale trip_leg (31 days old) is ignored and re-fetched via distance-matrix', async () => {
+test('stale trip_leg (31 days old) is ignored and re-fetched via distance-matrix', async () => {
   // Two places → 2 directed pairs (p1→p2, p2→p1). We seed:
   //   - p1→p2 stale (31 days old) — must be treated as missing
   //   - p2→p1 fresh (1 day old)   — must be kept as-is
@@ -403,7 +622,7 @@ Deno.test('stale trip_leg (31 days old) is ignored and re-fetched via distance-m
 
 // ---- All legs cached fresh — cacheHit path skips distance-matrix -----------
 
-Deno.test('all legs fresh in cache → distance-matrix is NOT invoked (cacheHit=true)', async () => {
+test('all legs fresh in cache → distance-matrix is NOT invoked (cacheHit=true)', async () => {
   const p1 = {
     id: '00000000-0000-4000-8000-000000000201',
     lat: 38.7,
@@ -494,7 +713,7 @@ Deno.test('all legs fresh in cache → distance-matrix is NOT invoked (cacheHit=
 
 // ---- Polyline per-day failure tolerated ------------------------------------
 
-Deno.test('per-day directions-polyline failure does not abort the run', async () => {
+test('per-day directions-polyline failure does not abort the run', async () => {
   // Four places → with a 480-min budget and 240 min per place we expect
   // k = ceil(960/480) = 2 days, each with 2 places. That gives us at least
   // two polyline calls (one per day) so we can fail the first and verify the
@@ -608,7 +827,7 @@ Deno.test('per-day directions-polyline failure does not abort the run', async ()
 
 // ---- CORS fail-closed ------------------------------------------------------
 
-Deno.test('CORS: request from a non-allowlisted Origin does NOT get that Origin echoed back', async () => {
+test('CORS: request from a non-allowlisted Origin does NOT get that Origin echoed back', async () => {
   // ALLOWED_ORIGINS is set at the top to "http://localhost:8081,https://tripvisor.app".
   // A POST from https://evil.example must not receive Access-Control-Allow-Origin: https://evil.example.
   const mock = captureFetch(() => jsonResp([])); // everything empty — 404 path is fine

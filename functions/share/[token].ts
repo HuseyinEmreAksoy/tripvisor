@@ -18,7 +18,8 @@
  * Notes on Pages semantics:
  * - `_redirects` and `_headers` are NOT applied to responses from a Function
  *   route, so this file fetches the `share/[token].html` shell itself and
- *   re-applies the COOP/COEP pair from public/_headers.
+ *   re-applies every header from public/_headers (COOP/COEP + security
+ *   headers incl. CSP, see SECURITY_HEADERS).
  * - Built by wrangler, never by Metro (Expo Router only scans app/). Runtime
  *   types are declared locally so the app's `tsc` needs no Workers typings.
  */
@@ -112,11 +113,66 @@ function metaTag(attr: 'name' | 'property', key: string, content: string): strin
   return `<meta data-rh="true" ${attr}="${key}" content="${escapeHtml(content)}"/>`;
 }
 
+/**
+ * Content-Security-Policy, one directive per entry. The `/*` rule in
+ * public/_headers must carry the same string (Jest parity test:
+ * src/components/share/__tests__/securityHeaders.test.ts).
+ *
+ * - script-src: our bundles only. `'wasm-unsafe-eval'` lets expo-sqlite
+ *   compile wa-sqlite. The one inline script Expo's static export emits
+ *   (`globalThis.__EXPO_ROUTER_HYDRATE__=true;`, identical on every page) is
+ *   allowed by hash, so no `'unsafe-inline'` and no `'unsafe-eval'`.
+ * - style-src `'unsafe-inline'`: React Native Web injects <style> tags at
+ *   runtime and the export has inline style attributes.
+ * - img-src https:: Supabase storage and place-photo URLs, OSM/Wikipedia
+ *   imagery. Images can't run script.
+ * - connect-src: Supabase REST/Auth/Functions/Storage plus Realtime (wss),
+ *   the OpenFreeMap style, tiles, sprites and glyphs (all on
+ *   tiles.openfreemap.org), and Sentry ingest (US, DE, legacy). `blob:`/`data:`
+ *   allow fetch() of locally created files (picked photos, exports). Open-Meteo
+ *   is not listed because weather goes through the `weather` Edge Function.
+ * - worker-src: `'self'` for maplibre-gl v6's module worker
+ *   (/maplibre/*.mjs); `blob:` for Expo's worker wrapper (expo-sqlite), which
+ *   uses a blob: URL when crossOriginIsolated.
+ * - NOT allowed: the legacy Google Maps JS web provider. Its documented CSP
+ *   needs `'unsafe-eval'` and `'unsafe-inline'` scripts. Flipping
+ *   app_config.map_provider_web to 'google' means extending this policy on
+ *   purpose, in both places.
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' blob: data: https://*.supabase.co wss://*.supabase.co https://tiles.openfreemap.org https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+/**
+ * Mirrors the `/*` rule in public/_headers, which Pages does not apply to
+ * Function responses. COOP/COEP keep the page cross-origin isolated for
+ * expo-sqlite.
+ */
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+};
+
 function withHeaders(res: Response): Response {
   const headers = new Headers(res.headers);
-  // Mirrors public/_headers, which Pages does not apply to Function responses.
-  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 

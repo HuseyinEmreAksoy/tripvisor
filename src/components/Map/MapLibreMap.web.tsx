@@ -23,6 +23,11 @@
  * and the implementation package ships classic main/module/types fields that
  * resolve under Metro, tsc (node resolution), and Jest alike.
  *
+ * maplibre-gl v6 (ESM-only): the worker is a separate module that Metro does
+ * not bundle. `workerUrl` points at the self-hosted copy in public/maplibre/
+ * (see maplibreWorker.ts). babel.config.js rewrites maplibre's `import.meta`
+ * on web, because Metro chunks load as classic scripts, which can't parse it.
+ *
  * Parity with GoogleMap.web.tsx / Map.native.tsx:
  *   - markers: day-colored pins with press handlers (+ order-in-day badge,
  *     matching the MapUnavailable list's badge language)
@@ -43,6 +48,7 @@ import {
   type MapRef,
 } from '@vis.gl/react-maplibre';
 import { useThemeNameOptional } from '@/theme';
+import { MAPLIBRE_WORKER_URL } from './maplibreWorker';
 import {
   dayColor,
   polylineColor,
@@ -201,6 +207,7 @@ export function MapLibreMap(props: MapViewProps) {
     <View style={styles.container} accessibilityLabel="Trip map">
       <MapLibreView
         ref={mapRef}
+        workerUrl={MAPLIBRE_WORKER_URL}
         mapStyle={getStyleUrl(isDark)}
         initialViewState={
           initialBounds

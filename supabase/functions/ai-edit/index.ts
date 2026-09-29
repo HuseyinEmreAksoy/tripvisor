@@ -50,7 +50,7 @@
 //   quota_exceeded 429 · ai_misconfigured 500 · db_error 500 ·
 //   llm_failed 502 · upstream_timeout 504
 //
-// Quotas (C4, ai_usage ledger via increment_ai_usage RPC):
+// Quotas (C4, ai_usage ledger):
 //   - 'edit' / 'suggest' count against the shared DAILY_RUN_LIMIT (10/day,
 //     same ai_runs counter as ai-itinerary plans).
 //   - 'ground' is LLM-free and does NOT consume a run. It is budgeted against
@@ -58,6 +58,13 @@
 //     names/user/day. Note grounding_calls is the SHARED Google-metered
 //     counter (plan/edit/suggest grounding increments it too), so the budget
 //     is conservative by design — it protects the Google free credit.
+//   Enforcement (migration 0031, audit #8). An early read gives a fast 429.
+//   The GATE is an atomic consume_ai_quota reservation taken immediately
+//   before the first upstream spend (the LLM call for edit/suggest, the
+//   grounding loop for ground). Blocked -> the same 429. An RPC failure
+//   fails closed (500 db_error, nothing spent). Post-hoc grounding details
+//   calls after an LLM run are recorded via increment_ai_usage. `ground`
+//   refunds the unused part of its per-name reservation via refund_ai_quota.
 //
 // D4 / R2 data-minimization posture (NON-NEGOTIABLE):
 //   The LLM payload carries ONLY user-authored context — trip title
@@ -83,12 +90,15 @@ import { log, newRequestId } from '../_shared/logger.ts';
 import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
 import {
   DAILY_RUN_LIMIT,
+  consumeAiQuota,
   extractBearer,
   groundNames,
   incrementAiUsage,
   readUsageToday,
+  refundAiQuota,
   runLlmWithFallback,
   sha256Hex,
+  todayUtc,
   type GroundBias,
   type LlmAttempt,
 } from '../_shared/ai.ts';
@@ -592,6 +602,55 @@ function missingGoogleKeyResponse(origin: string | null): Response {
   );
 }
 
+function runQuotaExceededResponse(origin: string | null): Response {
+  return errorResponse(
+    'quota_exceeded',
+    `Daily AI limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
+    429,
+    origin,
+  );
+}
+
+function quotaReserveFailedResponse(origin: string | null): Response {
+  return errorResponse('db_error', 'Could not reserve AI quota. Please try again.', 500, origin);
+}
+
+/**
+ * The run-quota GATE for edit/suggest (migration 0031, audit #8). It reserves
+ * one run atomically against DAILY_RUN_LIMIT immediately before the LLM
+ * call. Returns a Response to send when blocked (429) or when the RPC failed
+ * (fail CLOSED: 500 db_error). Returns null when reserved. A failed LLM run
+ * keeps its reservation, because dispatched spend counts (0020 §b).
+ */
+async function reserveRun(
+  admin: SupabaseClient,
+  ctx: HandlerCtx,
+  action: 'edit' | 'suggest',
+  runsTodayEarly: number,
+): Promise<Response | null> {
+  const reservation = await consumeAiQuota(
+    admin,
+    ctx.userId,
+    { runs: 1, grounding: 0, runCap: DAILY_RUN_LIMIT, groundingCap: null },
+    ctx.requestId,
+    FN,
+  );
+  if (reservation === 'reserved') return null;
+  if (reservation === 'blocked') {
+    log({
+      requestId: ctx.requestId,
+      fn: FN,
+      level: 'info',
+      stage: 'quota',
+      action,
+      runsToday: runsTodayEarly,
+      reserved: false,
+    });
+    return runQuotaExceededResponse(ctx.origin);
+  }
+  return quotaReserveFailedResponse(ctx.origin);
+}
+
 // ----- action: edit ----------------------------------------------------------------
 
 async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Promise<Response> {
@@ -625,17 +684,13 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
     );
   }
 
-  // 2. Quota — shared ai_runs counter with ai-itinerary (read-then-spend,
-  // soft guard; same accepted race as N3).
+  // 2. Quota: early fast-fail read of the shared ai_runs counter (also
+  // feeds `usage.runsToday`). NOT the gate: the atomic reservation before
+  // the LLM call (step 5) enforces DAILY_RUN_LIMIT (0031, audit #8).
   const usage = await readUsageToday(user, userId, FN);
   if (usage.aiRuns >= DAILY_RUN_LIMIT) {
     log({ requestId, fn: FN, level: 'info', stage: 'quota', action: 'edit', runsToday: usage.aiRuns });
-    return errorResponse(
-      'quota_exceeded',
-      `Daily AI limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
-      429,
-      origin,
-    );
+    return runQuotaExceededResponse(origin);
   }
 
   // 3. Config (before any spend).
@@ -691,6 +746,11 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
     `Instruction: ${body.instruction}`,
   ].join('\n');
 
+  // Atomic run reservation: the quota gate, immediately before the LLM spend.
+  const admin = makeAdminClient();
+  const denied = await reserveRun(admin, ctx, 'edit', usage.aiRuns);
+  if (denied) return denied;
+
   const llmStart = Date.now();
   const attempt: LlmAttempt<LlmEdit> | null = await runLlmWithFallback(
     { geminiKey, groqKey },
@@ -706,13 +766,12 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
   );
   const llmMs = Date.now() - llmStart;
 
-  const admin = makeAdminClient();
   const promptHash = await sha256Hex(body.instruction);
 
   if (!attempt) {
-    // LLM spend was dispatched — count the run so a failure loop can't burn
-    // provider quota. No row is written: the key stays free for the retry.
-    await incrementAiUsage(admin, userId, 1, 0, requestId, FN);
+    // LLM spend was dispatched. The reserved run stays counted so a failure
+    // loop can't burn provider quota. No row is written: the key stays free
+    // for the retry.
     log({
       requestId,
       fn: FN,
@@ -861,7 +920,7 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
   // changes exist the diff is still useful: degrade to status 'partial'.
   const hasNonAddOps = removes.length + moves.length + durationChanges.length > 0;
   if (adds.length === 0 && groundErrors > 0 && !hasNonAddOps) {
-    await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+    await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -893,9 +952,10 @@ async function handleEdit(body: z.infer<typeof EditSchema>, ctx: HandlerCtx): Pr
     notes: attempt.output.notes?.trim() || null,
   };
 
-  // 9. Ledger first (reflects real spend even if the insert fails), then the
+  // 9. Ledger first (the run is already reserved; record the grounding details
+  // calls so it reflects real spend even if the insert fails), then the
   // audit/idempotency row under the user JWT.
-  await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+  await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
   const ins = await insertRun(
     user,
     {
@@ -1016,15 +1076,12 @@ async function handleSuggest(
   }
 
   // 2. Quota (shared ai_runs counter — a suggest run counts like a plan/edit).
+  // Early fast-fail read only; the atomic reservation before the LLM call
+  // (step 5) is the gate (0031, audit #8).
   const usage = await readUsageToday(user, userId, FN);
   if (usage.aiRuns >= DAILY_RUN_LIMIT) {
     log({ requestId, fn: FN, level: 'info', stage: 'quota', action: 'suggest', runsToday: usage.aiRuns });
-    return errorResponse(
-      'quota_exceeded',
-      `Daily AI limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
-      429,
-      origin,
-    );
+    return runQuotaExceededResponse(origin);
   }
 
   // 3. Config.
@@ -1059,6 +1116,11 @@ async function handleSuggest(
     `Spare minutes available: ${body.slackMinutes}`,
   ].join('\n');
 
+  // Atomic run reservation: the quota gate, immediately before the LLM spend.
+  const admin = makeAdminClient();
+  const denied = await reserveRun(admin, ctx, 'suggest', usage.aiRuns);
+  if (denied) return denied;
+
   const llmStart = Date.now();
   const attempt: LlmAttempt<LlmSuggest> | null = await runLlmWithFallback(
     { geminiKey, groqKey },
@@ -1074,7 +1136,6 @@ async function handleSuggest(
   );
   const llmMs = Date.now() - llmStart;
 
-  const admin = makeAdminClient();
   // No free-text prompt exists for this action — hash the canonical request
   // params (satisfies the NOT NULL sha256 column without inventing PII).
   const promptHash = await sha256Hex(
@@ -1082,7 +1143,7 @@ async function handleSuggest(
   );
 
   if (!attempt) {
-    await incrementAiUsage(admin, userId, 1, 0, requestId, FN);
+    // The reserved run stays counted (dispatched spend counts).
     log({
       requestId,
       fn: FN,
@@ -1175,7 +1236,7 @@ async function handleSuggest(
   // not persisted. (Zero proposals after filtering is different: that's an
   // honest "nothing fits" — persisted and replayable below.)
   if (suggestions.length === 0 && groundErrors > 0) {
-    await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+    await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -1200,7 +1261,8 @@ async function handleSuggest(
 
   const status: RunStatus = unresolved.length > 0 ? 'partial' : 'ok';
 
-  await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+  // Run already reserved; record the grounding details calls.
+  await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
   const ins = await insertRun(
     user,
     {
@@ -1336,24 +1398,28 @@ async function handleGround(
 
   // 3. Grounding budget — NOT the 10-run quota. grounding_calls is the
   // shared Google-metered counter, so the whole batch must fit today's
-  // remaining budget (predictable reject beats a partial mystery).
+  // remaining budget (predictable reject beats a partial mystery). This read
+  // is the early fast-fail. The atomic reservation below is the gate.
   const usage = await readUsageToday(user, userId, FN);
-  if (usage.groundingCalls + names.length > DAILY_GROUNDING_LIMIT) {
+  const groundBudgetExceeded = (usedToday: number): Response => {
     log({
       requestId,
       fn: FN,
       level: 'info',
       stage: 'quota',
       action: 'ground',
-      groundingToday: usage.groundingCalls,
+      groundingToday: usedToday,
       requested: names.length,
     });
     return errorResponse(
       'quota_exceeded',
-      `Daily place-lookup budget reached (${usage.groundingCalls}/${DAILY_GROUNDING_LIMIT} used today, ${names.length} requested). Try again tomorrow or import fewer names.`,
+      `Daily place-lookup budget reached (${usedToday}/${DAILY_GROUNDING_LIMIT} used today, ${names.length} requested). Try again tomorrow or import fewer names.`,
       429,
       origin,
     );
+  };
+  if (usage.groundingCalls + names.length > DAILY_GROUNDING_LIMIT) {
+    return groundBudgetExceeded(usage.groundingCalls);
   }
 
   // 4. Config — ground is LLM-free: ONLY the Google key is required.
@@ -1362,6 +1428,24 @@ async function handleGround(
     log({ requestId, fn: FN, level: 'error', err: 'missing_server_key' });
     return missingGoogleKeyResponse(origin);
   }
+
+  // 4b. Atomic budget reservation (0031, audit #8). Reserve one grounding
+  // call per name (the per-name maximum) against DAILY_GROUNDING_LIMIT
+  // BEFORE any Google spend. The unused part (names that never reached a
+  // details call) is refunded after the loop, so grounding_calls still equals
+  // actual details spend. `quotaDay` pins the refund to the reservation's
+  // UTC day. RPC failure fails CLOSED.
+  const admin = makeAdminClient();
+  const quotaDay = todayUtc();
+  const reservation = await consumeAiQuota(
+    admin,
+    userId,
+    { runs: 0, grounding: names.length, runCap: null, groundingCap: DAILY_GROUNDING_LIMIT },
+    requestId,
+    FN,
+  );
+  if (reservation === 'blocked') return groundBudgetExceeded(usage.groundingCalls);
+  if (reservation === 'error') return quotaReserveFailedResponse(origin);
 
   // 5. Pure grounding loop (no LLM call anywhere on this path).
   const groundStart = Date.now();
@@ -1405,13 +1489,20 @@ async function handleGround(
   }
   const groundMs = Date.now() - groundStart;
 
-  const admin = makeAdminClient();
+  // Give back the unused reservation: the ledger keeps exactly the details
+  // calls made (each name makes at most one, so this is never negative).
+  await refundAiQuota(
+    admin,
+    userId,
+    { runs: 0, grounding: names.length - detailsCalls, day: quotaDay },
+    requestId,
+    FN,
+  );
 
   // 6. Nothing resolved AND >=1 transport failure: Google unreachable, not
   // "these places don't exist" — transient 504, no row (key stays free),
-  // spend still recorded.
+  // spend still recorded (the kept part of the reservation).
   if (resolved.length === 0 && groundErrors > 0) {
-    await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -1433,9 +1524,8 @@ async function handleGround(
     );
   }
 
-  // 7. Ledger (runs = 0 — ground never consumes an AI run), then the row.
-  await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
-
+  // 7. Ledger already settled (reservation minus refund = detailsCalls; runs
+  // = 0, because ground never consumes an AI run). Now write the row.
   const status: RunStatus = unresolved.length > 0 ? 'partial' : 'ok';
   const promptHash = await sha256Hex(JSON.stringify(names));
   const ins = await insertRun(

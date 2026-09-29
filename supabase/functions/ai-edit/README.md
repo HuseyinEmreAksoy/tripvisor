@@ -70,12 +70,20 @@ Does **not** consume an AI run. Budgeted instead against `ai_usage.grounding_cal
 ## Pipeline (per action)
 
 1. **Idempotency replay** — `trip_ai_runs` by `(user_id, idempotency_key)` **+ kind filter** (a key can never replay across action types); a hit replays the stored result with zero LLM/grounding spend. Concurrent duplicates converge via the UNIQUE constraint (23505 → return the winner's row).
-2. **Quota** — edit/suggest: shared `ai_runs >= 10` → 429. ground: `grounding_calls + batch > 100` → 429.
+2. **Quota** — edit/suggest: shared `ai_runs >= 10` → 429. ground: `grounding_calls + batch > 100` → 429. These reads are the early fast-fail. The **gate** is an atomic `consume_ai_quota` reservation (migration `0031`, audit #8), taken right before the first upstream spend:
+   - edit/suggest reserve 1 run (cap 10) before the LLM call;
+   - ground reserves one grounding call per name (cap 100) before any Google call, then refunds the unused part (`refund_ai_quota`) after the loop.
+
+   Blocked → the same 429. An RPC failure fails closed (`500 db_error`, no spend).
 3. **Config** — edit/suggest need ≥1 LLM key + the Google key; ground needs only the Google key.
 4. **Context (edit/suggest)** — trip + places loaded **under the caller's JWT** (RLS is the access proof; viewer visibility suffices — committing goes through editor-gated client mutations).
 5. **LLM (edit/suggest)** — Gemini 2.5 Flash `responseSchema` → Groq `gpt-oss-20b` strict `json_schema` fallback (shared adapter). Output schemas have **no lat/lng** — LLM coordinates are never trusted.
 6. **Grounding** — shared batched loop (5 per batch, 2 in flight), one session token per name, field mask `id,location,displayName` only. Biased by a 50km circle at the trip's (or day's) first place **plus** the destination text; ground uses text bias only.
-7. **Persist** — `increment_ai_usage` (service-role RPC; edit/suggest: runs=1 + grounding=N; ground: runs=0 + grounding=N) **before** the `trip_ai_runs` insert (user JWT, append-only RLS). Failed runs (502/504) increment the ledger but write **no row** — the idempotency key stays free for the retry.
+7. **Persist** — the ledger is settled **before** the `trip_ai_runs` insert (user JWT, append-only RLS):
+   - edit/suggest call `increment_ai_usage` (service-role RPC; runs=0 + grounding=N, because the run was reserved in step 2);
+   - for ground, the reservation minus the refund already equals the N details calls.
+
+   Failed runs (502/504) stay counted but write **no row**, so the idempotency key stays free for the retry.
 
 ## Data-minimization & Google ToS (D4/R2 posture)
 
@@ -134,4 +142,4 @@ curl -s -X POST 'http://127.0.0.1:54321/functions/v1/ai-edit' \
 
 ## Migrations
 
-Depends on `0021_v2_ai_run_kinds.sql` (widened kind CHECK) on top of `0020_v2_ai_and_day_start.sql` (`trip_ai_runs`, `ai_usage`, `increment_ai_usage()`), `0011_trip_collaborators.sql` (`user_can_access_trip` used by the `trip_ai_runs` insert policy).
+Depends on `0031_v2_security_rls_grants.sql` (`consume_ai_quota()` / `refund_ai_quota()`), `0021_v2_ai_run_kinds.sql` (widened kind CHECK) on top of `0020_v2_ai_and_day_start.sql` (`trip_ai_runs`, `ai_usage`, `increment_ai_usage()`), `0011_trip_collaborators.sql` (`user_can_access_trip` used by the `trip_ai_runs` insert policy).

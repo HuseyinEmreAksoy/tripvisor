@@ -1,18 +1,41 @@
 // Tripvisor Phase 4 — share link client wrappers.
 //
-// `useCreateShareLink` / `useRevokeShareLink` run under the caller's JWT.
+// `useCreateShareLink` / `useRevokeShareLink` run under the caller's JWT and
+// are OWNER-ONLY server-side (collaborators get `ShareLinkError('not_owner')`).
 // `useSharedTrip` is anonymous — it hits `share-trip:read` without requiring
 // auth. All three funnel through the `share-trip` Edge Function; the
 // `trip_shares` table is intentionally not reachable from the client.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from './supabase';
+import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
 import type {
   CreateShareResult,
   RevokeShareResult,
   SharedTrip,
   Uuid,
 } from './types';
+
+/**
+ * Typed failure of the `share-trip` create / revoke ops. Branch on `.code`:
+ *   - `not_owner`         — 403 — caller is a collaborator, not the owner
+ *                            (public links are OWNER-ONLY, security audit #5)
+ *   - `not_authenticated` — 401 — no / expired session
+ *   - `not_found`         — 404 — trip missing or not visible to the caller
+ *   - `invalid_input` 400 · `db_error` / `internal_error` 500
+ * Non-envelope failures (network, gateway) are rethrown as-is.
+ */
+export class ShareLinkError extends EdgeFunctionError {
+  constructor(code: string, message: string, status: number) {
+    super(code, message, status);
+    this.name = 'ShareLinkError';
+  }
+}
+
+async function throwShareError(error: unknown): Promise<never> {
+  const typed = await tryParseEdgeFunctionError(error, ShareLinkError);
+  throw typed ?? error;
+}
 
 export const shareKeys = {
   all: ['share'] as const,
@@ -28,7 +51,7 @@ export function useCreateShareLink(tripId: Uuid | undefined) {
         'share-trip',
         { body: { op: 'create', tripId } },
       );
-      if (error) throw error;
+      if (error) await throwShareError(error);
       if (!data?.token) throw new Error('share-trip returned no token');
       return data;
     },
@@ -50,7 +73,7 @@ export function useRevokeShareLink(tripId: Uuid | undefined) {
         'share-trip',
         { body: { op: 'revoke', tripId, ...(token ? { token } : {}) } },
       );
-      if (error) throw error;
+      if (error) await throwShareError(error);
       return data ?? { revoked: 0 };
     },
     onSuccess: () => {

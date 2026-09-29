@@ -328,11 +328,29 @@ export interface PlaceAutocompleteSuggestion {
   secondaryText: string;
 }
 
+/**
+ * Short-lived HMAC signature set for one photo (security audit #3). It is
+ * minted by `place-details` on the authenticated path. `sig` is keyed by
+ * the allowed widths as strings ('200' | '400' | '800' | '1600'), and all
+ * widths share one `exp` (unix seconds, at most 24h out). Tier-2 only, like
+ * the rest of PlaceDetails. Consumed by `usePlacePhotoUrl`. Never persist it.
+ */
+export interface PlacePhotoSignature {
+  exp: number;
+  sig: Record<string, string>;
+}
+
 export interface PlacePhoto {
   name: string;
   widthPx: number;
   heightPx: number;
   attributions: Array<{ displayName: string; uri?: string; photoUri?: string }>;
+  /**
+   * ADDITIVE (audit #3): present when the server has PHOTO_URL_SECRET set.
+   * Absent on older servers, or when the secret is missing. The photo hook
+   * then falls back to the POST place-photo signer.
+   */
+  signature?: PlacePhotoSignature;
 }
 
 export interface PlaceReview {
@@ -398,11 +416,19 @@ export type CreateTripPlaceInput = {
  * A trip returned by the anonymous share-trip:read path.
  * Excludes `user_id` and all Google-ToS-restricted content. Only ToS-safe
  * persistable fields are present on places (no reviews/photos/rating/etc).
+ *
+ * Contract v2 (security audit #12, 2026-09-29 — allow-list lives in
+ * supabase/functions/share-trip/public-fields.ts):
+ *   - `trip.id` is no longer returned (nothing on the public page needs it).
+ *   - `places[].notes` is no longer returned: notes are PRIVATE by default.
+ *     It stays on the type as OPTIONAL so older cached payloads still type,
+ *     and so the planned M5 per-trip "show notes on the public link" toggle
+ *     can re-enable it without another type change. Consumers must treat it
+ *     as absent-by-default (`SharedTimeline` already guards `place.notes ?`).
  */
 export interface SharedTrip {
   trip: Pick<
     Trip,
-    | 'id'
     | 'title'
     | 'start_date'
     | 'end_date'
@@ -422,8 +448,10 @@ export interface SharedTrip {
       | 'visit_duration_minutes'
       | 'day_index'
       | 'order_in_day'
-      | 'notes'
-    >
+    > & {
+      /** Omitted by contract v2 unless a future owner opt-in enables it. */
+      notes?: TripPlace['notes'];
+    }
   >;
   legs: Array<
     Pick<
@@ -439,6 +467,8 @@ export interface SharedTrip {
       | 'computed_at'
     >
   >;
+  /** `contractVersion: 2` from the audit-#12 server on; v1 servers sent no `meta`. */
+  meta?: { contractVersion: number };
 }
 
 export interface CreateShareResult {

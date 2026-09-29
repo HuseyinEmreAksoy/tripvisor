@@ -47,6 +47,16 @@ export interface OptimizeResult {
  *   - `not_found`           — 404 — trip not visible to caller under RLS
  *   - `invalid_input`       — 400 — request body failed Zod validation
  *   - `method_not_allowed`  — 405 — non-POST request to the function
+ *   - `not_editor`          — 403 — (audit 2026-09-29 #6) caller can SEE the
+ *                              trip but is a viewer. Only the owner or an
+ *                              accepted editor may optimize. The UI should not
+ *                              auto-run optimize for viewers (gate on
+ *                              `useTripRole().canEditTrip`).
+ *   - `quota_exceeded`      — 429 — (audit #2) the caller's daily routing quota
+ *                              (2000 billable elements per UTC day) is spent.
+ *                              Not retryable today. See
+ *                              {@link isRoutingQuotaExceeded}.
+ *   - `not_authenticated`   — 401 — no signed-in user session
  *
  * Network-only failures (no envelope / parse failure) fall through to
  * the original `Error` thrown by `supabase.functions.invoke` — the
@@ -57,6 +67,15 @@ export class OptimizeError extends EdgeFunctionError {
     super(code, message, status);
     this.name = 'OptimizeError';
   }
+}
+
+/**
+ * True when optimize-trip failed because the caller's daily routing quota
+ * is spent. Show a friendly "daily route limit reached, try again tomorrow"
+ * state, not a generic failure.
+ */
+export function isRoutingQuotaExceeded(error: unknown): error is OptimizeError {
+  return error instanceof OptimizeError && error.code === 'quota_exceeded';
 }
 
 export function useTripLegs(tripId: Uuid | undefined) {

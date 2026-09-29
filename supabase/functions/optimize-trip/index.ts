@@ -50,10 +50,29 @@
 //     overwritten before writing fresh ones — see writeTripLegs),
 //   - the same response envelope shape (existing OptimizeError consumers
 //     keep working unchanged).
+//
+// Security (audit 2026-09-29):
+//   #6 Viewers could run this function. RLS only proved the trip was
+//      VISIBLE, and every write below runs under the service role. After
+//      the trip loads, the caller must pass
+//      user_can_access_trip(tripId, callerId, 'editor') (owner or accepted
+//      editor). Otherwise -> 403 not_editor. The check runs through the
+//      caller-scoped client with the caller's OWN id (the function guards
+//      p_user_id = auth.uid()), and BEFORE the row-mutex, so a viewer can't
+//      even hold the lock.
+//   #2 The downstream distance-matrix / directions-polyline calls used to
+//      send `Bearer <anon key>`. Those functions now require a real user
+//      and meter a per-user routing quota. callEdge therefore forwards the
+//      CALLER's Authorization header. A downstream 429 quota_exceeded on
+//      the matrix surfaces as 429 quota_exceeded here.
+//   Caller auth itself goes through requireUser (GoTrue getUser). The anon
+//   key gets 401 not_authenticated.
 
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import { describeInvalidInput, requireUser } from '../_shared/auth.ts';
 import { handlePreflight } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/errors.ts';
+import { fetchWithTimeout } from '../_shared/fetch-with-timeout.ts';
 import { log, newRequestId } from '../_shared/logger.ts';
 import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
 import {
@@ -64,6 +83,13 @@ import {
 
 const MAX_PLACES = 25;
 const LEG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Outer budgets for the sibling-function hops. Each sits above the callee's
+// own upstream budget (distance-matrix / directions-polyline: 10s Google,
+// plus up to 10s ORS before the fallback, plus an auth round-trip), so the
+// callee times out first and returns its structured error.
+const MATRIX_TIMEOUT_MS = 25_000;
+const POLYLINE_TIMEOUT_MS = 25_000;
 
 // Phase 23 Step 23.2: explicit mode parameter. Defaults to 'optimized' for
 // back-compat with every pre-Phase-23 caller (optimize-trip used to take
@@ -161,22 +187,22 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('method_not_allowed', 'Only POST is allowed', 405, origin);
   }
 
+  const auth = await requireUser(req, { fn: 'optimize-trip', requestId, origin });
+  if (!auth.ok) return auth.response;
+  const callerId = auth.user.id;
+  const callerAuth = auth.user.authHeader;
+
   let body: z.infer<typeof BodySchema>;
   try {
     body = BodySchema.parse(await req.json());
   } catch (err) {
-    return errorResponse(
-      'invalid_input',
-      err instanceof z.ZodError ? err.issues.map((i) => i.message).join('; ') : 'Invalid JSON',
-      400,
-      origin,
-    );
+    return errorResponse('invalid_input', describeInvalidInput(err), 400, origin);
   }
 
   const user = makeUserClient(req);
   const admin = makeAdminClient();
 
-  // Auth check — the trip must be visible to the caller under RLS.
+  // Visibility check — the trip must be visible to the caller under RLS.
   const { data: trip, error: tripErr } = await user
     .from('trips')
     .select('id, user_id, daily_hours_budget, transport_mode, anchor_place_id')
@@ -187,6 +213,46 @@ export async function handler(req: Request): Promise<Response> {
     return errorResponse('db_error', tripErr.message, 500, origin);
   }
   if (!trip) return errorResponse('not_found', 'Trip not found or forbidden', 404, origin);
+
+  // Role check (audit #6): visibility is not enough. Everything below writes
+  // via the service role, so only the owner or an accepted EDITOR may run
+  // the optimizer. Runs through the caller-scoped client with the caller's
+  // own id, the only combination user_can_access_trip accepts from an
+  // authenticated JWT. Fail CLOSED: an RPC error is a 500, never an allow.
+  const { data: canEdit, error: roleErr } = await user.rpc('user_can_access_trip', {
+    p_trip_id: body.tripId,
+    p_user_id: callerId,
+    p_min_role: 'editor',
+  });
+  if (roleErr) {
+    log({
+      requestId,
+      fn: 'optimize-trip',
+      level: 'error',
+      stage: 'role_check',
+      userId: callerId,
+      tripId: body.tripId,
+      err: roleErr.message,
+    });
+    return errorResponse('db_error', 'Could not verify trip role', 500, origin);
+  }
+  if (canEdit !== true) {
+    log({
+      requestId,
+      fn: 'optimize-trip',
+      level: 'info',
+      stage: 'role_check',
+      userId: callerId,
+      tripId: body.tripId,
+      outcome: 'not_editor',
+    });
+    return errorResponse(
+      'not_editor',
+      'Only the trip owner or an editor can optimize this route.',
+      403,
+      origin,
+    );
+  }
 
   // Per-trip row-mutex via claim_trip_optimize (migration 0008). The mutex
   // is a single-statement UPDATE on trips.optimizing_at, atomic at the row
@@ -285,6 +351,7 @@ export async function handler(req: Request): Promise<Response> {
         tripId: body.tripId,
         requestId,
         origin,
+        callerAuth,
       });
     }
 
@@ -343,12 +410,47 @@ export async function handler(req: Request): Promise<Response> {
       // matrix. `places` is already capped at MAX 25 by the too_many_places
       // guard, which is exactly the matrix endpoint's per-side limit.
       const coords = places.map((p) => ({ lat: p.lat, lng: p.lng }));
-      const matrixRes = await callEdge('distance-matrix', {
-        origins: coords,
-        destinations: coords,
-        mode: trip.transport_mode,
-      });
+      const matrixRes = await callEdge(
+        'distance-matrix',
+        {
+          origins: coords,
+          destinations: coords,
+          mode: trip.transport_mode,
+        },
+        callerAuth,
+        MATRIX_TIMEOUT_MS,
+      );
       if (!matrixRes.ok) {
+        // Audit #2: the caller's daily routing quota is spent. Surface the
+        // same quota_exceeded envelope instead of a generic matrix failure,
+        // so the client can say "try again tomorrow" instead of "retry".
+        if (matrixRes.status === 429 && matrixRes.errorCode === 'quota_exceeded') {
+          log({
+            requestId,
+            fn: 'optimize-trip',
+            level: 'info',
+            stage: 'matrix',
+            userId: callerId,
+            tripId: body.tripId,
+            outcome: 'quota_exceeded',
+          });
+          return errorResponse(
+            'quota_exceeded',
+            matrixRes.errorMessage ?? 'Daily route calculation limit reached. Try again tomorrow.',
+            429,
+            origin,
+          );
+        }
+        log({
+          requestId,
+          fn: 'optimize-trip',
+          level: 'error',
+          stage: 'matrix',
+          userId: callerId,
+          tripId: body.tripId,
+          status: matrixRes.status,
+          err: matrixRes.errorCode ?? 'unknown',
+        });
         return errorResponse('matrix_failed', 'Distance matrix failed', 502, origin);
       }
       const matrix = matrixRes.body as {
@@ -420,12 +522,17 @@ export async function handler(req: Request): Promise<Response> {
       const pts = day.orderedPlaceIds.map((id) => placeById.get(id)!);
       const [first, ...rest] = pts;
       const last = rest.pop()!;
-      const polyRes = await callEdge('directions-polyline', {
-        origin: { lat: first!.lat, lng: first!.lng },
-        destination: { lat: last.lat, lng: last.lng },
-        intermediates: rest.map((p) => ({ lat: p.lat, lng: p.lng })),
-        mode: trip.transport_mode,
-      });
+      const polyRes = await callEdge(
+        'directions-polyline',
+        {
+          origin: { lat: first!.lat, lng: first!.lng },
+          destination: { lat: last.lat, lng: last.lng },
+          intermediates: rest.map((p) => ({ lat: p.lat, lng: p.lng })),
+          mode: trip.transport_mode,
+        },
+        callerAuth,
+        POLYLINE_TIMEOUT_MS,
+      );
       if (!polyRes.ok) continue;
       polylineDays++;
       const poly = polyRes.body as PolylineResponse;
@@ -575,8 +682,10 @@ async function runManualMode(args: {
   tripId: string;
   requestId: string;
   origin: string | null;
+  /** Caller's Authorization header, forwarded to directions-polyline (audit #2). */
+  callerAuth: string;
 }): Promise<Response> {
-  const { admin, trip, places, tripId, requestId, origin } = args;
+  const { admin, trip, places, tripId, requestId, origin, callerAuth } = args;
 
   // 1. Group scheduled places by day_index. Skip unscheduled.
   const byDay = new Map<number, TripPlaceRow[]>();
@@ -735,12 +844,17 @@ async function runManualMode(args: {
 
     const [first, ...rest] = chain;
     const last = rest.pop()!;
-    const polyRes = await callEdge('directions-polyline', {
-      origin: { lat: first!.lat, lng: first!.lng },
-      destination: { lat: last.lat, lng: last.lng },
-      intermediates: rest.map((p) => ({ lat: p.lat, lng: p.lng })),
-      mode: trip.transport_mode,
-    });
+    const polyRes = await callEdge(
+      'directions-polyline',
+      {
+        origin: { lat: first!.lat, lng: first!.lng },
+        destination: { lat: last.lat, lng: last.lng },
+        intermediates: rest.map((p) => ({ lat: p.lat, lng: p.lng })),
+        mode: trip.transport_mode,
+      },
+      callerAuth,
+      POLYLINE_TIMEOUT_MS,
+    );
     if (!polyRes.ok) continue;
     const poly = polyRes.body as PolylineResponse;
     if (poly.polyline) polylineDays++;
@@ -816,23 +930,64 @@ async function sha256Hex(input: string): Promise<string> {
   return out;
 }
 
-async function callEdge(fnName: string, body: unknown): Promise<{ ok: boolean; body: unknown }> {
+interface EdgeCallResult {
+  ok: boolean;
+  /** HTTP status; 0 when the request never completed (timeout / network / env). */
+  status: number;
+  body: unknown;
+  /** `error.code` from the shared envelope on non-2xx, when present. */
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+/**
+ * POST to a sibling Edge Function AS THE CALLER (audit #2). The caller's
+ * Authorization header is forwarded verbatim, so the downstream
+ * requireUser() authenticates, and consumeQuota() meters, the same user.
+ * Never the anon key: those functions reject it now. `apikey` carries the
+ * public anon key only for gateway routing parity with supabase-js
+ * `functions.invoke`; it grants nothing.
+ */
+async function callEdge(
+  fnName: string,
+  body: unknown,
+  callerAuth: string,
+  timeoutMs: number,
+): Promise<EdgeCallResult> {
   const url = Deno.env.get('SUPABASE_URL');
   const anon = Deno.env.get('SUPABASE_ANON_KEY');
-  if (!url || !anon) return { ok: false, body: null };
+  if (!url) {
+    return { ok: false, status: 0, body: null, errorCode: 'env_missing', errorMessage: null };
+  }
   try {
-    const res = await fetch(`${url}/functions/v1/${fnName}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${anon}`,
-      },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json().catch(() => null);
-    return { ok: res.ok, body: json };
-  } catch {
-    return { ok: false, body: null };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: callerAuth,
+    };
+    if (anon) headers.apikey = anon;
+    const res = await fetchWithTimeout(
+      `${url}/functions/v1/${fnName}`,
+      { method: 'POST', headers, body: JSON.stringify(body) },
+      timeoutMs,
+    );
+    const json: unknown = await res.json().catch(() => null);
+    const env = res.ok ? null : (json as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+    return {
+      ok: res.ok,
+      status: res.status,
+      body: json,
+      errorCode: typeof env?.code === 'string' ? env.code : null,
+      errorMessage: typeof env?.message === 'string' ? env.message : null,
+    };
+  } catch (err) {
+    const isAbort = err instanceof DOMException && err.name === 'AbortError';
+    return {
+      ok: false,
+      status: 0,
+      body: null,
+      errorCode: isAbort ? 'timeout' : 'network_error',
+      errorMessage: null,
+    };
   }
 }
 

@@ -34,7 +34,10 @@
 //   1. Idempotency — SELECT trip_ai_runs by (user_id, idempotencyKey); a hit
 //      with status ok/partial replays the stored draft with ZERO LLM/grounding
 //      spend (client retries and timeouts never double-bill — risk C4).
-//   2. Quota — ai_usage row for today (UTC); >= DAILY_RUN_LIMIT -> 429.
+//   2. Quota — ai_usage row for today (UTC); >= DAILY_RUN_LIMIT -> 429 (early
+//      fast-fail read). The GATE is an atomic consume_ai_quota reservation
+//      (migration 0031, audit #8) taken right before the LLM call. Blocked
+//      -> the same 429; an RPC failure fails closed (500 db_error, no spend).
 //   3. LLM — Gemini 2.5 Flash (responseSchema structured JSON) with Groq
 //      gpt-oss-20b (strict json_schema) as fallback on 4xx/5xx/timeout/garbage.
 //      D4 data-minimization: the payload carries ONLY the user's prompt +
@@ -44,9 +47,10 @@
 //      (nothing ToS-restricted), one session token per name so the pair bills
 //      as a single Details session. LLM coordinates are never used — the
 //      response schema deliberately has no lat/lng.
-//   5. Persist the run (user JWT -> RLS) + increment the ai_usage ledger
-//      (service-role RPC). Draft is staged in trip_ai_runs.draft — NO
-//      trip_places writes.
+//   5. Persist the run (user JWT -> RLS) + record the grounding details calls
+//      on the ai_usage ledger (service-role RPC; the run itself was reserved
+//      in step 2). Draft is staged in trip_ai_runs.draft — NO trip_places
+//      writes.
 //
 // Secrets (Supabase Edge secrets — never bundled):
 //   GEMINI_API_KEY, GROQ_API_KEY (>=1 required), GOOGLE_MAPS_SERVER_KEY (required).
@@ -63,6 +67,7 @@ import { log, newRequestId } from '../_shared/logger.ts';
 import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
 import {
   DAILY_RUN_LIMIT,
+  consumeAiQuota,
   extractBearer,
   groundNames,
   incrementAiUsage,
@@ -238,6 +243,15 @@ function parseLlmJson(text: string): LlmOutput | null {
 
 // ----- Handler ---------------------------------------------------------------
 
+function quotaExceededResponse(origin: string | null): Response {
+  return errorResponse(
+    'quota_exceeded',
+    `Daily AI planning limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
+    429,
+    origin,
+  );
+}
+
 export async function handler(req: Request): Promise<Response> {
   const origin = req.headers.get('origin');
   const requestId = newRequestId();
@@ -316,19 +330,14 @@ export async function handler(req: Request): Promise<Response> {
     );
   }
 
-  // ---- 2. Quota --------------------------------------------------------------
-  // Read-then-spend (not atomic): two perfectly concurrent requests at 9/10
-  // can both pass and land at 11. Accepted for a soft free-tier guard — the
-  // ledger still records true spend, and the next request is blocked.
+  // ---- 2. Quota: early fast-fail read ---------------------------------------
+  // NOT the gate (a read-then-check races). It skips the config/trip work
+  // for an already-exhausted user and feeds `usage.runsToday`. The atomic
+  // reservation in step 5 is what actually enforces DAILY_RUN_LIMIT (0031).
   const runsToday = (await readUsageToday(user, userId, FN)).aiRuns;
   if (runsToday >= DAILY_RUN_LIMIT) {
     log({ requestId, fn: FN, level: 'info', stage: 'quota', runsToday });
-    return errorResponse(
-      'quota_exceeded',
-      `Daily AI planning limit reached (${DAILY_RUN_LIMIT}/day). Try again tomorrow.`,
-      429,
-      origin,
-    );
+    return quotaExceededResponse(origin);
   }
 
   // ---- 3. Config check (before any spend) -------------------------------------
@@ -373,7 +382,28 @@ export async function handler(req: Request): Promise<Response> {
     }
   }
 
-  // ---- 5. LLM: Gemini -> Groq fallback ----------------------------------------
+  // ---- 5. Atomic quota reservation: THE gate (0031, audit #8) -----------------
+  // One INSERT … ON CONFLICT … WHERE under-cap statement, so N concurrent
+  // requests at 9/10 can't all pass. Taken immediately before the first
+  // upstream spend; everything above is free. A failed LLM run keeps its
+  // reservation (dispatched spend counts, 0020 §b). RPC failure fails CLOSED.
+  const admin = makeAdminClient();
+  const reservation = await consumeAiQuota(
+    admin,
+    userId,
+    { runs: 1, grounding: 0, runCap: DAILY_RUN_LIMIT, groundingCap: null },
+    requestId,
+    FN,
+  );
+  if (reservation === 'blocked') {
+    log({ requestId, fn: FN, level: 'info', stage: 'quota', runsToday, reserved: false });
+    return quotaExceededResponse(origin);
+  }
+  if (reservation === 'error') {
+    return errorResponse('db_error', 'Could not reserve AI quota. Please try again.', 500, origin);
+  }
+
+  // ---- 6. LLM: Gemini -> Groq fallback ----------------------------------------
   // D4 data-minimization: ONLY user-authored text + destination + day count.
   const userPayload = [
     `Trip request: ${body.prompt}`,
@@ -396,15 +426,14 @@ export async function handler(req: Request): Promise<Response> {
   );
   const llmMs = Date.now() - llmStart;
 
-  const admin = makeAdminClient();
   const promptHash = await sha256Hex(body.prompt);
 
   if (!attempt) {
-    // An upstream LLM call was dispatched (>=1 provider configured) — count
-    // the run in the ledger even though it failed, so a failure loop can't
-    // burn unmetered Gemini RPD / Groq quota. No trip_ai_runs row is written
-    // (migration 0020 §b: the idempotency key must stay free for the retry).
-    await incrementAiUsage(admin, userId, 1, 0, requestId, FN);
+    // An upstream LLM call was dispatched (>=1 provider configured). The run
+    // reserved in step 5 stays counted even though it failed, so a failure
+    // loop can't burn unmetered Gemini RPD / Groq quota. No trip_ai_runs row
+    // is written (migration 0020 §b: the idempotency key must stay free for
+    // the retry).
     log({
       requestId,
       fn: FN,
@@ -423,7 +452,7 @@ export async function handler(req: Request): Promise<Response> {
     );
   }
 
-  // ---- 6. Flatten + clamp + dedupe + cap ---------------------------------------
+  // ---- 7. Flatten + clamp + dedupe + cap ---------------------------------------
   const dayCount =
     body.days ??
     Math.min(
@@ -453,7 +482,7 @@ export async function handler(req: Request): Promise<Response> {
     if (proposed.length >= MAX_DRAFT_PLACES) break;
   }
 
-  // ---- 7. Grounding loop --------------------------------------------------------
+  // ---- 8. Grounding loop --------------------------------------------------------
   const groundStart = Date.now();
   const places: AiDraftPlace[] = [];
   const unresolved: string[] = [];
@@ -501,9 +530,10 @@ export async function handler(req: Request): Promise<Response> {
   // Nothing resolved AND at least one transport-level failure: Google was
   // unreachable, not "these places don't exist". Treat as transient (504)
   // and persist NOTHING — a stored all-miss draft would poison the
-  // idempotent replay for this key. Spend still hits the ledger.
+  // idempotent replay for this key. Spend still hits the ledger (the run is
+  // already reserved; record the details calls made).
   if (places.length === 0 && groundErrors > 0) {
-    await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+    await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
     log({
       requestId,
       fn: FN,
@@ -533,11 +563,12 @@ export async function handler(req: Request): Promise<Response> {
     dayCount,
   };
 
-  // ---- 8. Ledger first, then the audit/idempotency row -------------------------
-  // Increment BEFORE the insert so the ledger reflects real upstream spend
+  // ---- 9. Ledger first, then the audit/idempotency row -------------------------
+  // The run was reserved atomically in step 5; record the (uncapped) grounding
+  // details calls BEFORE the insert so the ledger reflects real upstream spend
   // even if the insert fails. Ledger failures are logged but never fail the
-  // run (fail-open bookkeeping; at 10/day the worst case is one uncounted run).
-  await incrementAiUsage(admin, userId, 1, detailsCalls, requestId, FN);
+  // run (fail-open bookkeeping for post-hoc spend only; the gate is step 5).
+  await incrementAiUsage(admin, userId, 0, detailsCalls, requestId, FN);
 
   // Written with the USER client so trip_ai_runs RLS (own-rows insert,
   // append-only) is enforced on the function itself.

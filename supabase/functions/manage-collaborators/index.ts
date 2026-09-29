@@ -66,6 +66,13 @@
 //   - email_failed           200 — invite row created but email send failed
 //                                  (returned with ok:true, emailSent:false)
 //   - already_accepted       409 — invite already in 'accepted' state
+//   - invite_rate_limited    429 — owner hit DAILY_INVITE_CAP invites today
+//                                  (UTC day; Retry-After = seconds to UTC
+//                                  midnight). Audit #14.
+//   - trip_invite_limit      429 — trip already has MAX_PENDING_INVITES_PER_TRIP
+//                                  live (non-expired) pending invites. Audit #14.
+//   - quota_unavailable      503 — the invite quota RPC failed (fails CLOSED:
+//                                  migration 0033 missing / DB error)
 //   - db_error               500 — Postgres failure
 //   - internal_error         500 — unexpected exception
 
@@ -81,6 +88,25 @@ import { makeAdminClient, makeUserClient } from '../_shared/supabase-admin.ts';
 // re-invite. Accepted / declined / revoked rows are unaffected (the TTL
 // is only consulted when accepting a 'pending' row).
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Invite-spam caps (security audit #14). Every NEW invite can create an
+// auth.users row and send an email (inviteUserByEmail), so both are bounded:
+//   - DAILY_INVITE_CAP: invites one owner may send per UTC day, across ALL
+//     their trips. Enforced atomically by the `consume_invite_quota` RPC
+//     (migration 0033) on the owner-keyed ai_usage ledger — survives trip
+//     deletion and concurrent requests (a per-trip row count would not).
+//   - MAX_PENDING_INVITES_PER_TRIP: live (non-expired) pending invites one
+//     trip may hold. Expired pending rows (older than INVITE_TTL_MS) don't
+//     count — they can never be accepted anyway.
+// Tuning either is a redeploy, not a migration.
+export const DAILY_INVITE_CAP = 20;
+export const MAX_PENDING_INVITES_PER_TRIP = 50;
+
+/** Seconds until the next UTC midnight — when the daily invite bucket resets. */
+export function secondsUntilUtcMidnight(now: Date = new Date()): number {
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return Math.max(1, Math.ceil((next - now.getTime()) / 1000));
+}
 
 const InviteSchema = z.object({
   action: z.literal('invite'),
@@ -292,6 +318,71 @@ async function handleInvite(
       `An invite for ${normalizedEmail} already exists (status: ${existing.status})`,
       409,
       origin,
+    );
+  }
+
+  // Audit #14 (a): per-trip cap on LIVE pending invites. Checked before the
+  // daily quota so a refused request doesn't burn a unit of it.
+  const pendingCutoff = new Date(Date.now() - INVITE_TTL_MS).toISOString();
+  const { count: pendingCount, error: pendingErr } = await admin
+    .from('trip_collaborators')
+    .select('id', { count: 'exact', head: true })
+    .eq('trip_id', body.tripId)
+    .eq('status', 'pending')
+    .gte('created_at', pendingCutoff);
+  if (pendingErr) {
+    log({ requestId, fn: 'manage-collaborators', action: 'invite', level: 'error', stage: 'pending_count', err: pendingErr.message });
+    return errorResponse('db_error', 'Failed to check pending invites', 500, origin);
+  }
+  if ((pendingCount ?? 0) >= MAX_PENDING_INVITES_PER_TRIP) {
+    log({
+      requestId,
+      fn: 'manage-collaborators',
+      action: 'invite',
+      level: 'warn',
+      result: 'trip_invite_limit',
+      tripId: body.tripId,
+      userId: user.id,
+      pending: pendingCount,
+    });
+    return errorResponse(
+      'trip_invite_limit',
+      `This trip already has ${MAX_PENDING_INVITES_PER_TRIP} pending invites. Cancel some, or wait for people to respond, before inviting more.`,
+      429,
+      origin,
+    );
+  }
+
+  // Audit #14 (b): per-owner daily cap, consumed atomically (migration 0033).
+  // Fails CLOSED: if the RPC is missing or errors, no invite (and no
+  // auth.users row / email) is created.
+  const { data: allowed, error: quotaErr } = await admin.rpc('consume_invite_quota', {
+    p_user: user.id,
+    p_cap: DAILY_INVITE_CAP,
+  });
+  if (quotaErr) {
+    log({ requestId, fn: 'manage-collaborators', action: 'invite', level: 'error', stage: 'invite_quota', userId: user.id, err: quotaErr.message });
+    return errorResponse('quota_unavailable', 'Invites are temporarily unavailable. Try again shortly.', 503, origin);
+  }
+  if (allowed !== true) {
+    log({
+      requestId,
+      fn: 'manage-collaborators',
+      action: 'invite',
+      level: 'warn',
+      result: 'invite_rate_limited',
+      tripId: body.tripId,
+      userId: user.id,
+      cap: DAILY_INVITE_CAP,
+    });
+    return jsonResponse(
+      {
+        error: {
+          code: 'invite_rate_limited',
+          message: `You've reached today's limit of ${DAILY_INVITE_CAP} invites. You can send more tomorrow.`,
+        },
+      },
+      { status: 429, origin, headers: { 'Retry-After': String(secondsUntilUtcMidnight()) } },
     );
   }
 

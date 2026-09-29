@@ -1,6 +1,7 @@
 import { keepPreviousData, onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { TIER1_MUTATION_NETWORK_MODE, tier1SuccessResult } from './_tier1Facade';
+import { EdgeFunctionError, tryParseEdgeFunctionError } from './_errors';
 import { use$ } from '@legendapp/state/react';
 import { z } from 'zod';
 import { supabase } from './supabase';
@@ -447,17 +448,59 @@ export function useCreateTrip() {
 }
 
 /**
- * Hard-delete a trip. Per decision D5 this stays on the legacy PostgREST
- * path even flag-on: trips have no tombstone column by design (0027 —
- * archive is their lifecycle), so a hard delete is an online-only
- * destructive op that must not route through the sync engine.
+ * Typed failure of the `delete-trip` Edge Function. Branch on `.code`:
+ *   - `not_owner`              — 403 — only the owner may delete a trip
+ *   - `not_authenticated`      — 401 — no / expired session
+ *   - `storage_cleanup_failed` — 500 — documents couldn't be removed; the
+ *                                trip was NOT deleted, retrying is safe
+ *   - `invalid_input` 400 · `db_error` / `internal_error` 500
+ * (`not_found` never surfaces — `useDeleteTrip` treats it as success.)
+ * Non-envelope failures (network, gateway) are rethrown as-is.
+ */
+export class DeleteTripError extends EdgeFunctionError {
+  constructor(code: string, message: string, status: number) {
+    super(code, message, status);
+    this.name = 'DeleteTripError';
+  }
+}
+
+/** `delete-trip` success body (contractVersion 1). */
+export interface DeleteTripResult {
+  ok: true;
+  tripId: Uuid;
+  /** false = the row was already gone (deleted elsewhere) — still success. */
+  deleted: boolean;
+  storage: { objectsRemoved: number };
+  meta: { contractVersion: number };
+}
+
+/**
+ * Hard-delete a trip. Per decision D5 this stays OFF the sync engine even
+ * flag-on: trips have no tombstone column by design (0027 — archive is their
+ * lifecycle), so a hard delete is an online-only destructive op.
+ *
+ * Security audit #13: the delete goes through the `delete-trip` Edge
+ * Function instead of a direct PostgREST delete, because Postgres cascades
+ * never reach Storage — the trip's `trip-docs/<tripId>/…` uploads were left
+ * orphaned. The function is owner-only, removes the Storage objects first,
+ * then deletes the row (cascade) under the caller's JWT.
+ *
+ * Idempotent like the old PostgREST path (which "succeeded" with 0 rows): a
+ * typed `not_found` (trip already gone, or never visible to this user) is
+ * treated as success so the local prune below still runs.
  */
 export function useDeleteTrip() {
   const qc = useQueryClient();
   return useMutation<Uuid, Error, Uuid>({
     mutationFn: async (id) => {
-      const { error } = await supabase.from('trips').delete().eq('id', id);
-      if (error) throw error;
+      const { error } = await supabase.functions.invoke<DeleteTripResult>('delete-trip', {
+        body: { tripId: id },
+      });
+      if (error) {
+        const typed = await tryParseEdgeFunctionError(error, DeleteTripError);
+        if (typed?.code === 'not_found') return id;
+        throw typed ?? error;
+      }
       return id;
     },
     onSuccess: (id) => {

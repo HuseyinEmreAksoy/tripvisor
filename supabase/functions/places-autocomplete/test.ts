@@ -4,7 +4,26 @@ import {
   assertEquals,
   assertStringIncludes,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { handler } from './index.ts';
+import process from 'node:process';
+import { test } from 'node:test';
+import { handler as rawHandler } from './index.ts';
+import { _setQuotaRpcForTests, _setTokenVerifierForTests } from '../_shared/auth.ts';
+
+// Audit #2: the function requires a real user. Every request below is
+// authenticated as a fixed user through the verifier hook (unless it sets
+// its own Authorization), and the quota RPC passes unless a test overrides it.
+const TEST_USER_ID = '00000000-0000-4000-8000-0000000000aa';
+// The well-known PUBLIC local-demo anon key: role=anon, no `sub`.
+const ANON_KEY_JWT =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+_setTokenVerifierForTests(() => Promise.resolve({ ok: true, userId: TEST_USER_ID }));
+_setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+function handler(req: Request): Promise<Response> {
+  if (req.headers.has('Authorization')) return rawHandler(req);
+  const headers = new Headers(req.headers);
+  headers.set('Authorization', 'Bearer test-user-token');
+  return rawHandler(new Request(req, { headers }));
+}
 
 function mockGoogle(response: { status?: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -26,9 +45,9 @@ function mockGoogle(response: { status?: number; body?: unknown }) {
   };
 }
 
-Deno.env.set('GOOGLE_MAPS_SERVER_KEY', 'test-key');
+process.env.GOOGLE_MAPS_SERVER_KEY = 'test-key';
 
-Deno.test('?ping returns ok', async () => {
+test('?ping returns ok', async () => {
   const res = await handler(new Request('http://localhost/?ping=1'));
   assertEquals(res.status, 200);
   const body = (await res.json()) as { ok: boolean; fn: string };
@@ -36,19 +55,19 @@ Deno.test('?ping returns ok', async () => {
   assertEquals(body.fn, 'places-autocomplete');
 });
 
-Deno.test('GET is rejected (405)', async () => {
+test('GET is rejected (405)', async () => {
   const res = await handler(new Request('http://localhost/'));
   assertEquals(res.status, 405);
 });
 
-Deno.test('invalid JSON returns 400', async () => {
+test('invalid JSON returns 400', async () => {
   const res = await handler(
     new Request('http://localhost/', { method: 'POST', body: '{' }),
   );
   assertEquals(res.status, 400);
 });
 
-Deno.test('missing sessionToken returns 400', async () => {
+test('missing sessionToken returns 400', async () => {
   const res = await handler(
     new Request('http://localhost/', {
       method: 'POST',
@@ -59,7 +78,7 @@ Deno.test('missing sessionToken returns 400', async () => {
   assertEquals(res.status, 400);
 });
 
-Deno.test('forwards session token and sends X-Goog-FieldMask', async () => {
+test('forwards session token and sends X-Goog-FieldMask', async () => {
   const mock = mockGoogle({
     body: {
       suggestions: [
@@ -114,7 +133,66 @@ Deno.test('forwards session token and sends X-Goog-FieldMask', async () => {
   }
 });
 
-Deno.test('upstream 5xx becomes 502', async () => {
+test('audit #2: public anon key alone -> 401, Google never called', async () => {
+  const mock = mockGoogle({ body: { suggestions: [] } });
+  try {
+    for (const auth of [undefined, `Bearer ${ANON_KEY_JWT}`]) {
+      const res = await rawHandler(
+        new Request('http://localhost/', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(auth ? { Authorization: auth } : {}),
+          },
+          body: JSON.stringify({
+            input: 'Lis',
+            sessionToken: '11111111-1111-4111-8111-111111111111',
+          }),
+        }),
+      );
+      assertEquals(res.status, 401);
+      const body = (await res.json()) as { error: { code: string } };
+      assertEquals(body.error.code, 'not_authenticated');
+    }
+    assertEquals(mock.calls.length, 0, 'no billed Google call for unauthenticated callers');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('audit #2: daily quota spent -> 429 quota_exceeded, Google never called', async () => {
+  const seen: Array<{ p_user: string; p_kind: string; p_units: number }> = [];
+  _setQuotaRpcForTests((args) => {
+    seen.push(args);
+    return Promise.resolve({ data: false, error: null });
+  });
+  const mock = mockGoogle({ body: { suggestions: [] } });
+  try {
+    const res = await handler(
+      new Request('http://localhost/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          input: 'Lis',
+          sessionToken: '11111111-1111-4111-8111-111111111111',
+        }),
+      }),
+    );
+    assertEquals(res.status, 429);
+    assert(res.headers.get('Retry-After'), 'Retry-After must be set');
+    const body = (await res.json()) as { error: { code: string } };
+    assertEquals(body.error.code, 'quota_exceeded');
+    assertEquals(mock.calls.length, 0);
+    assertEquals(seen[0]?.p_user, TEST_USER_ID);
+    assertEquals(seen[0]?.p_kind, 'places_autocomplete');
+    assertEquals(seen[0]?.p_units, 1);
+  } finally {
+    mock.restore();
+    _setQuotaRpcForTests(() => Promise.resolve({ data: true, error: null }));
+  }
+});
+
+test('upstream 5xx becomes 502', async () => {
   const mock = mockGoogle({ status: 500, body: { error: 'boom' } });
   try {
     const res = await handler(
@@ -137,9 +215,9 @@ Deno.test('upstream 5xx becomes 502', async () => {
 // Phase 1 Problem 1 fix: _shared/cors.ts fails closed when ALLOWED_ORIGINS
 // does not include the caller's origin. Regression guard.
 
-Deno.test('CORS deny: disallowed origin is not echoed in response', async () => {
+test('CORS deny: disallowed origin is not echoed in response', async () => {
   // Set ALLOWED_ORIGINS to a specific allow-list that does NOT include evil.example
-  Deno.env.set('ALLOWED_ORIGINS', 'http://localhost:8081,https://tripvisor.app');
+  process.env.ALLOWED_ORIGINS = 'http://localhost:8081,https://tripvisor.app';
 
   const res = await handler(new Request('http://localhost/?ping=1', {
     headers: { origin: 'https://evil.example' },
@@ -152,12 +230,12 @@ Deno.test('CORS deny: disallowed origin is not echoed in response', async () => 
     `CORS must not echo disallowed origin; got: ${acao}`,
   );
   // Reset to wildcard for subsequent tests
-  Deno.env.set('ALLOWED_ORIGINS', '*');
+  process.env.ALLOWED_ORIGINS = '*';
 });
 
 // ---- gap #9: timeout → 504 (Step 5.2) ------------------------------------
 
-Deno.test('upstream timeout → 504', async () => {
+test('upstream timeout → 504', async () => {
   const original = globalThis.fetch;
   // Never-resolving fetch stub simulates upstream timeout
   globalThis.fetch = ((_url: string, init: RequestInit) => {

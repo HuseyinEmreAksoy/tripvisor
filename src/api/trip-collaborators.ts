@@ -63,7 +63,14 @@ export type {
  *   - `already_accepted`     — 409 — invite is already accepted
  *   - `invite_revoked`       — 410 — invite was revoked or declined
  *   - `invite_expired`       — 410 — pending invite older than 7 days
+ *   - `invite_rate_limited`  — 429 — owner hit the daily invite cap (20 per
+ *                                    UTC day, all trips; audit #14)
+ *   - `trip_invite_limit`    — 429 — trip already has 50 live pending invites
+ *   - `quota_unavailable`    — 503 — invite quota check failed (fails closed)
  *   - `db_error`             — 500 — Postgres failure
+ *
+ * The 429/503 envelopes carry a user-facing English `message`; the invite
+ * sheet already renders `err.message` for unknown codes.
  *   - `internal_error`       — 500 — unexpected exception
  */
 export class CollaboratorError extends EdgeFunctionError {

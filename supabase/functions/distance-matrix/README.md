@@ -70,20 +70,27 @@ Ops runbook (go live on ORS / kill-switch back): see
 
 ## Example calls
 
+Auth (security audit 2026-09-29 #2): `$USER_JWT` must be a signed-in user's
+access token. The public anon key alone gets `401 not_authenticated`. Every call
+consumes the per-user daily routing quota (2000 billable elements per UTC day,
+`DAILY_QUOTA` in `_shared/auth.ts`). When it is spent the call returns
+`429 quota_exceeded` with `Retry-After`, and `503 quota_unavailable` if the
+quota RPC is unreachable (the guard fails closed).
+
 ```bash
 # Happy path (served by whichever provider is resolved; response identical)
 curl -s -X POST "$SUPABASE_URL/functions/v1/distance-matrix" \
-  -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $USER_JWT" -H "Content-Type: application/json" \
   -d '{"origins":[{"lat":38.7,"lng":-9.14}],"destinations":[{"lat":38.71,"lng":-9.13}],"mode":"driving"}'
 
 # Transit — ALWAYS Google, even with routing_provider=ors
 curl -s -X POST "$SUPABASE_URL/functions/v1/distance-matrix" \
-  -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $USER_JWT" -H "Content-Type: application/json" \
   -d '{"origins":[{"lat":38.7,"lng":-9.14}],"destinations":[{"lat":38.71,"lng":-9.13}],"mode":"transit"}'
 
 # Invalid input -> 400 invalid_input
 curl -s -X POST "$SUPABASE_URL/functions/v1/distance-matrix" \
-  -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $USER_JWT" -H "Content-Type: application/json" \
   -d '{"origins":[],"destinations":[{"lat":0,"lng":0}],"mode":"driving"}'
 ```
 
