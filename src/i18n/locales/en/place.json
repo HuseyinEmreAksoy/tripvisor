@@ -1,1 +1,10 @@
-{}
+{
+  "detail": {
+    "loadError": {
+      "title": "Couldn’t load place",
+      "body": "Something went wrong. Check your connection and try again.",
+      "retry": "Try again",
+      "back": "Back"
+    }
+  }
+}

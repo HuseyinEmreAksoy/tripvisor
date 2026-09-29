@@ -58,6 +58,25 @@ const tripPlaceReactionRowSchema = z.object({
 const REACTION_SELECT_FIELDS =
   'id, trip_place_id, user_id, reaction, created_at, updated_at';
 
+/**
+ * Unique, uuid-shaped temp id for an optimistic first reaction (the row type
+ * and list keys expect a uuid). `crypto.randomUUID` where available (Hermes
+ * on SDK 52+, modern browsers), else an RFC4122-v4-shaped Math.random id.
+ */
+export function optimisticReactionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through to the Math.random fallback
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 // ===========================================================================
 // Hooks: reads
 // ===========================================================================
@@ -82,9 +101,12 @@ export function useTripPlaceReaction(
   userId: Uuid | undefined,
 ) {
   return useQuery<TripPlaceReaction | null>({
-    queryKey: tripPlaceId
-      ? tripPlaceReactionsKeys.forTripPlace(tripPlaceId)
-      : ['trip-place-reactions', 'none'],
+    // User-scoped: after an account switch the previous user's cached
+    // reaction lives under a different key and can never be served.
+    queryKey:
+      tripPlaceId && userId
+        ? tripPlaceReactionsKeys.forTripPlaceUser(tripPlaceId, userId)
+        : ['trip-place-reactions', 'none'],
     enabled: Boolean(tripPlaceId && userId),
     queryFn: async () => {
       if (!tripPlaceId || !userId) return null;
@@ -174,18 +196,23 @@ export function useTripReactions(tripId: Uuid | undefined) {
  * each). The (user_id, reaction) index in the migration keeps the
  * server-side scan cheap; the client-side render is expected to bucket
  * by reaction kind and lazy-load place details.
+ *
+ * `userId` (the signed-in user, e.g. `useSession().data?.user.id`) is part of
+ * the query key so an account switch never shows the previous user's cached
+ * list. The query stays idle (data `undefined`) until it is known.
  */
-export function useAllUserReactions() {
+export function useAllUserReactions(userId: Uuid | undefined) {
   return useQuery<TripPlaceReaction[]>({
-    queryKey: tripPlaceReactionsKeys.mine(),
+    queryKey: userId
+      ? tripPlaceReactionsKeys.mineFor(userId)
+      : [...tripPlaceReactionsKeys.mine(), 'none'],
+    enabled: Boolean(userId),
     queryFn: async () => {
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userData.user) return [];
-
+      if (!userId) return [];
       const { data, error } = await supabase
         .from('trip_place_reactions')
         .select(REACTION_SELECT_FIELDS)
-        .eq('user_id', userData.user.id)
+        .eq('user_id', userId)
         .order('updated_at', { ascending: false });
       if (error) throw error;
       return (data ?? []) as TripPlaceReaction[];
@@ -256,6 +283,8 @@ export function useSetTripPlaceReaction() {
     Error,
     SetTripPlaceReactionInput,
     {
+      /** The session user the optimistic write was keyed to (absent = no write). */
+      userId?: Uuid;
       previousForPlace: TripPlaceReaction | null | undefined;
       previousForTrip: TripPlaceReaction[] | undefined;
     }
@@ -308,58 +337,50 @@ export function useSetTripPlaceReaction() {
       };
     },
     onMutate: async ({ tripPlaceId, tripId, reaction }) => {
+      // Resolve the user id from the LOCAL session (`getSession` reads
+      // storage; `getUser` is a network round-trip that would stall or fail
+      // the optimistic update offline). If we can't read it, skip the
+      // optimistic update and let mutationFn surface the auth error.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) {
+        return { previousForPlace: undefined, previousForTrip: undefined };
+      }
+      const placeKey = tripPlaceReactionsKeys.forTripPlaceUser(tripPlaceId, userId);
+
       // Cancel in-flight refetches so they don't clobber the optimistic
       // state we're about to write.
-      await qc.cancelQueries({
-        queryKey: tripPlaceReactionsKeys.forTripPlace(tripPlaceId),
-      });
+      await qc.cancelQueries({ queryKey: placeKey });
       await qc.cancelQueries({
         queryKey: tripPlaceReactionsKeys.forTrip(tripId),
       });
 
       // Snapshot for rollback.
-      const previousForPlace = qc.getQueryData<TripPlaceReaction | null>(
-        tripPlaceReactionsKeys.forTripPlace(tripPlaceId),
-      );
+      const previousForPlace = qc.getQueryData<TripPlaceReaction | null>(placeKey);
       const previousForTrip = qc.getQueryData<TripPlaceReaction[]>(
         tripPlaceReactionsKeys.forTrip(tripId),
       );
-
-      // Resolve user id without a network call — the auth state is
-      // synchronous on the client (Supabase keeps it in storage); if
-      // we can't read it, skip the optimistic update and let the
-      // mutation's mutationFn surface the auth error.
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
-      if (!userId) {
-        return { previousForPlace, previousForTrip };
-      }
 
       const nowIso = new Date().toISOString();
 
       // Optimistic update for the per-place cache.
       if (reaction === null) {
-        qc.setQueryData<TripPlaceReaction | null>(
-          tripPlaceReactionsKeys.forTripPlace(tripPlaceId),
-          null,
-        );
+        qc.setQueryData<TripPlaceReaction | null>(placeKey, null);
       } else {
         // Synthesise the predicted row. We don't know the eventual
-        // server-assigned `id` for a brand-new row; using the previous
-        // id when present and a placeholder otherwise is acceptable
-        // because the next refetch (queued by `onSuccess`) replaces it.
+        // server-assigned `id` for a brand-new row: reuse the previous id
+        // when present, else mint a unique temp uuid (a shared constant
+        // would collide for concurrent first reactions on different places
+        // in the per-trip list). The `onSuccess` refetch replaces it.
         const synthesized: TripPlaceReaction = {
-          id: previousForPlace?.id ?? '00000000-0000-0000-0000-000000000000',
+          id: previousForPlace?.id ?? optimisticReactionId(),
           trip_place_id: tripPlaceId,
           user_id: userId,
           reaction,
           created_at: previousForPlace?.created_at ?? nowIso,
           updated_at: nowIso,
         };
-        qc.setQueryData<TripPlaceReaction | null>(
-          tripPlaceReactionsKeys.forTripPlace(tripPlaceId),
-          synthesized,
-        );
+        qc.setQueryData<TripPlaceReaction | null>(placeKey, synthesized);
 
         // Optimistic update for the per-trip list cache.
         if (previousForTrip) {
@@ -391,18 +412,17 @@ export function useSetTripPlaceReaction() {
         );
       }
 
-      return { previousForPlace, previousForTrip };
+      return { userId, previousForPlace, previousForTrip };
     },
     onError: (_err, { tripPlaceId, tripId }, context) => {
       // Rollback to the snapshot. The `context` is whatever `onMutate`
       // returned; only restore caches we actually wrote.
-      if (context?.previousForPlace !== undefined) {
-        qc.setQueryData(
-          tripPlaceReactionsKeys.forTripPlace(tripPlaceId),
-          context.previousForPlace,
-        );
+      if (!context?.userId) return;
+      const placeKey = tripPlaceReactionsKeys.forTripPlaceUser(tripPlaceId, context.userId);
+      if (context.previousForPlace !== undefined) {
+        qc.setQueryData(placeKey, context.previousForPlace);
       }
-      if (context?.previousForTrip !== undefined) {
+      if (context.previousForTrip !== undefined) {
         qc.setQueryData(
           tripPlaceReactionsKeys.forTrip(tripId),
           context.previousForTrip,

@@ -97,7 +97,7 @@ function RootHead() {
       <meta property="og:image" content={`${SITE_ORIGIN}/og-image.jpg`} />
       <meta property="og:image:width" content="1200" />
       <meta property="og:image:height" content="630" />
-      <meta property="og:image:alt" content="Sunset over a cobbled Mediterranean village street above the sea" />
+      <meta property="og:image:alt" content="Illustrated travel map with a dotted route along a Mediterranean coast, holiday photos, coffee and a compass" />
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={SITE_TITLE} />
       <meta name="twitter:description" content={SITE_DESCRIPTION} />

@@ -5,7 +5,7 @@
  * `../supabase` is a recording PostgREST-chain fake (`from()` logs builder
  * ops; each resolves to `mockResultFor(table)`, which may be a deferred
  * promise so the optimistic state can be observed mid-flight) plus
- * `auth.getUser`.
+ * `auth.getUser` (mutationFn) / `auth.getSession` (onMutate, local only).
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -18,6 +18,8 @@ type UserResult = { data: { user: { id: string } | null }; error: unknown };
 const mockCalls: Array<{ table: string; ops: Array<[string, unknown[]]> }> = [];
 const mockResultFor = jest.fn<(table: string) => MockResult | Promise<MockResult>>();
 const mockGetUser = jest.fn<() => Promise<UserResult>>();
+type SessionResult = { data: { session: { user: { id: string } } | null }; error: unknown };
+const mockGetSession = jest.fn<() => Promise<SessionResult>>();
 
 jest.mock('../supabase', () => ({
   supabase: {
@@ -36,7 +38,7 @@ jest.mock('../supabase', () => ({
         Promise.resolve(result).then(resolve, reject);
       return chain;
     },
-    auth: { getUser: () => mockGetUser() },
+    auth: { getUser: () => mockGetUser(), getSession: () => mockGetSession() },
   },
 }));
 
@@ -109,6 +111,8 @@ beforeEach(() => {
   mockResultFor.mockReset();
   mockGetUser.mockReset();
   mockGetUser.mockResolvedValue({ data: { user: { id: ME } }, error: null });
+  mockGetSession.mockReset();
+  mockGetSession.mockResolvedValue({ data: { session: { user: { id: ME } } }, error: null });
 });
 afterEach(() => {
   clients.splice(0).forEach((c) => c.clear());
@@ -151,6 +155,27 @@ describe('useTripPlaceReaction', () => {
     const failed = renderHook(() => useTripPlaceReaction(PLACE, ME), { wrapper: b.wrapper });
     await waitFor(() => expect(failed.result.current.isError).toBe(true));
     expect(failed.result.current.error).toBe(err);
+  });
+
+  it('keys the cache by user so an account switch never serves another user’s reaction', async () => {
+    mockResultFor.mockReturnValueOnce({ data: reaction(), error: null });
+    const { client, wrapper } = setup();
+    const first = renderHook(() => useTripPlaceReaction(PLACE, ME), { wrapper });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(tripPlaceReactionsKeys.forTripPlaceUser(PLACE, ME))).toEqual(reaction());
+
+    // Same device, same QueryClient, a different signed-in user.
+    const gate = deferred<MockResult>();
+    mockResultFor.mockReturnValueOnce(gate.promise);
+    const second = renderHook(() => useTripPlaceReaction(PLACE, FRIEND), { wrapper });
+    await act(async () => {});
+    expect(second.result.current.data).toBeUndefined();
+    await run(async () => {
+      gate.resolve({ data: null, error: null });
+    });
+    await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
+    expect(second.result.current.data).toBeNull();
+    expect(mockCalls[1]!.ops).toContainEqual(['eq', ['user_id', FRIEND]]);
   });
 
   it('stays idle until the user id is known', async () => {
@@ -201,7 +226,7 @@ describe('useAllUserReactions', () => {
   it('reads the signed-in user’s reactions, most recently updated first', async () => {
     mockResultFor.mockReturnValue({ data: [reaction()], error: null });
     const { wrapper } = setup();
-    const { result } = renderHook(() => useAllUserReactions(), { wrapper });
+    const { result } = renderHook(() => useAllUserReactions(ME), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.data).toEqual([reaction()]);
@@ -211,18 +236,32 @@ describe('useAllUserReactions', () => {
     ]);
   });
 
-  it('returns [] without querying when signed out', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+  it('stays idle without querying when signed out', async () => {
     const { wrapper } = setup();
-    const { result } = renderHook(() => useAllUserReactions(), { wrapper });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual([]);
+    const { result } = renderHook(() => useAllUserReactions(undefined), { wrapper });
+    await act(async () => {});
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(result.current.data).toBeUndefined();
     expect(mockCalls).toHaveLength(0);
+  });
+
+  it('keys the list by user so an account switch refetches instead of reusing the cache', async () => {
+    mockResultFor.mockReturnValue({ data: [reaction()], error: null });
+    const { client, wrapper } = setup();
+    const mine = renderHook(() => useAllUserReactions(ME), { wrapper });
+    await waitFor(() => expect(mine.result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(tripPlaceReactionsKeys.mineFor(ME))).toEqual([reaction()]);
+
+    mockResultFor.mockReturnValue({ data: [], error: null });
+    const theirs = renderHook(() => useAllUserReactions(FRIEND), { wrapper });
+    await waitFor(() => expect(theirs.result.current.isSuccess).toBe(true));
+    expect(theirs.result.current.data).toEqual([]);
+    expect(mockCalls[1]!.ops).toContainEqual(['eq', ['user_id', FRIEND]]);
   });
 });
 
 describe('useSetTripPlaceReaction', () => {
-  const placeKey = tripPlaceReactionsKeys.forTripPlace(PLACE);
+  const placeKey = tripPlaceReactionsKeys.forTripPlaceUser(PLACE, ME);
   const tripKey = tripPlaceReactionsKeys.forTrip(TRIP);
 
   it('upserts on (trip_place_id, user_id) and predicts the new state in both caches', async () => {
@@ -263,7 +302,11 @@ describe('useSetTripPlaceReaction', () => {
     });
     expect(out).toEqual({ kind: 'upserted', row: saved });
     expect(invalidatedKeys()).toEqual(
-      expect.arrayContaining([placeKey, tripKey, tripPlaceReactionsKeys.mine()]),
+      expect.arrayContaining([
+        tripPlaceReactionsKeys.forTripPlace(PLACE),
+        tripKey,
+        tripPlaceReactionsKeys.mine(),
+      ]),
     );
   });
 
@@ -281,8 +324,9 @@ describe('useSetTripPlaceReaction', () => {
     });
     const trip = client.getQueryData<TripPlaceReaction[]>(tripKey)!;
     expect(trip).toHaveLength(1);
+    expect(trip[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(trip[0]!.id).not.toBe('00000000-0000-0000-0000-000000000000');
     expect(trip[0]).toMatchObject({
-      id: '00000000-0000-0000-0000-000000000000',
       trip_place_id: PLACE,
       user_id: ME,
       reaction: 'disliked',
@@ -291,6 +335,47 @@ describe('useSetTripPlaceReaction', () => {
       gate.resolve({ data: reaction({ reaction: 'disliked' }), error: null });
       return pending;
     });
+  });
+
+  it('mints distinct temp ids for concurrent first reactions', async () => {
+    const gate = deferred<MockResult>();
+    mockResultFor.mockReturnValue(gate.promise);
+    const { client, wrapper } = setup();
+    client.setQueryData(tripKey, []);
+    const a = renderHook(() => useSetTripPlaceReaction(), { wrapper });
+    const b = renderHook(() => useSetTripPlaceReaction(), { wrapper });
+
+    let pa!: Promise<unknown>;
+    let pb!: Promise<unknown>;
+    await act(async () => {
+      pa = a.result.current.mutateAsync({ tripPlaceId: PLACE, tripId: TRIP, reaction: 'liked' });
+      pb = b.result.current.mutateAsync({ tripPlaceId: OTHER_PLACE, tripId: TRIP, reaction: 'liked' });
+      await flush();
+    });
+    const ids = client.getQueryData<TripPlaceReaction[]>(tripKey)!.map((r) => r.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    await run(async () => {
+      gate.resolve({ data: reaction(), error: null });
+      await Promise.all([pa, pb]);
+    });
+  });
+
+  it('writes the optimistic state from the local session without waiting on getUser', async () => {
+    // getUser (network) hangs, e.g. offline. The optimistic write must not.
+    mockGetUser.mockReturnValue(new Promise<UserResult>(() => undefined));
+    const { client, wrapper } = setup();
+    client.setQueryData(placeKey, null);
+    const { result } = renderHook(() => useSetTripPlaceReaction(), { wrapper });
+    await act(async () => {
+      void result.current
+        .mutateAsync({ tripPlaceId: PLACE, tripId: TRIP, reaction: 'liked' })
+        .catch(() => undefined);
+      await flush();
+    });
+    expect(mockGetSession).toHaveBeenCalled();
+    expect(client.getQueryData<TripPlaceReaction>(placeKey)).toMatchObject({ reaction: 'liked', user_id: ME });
+    expect(mockCalls).toHaveLength(0);
   });
 
   it('clears with a scoped DELETE and drops my row from both caches', async () => {
@@ -340,6 +425,7 @@ describe('useSetTripPlaceReaction', () => {
 
   it('throws not_authenticated and leaves caches untouched when signed out', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     const { client, wrapper } = setup();
     client.setQueryData(placeKey, reaction());
     const { result } = renderHook(() => useSetTripPlaceReaction(), { wrapper });

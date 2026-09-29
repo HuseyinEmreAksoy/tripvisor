@@ -134,5 +134,8 @@
     "languageSynced": "Dil seçimin hesabına da kaydedilir, böylece yeni bir telefon da bu dilde açılır.",
     "saveError": "Tercihlerin kaydedilemedi. Bağlantını kontrol edip tekrar dene.",
     "loading": "Tercihlerin yükleniyor"
+  },
+  "offlineState": {
+    "title": "Çevrimdışısın"
   }
 }

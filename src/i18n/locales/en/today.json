@@ -32,5 +32,19 @@
     "skipped": "Skipped",
     "until": "until {{time}}",
     "untilNext": "until {{time}} · next"
+  },
+  "empty": {
+    "noTripToday": {
+      "title": "No trip today",
+      "body": "None of your trips are dated today or later. Plan the next one?"
+    },
+    "planWithAI": "Plan with AI",
+    "loadError": {
+      "title": "Couldn’t load your trips",
+      "body": "Something went wrong. Check your connection and try again.",
+      "offlineTitle": "You’re offline",
+      "offlineBody": "Reconnect to see today’s plan.",
+      "retry": "Retry"
+    }
   }
 }

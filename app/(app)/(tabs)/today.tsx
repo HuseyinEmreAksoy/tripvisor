@@ -27,7 +27,7 @@ import {
   TAB_SCREEN_EDGES,
   themedRefresh,
 } from '@/components';
-import { noTrips } from '@/components/emptyStates';
+import { noTrips, offlineArt, todayArt } from '@/components/emptyStates';
 import { LiveTripView } from '@/components/today/LiveTripView';
 import { TripSwitcher } from '@/components/today/TripSwitcher';
 import { UpcomingTripCard } from '@/components/today/UpcomingTripCard';
@@ -36,6 +36,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { activeTripsOn, dayIndexFor, nextUpcomingTrip } from '@/lib/tripToday';
 import { MemoryQuickActions } from '@/components/memories/MemoryQuickActions';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 
 function todayLabel(now: Date): string {
   try {
@@ -47,6 +48,7 @@ function todayLabel(now: Date): string {
 
 export default function TodayScreen() {
   const t = useTheme();
+  const { t: tx } = useT('today');
   const router = useRouter();
   const queryClient = useQueryClient();
   const isDesktop = useBreakpoint() === 'desktop';
@@ -85,9 +87,10 @@ export default function TodayScreen() {
   } else if (error && !trips) {
     body = (
       <EmptyState
-        title="Couldn't load your trips"
-        body={error.message}
-        ctaLabel="Retry"
+        illustration={offlineArt}
+        title={tx(online ? 'empty.loadError.title' : 'empty.loadError.offlineTitle')}
+        body={tx(online ? 'empty.loadError.body' : 'empty.loadError.offlineBody')}
+        ctaLabel={tx('empty.loadError.retry')}
         onPress={() => void refetch()}
       />
     );
@@ -107,14 +110,15 @@ export default function TodayScreen() {
   } else if ((trips ?? []).length > 0) {
     body = (
       <EmptyState
-        title="No trip today"
-        body="None of your trips are dated today or later. Plan the next one?"
-        ctaLabel="Plan with AI"
+        illustration={todayArt}
+        title={tx('empty.noTripToday.title')}
+        body={tx('empty.noTripToday.body')}
+        ctaLabel={tx('empty.planWithAI')}
         onPress={() => router.push('/trip/plan')}
       />
     );
   } else {
-    body = <EmptyState {...noTrips} ctaLabel="Plan with AI" onPress={() => router.push('/trip/plan')} />;
+    body = <EmptyState {...noTrips} ctaLabel={tx('empty.planWithAI')} onPress={() => router.push('/trip/plan')} />;
   }
 
   return (

@@ -17,6 +17,8 @@ type UserResult = { data: { user: { id: string } | null }; error: unknown };
 const mockCalls: Array<{ table: string; ops: Array<[string, unknown[]]> }> = [];
 const mockResultFor = jest.fn<(table: string) => MockResult | Promise<MockResult>>();
 const mockGetUser = jest.fn<() => Promise<UserResult>>();
+type SessionResult = { data: { session: { user: { id: string } } | null }; error: unknown };
+const mockGetSession = jest.fn<() => Promise<SessionResult>>();
 
 jest.mock('../supabase', () => ({
   supabase: {
@@ -35,7 +37,7 @@ jest.mock('../supabase', () => ({
         Promise.resolve(result).then(resolve, reject);
       return chain;
     },
-    auth: { getUser: () => mockGetUser() },
+    auth: { getUser: () => mockGetUser(), getSession: () => mockGetSession() },
   },
 }));
 
@@ -114,6 +116,8 @@ beforeEach(() => {
   mockResultFor.mockReset();
   mockGetUser.mockReset();
   mockGetUser.mockResolvedValue({ data: { user: { id: ME } }, error: null });
+  mockGetSession.mockReset();
+  mockGetSession.mockResolvedValue({ data: { session: { user: { id: ME } } }, error: null });
 });
 afterEach(() => {
   clients.splice(0).forEach((c) => c.clear());
@@ -237,16 +241,40 @@ describe('useCreateTripPlaceComment', () => {
   it.each([
     ['an empty body', '', 'Comment cannot be empty'],
     ['an over-long body', 'x'.repeat(2001), 'Comment is too long'],
-  ])('rejects %s before any network call and restores caches', async (_label, body, message) => {
+  ])('rejects %s before any network call and never flashes an optimistic row', async (_label, body, message) => {
     const { client, wrapper } = setup();
     const before = [comment()];
     client.setQueryData(placeKey, before);
+    client.setQueryData(tripKey, before);
+    const setData = jest.spyOn(client, 'setQueryData');
     const { result } = renderHook(() => useCreateTripPlaceComment(), { wrapper });
     await expect(
       run(() => result.current.mutateAsync({ tripId: TRIP, tripPlaceId: PLACE, body })),
     ).rejects.toThrow(message);
     expect(mockCalls).toHaveLength(0);
+    // Validation runs before the optimistic insert: no cache write at all.
+    expect(setData).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
     expect(client.getQueryData(placeKey)).toEqual(before);
+    expect(client.getQueryData(tripKey)).toEqual(before);
+  });
+
+  it('appends the optimistic row from the local session without waiting on getUser', async () => {
+    // getUser (network) hangs, e.g. offline. The optimistic append must not.
+    mockGetUser.mockReturnValue(new Promise<UserResult>(() => undefined));
+    const { client, wrapper } = setup();
+    client.setQueryData(placeKey, []);
+    const { result } = renderHook(() => useCreateTripPlaceComment(), { wrapper });
+    await act(async () => {
+      void result.current
+        .mutateAsync({ tripId: TRIP, tripPlaceId: PLACE, body: 'Offline note' })
+        .catch(() => undefined);
+      await flush();
+    });
+    expect(mockGetSession).toHaveBeenCalled();
+    const list = client.getQueryData<TripPlaceComment[]>(placeKey)!;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ author_id: ME, body: 'Offline note' });
   });
 
   it('rolls both caches back on an insert error', async () => {
@@ -268,6 +296,7 @@ describe('useCreateTripPlaceComment', () => {
 
   it('throws not_authenticated when signed out, without writing optimistic rows', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     const { client, wrapper } = setup();
     client.setQueryData(placeKey, []);
     const { result } = renderHook(() => useCreateTripPlaceComment(), { wrapper });

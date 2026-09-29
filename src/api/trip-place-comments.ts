@@ -240,7 +240,12 @@ export function useCreateTripPlaceComment() {
       // catching a drifted shape at the write site is cheap and immediate.
       return tripPlaceCommentRowSchema.parse(data) as TripPlaceComment;
     },
-    onMutate: async ({ tripId, tripPlaceId, body }) => {
+    onMutate: async (input) => {
+      // Validate BEFORE any optimistic write: a throw here fails the
+      // mutation (onError runs with no context, mutationFn never runs), so
+      // an empty / over-long comment never flashes into the thread.
+      const { tripId, tripPlaceId, body } = createTripPlaceCommentSchema.parse(input);
+
       // Cancel in-flight refetches so they don't clobber the optimistic
       // append we're about to write.
       await qc.cancelQueries({
@@ -257,11 +262,12 @@ export function useCreateTripPlaceComment() {
         tripPlaceCommentsKeys.forTrip(tripId),
       );
 
-      // Resolve the author id for the synthesized row; on the client this
-      // reads session storage, not the network. If unavailable, skip the
-      // optimistic append and let mutationFn surface the auth error.
-      const { data: userData } = await supabase.auth.getUser();
-      const authorId = userData?.user?.id;
+      // Resolve the author id for the synthesized row from the LOCAL session
+      // (`getSession` reads storage; `getUser` would hit the network and
+      // stall / fail the optimistic append offline). If unavailable, skip
+      // the optimistic append and let mutationFn surface the auth error.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authorId = sessionData?.session?.user?.id;
       if (!authorId) {
         return { previousForPlace, previousForTrip };
       }

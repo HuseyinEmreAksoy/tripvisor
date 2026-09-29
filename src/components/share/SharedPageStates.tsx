@@ -14,7 +14,7 @@ import { Screen } from '../Screen';
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 
 const COLUMN_MAX_WIDTH = 720;
-const LINK_GONE_ART = require('../../../assets/images/empty-search.png');
+const LINK_GONE_ART = require('../../../assets/images/not-found.png');
 const BUSY_ART = require('../../../assets/images/empty-trips.png');
 
 export function SharedTripSkeleton() {
@@ -77,7 +77,13 @@ export function SharedTripStatus({
     );
   } else {
     content = (
-      <EmptyState title={tx('page.errorTitle')} body={tx('page.errorBody')} ctaLabel={tx('page.retry')} onPress={onRetry} />
+      <EmptyState
+        title={tx('page.errorTitle')}
+        body={tx('page.errorBody')}
+        illustration={LINK_GONE_ART}
+        ctaLabel={tx('page.retry')}
+        onPress={onRetry}
+      />
     );
   }
   return (

@@ -14,7 +14,17 @@ import { render, fireEvent } from '@testing-library/react-native';
 import { Text } from 'react-native';
 import { EmptyState } from '../EmptyState';
 import { ThemeProvider } from '@/theme';
-import { noTrips, noPlaces, noSearchResults, searchPrompt } from '../emptyStates';
+import {
+  archiveArt,
+  noPlaces,
+  noSearchResults,
+  noTrips,
+  notFoundArt,
+  offlineArt,
+  peopleArt,
+  searchPrompt,
+  todayArt,
+} from '../emptyStates';
 
 function wrap(node: React.ReactElement) {
   return render(<ThemeProvider>{node}</ThemeProvider>);
@@ -153,5 +163,19 @@ describe('emptyStates variants', () => {
   it('searchPrompt shows correct title', () => {
     const { getByText } = wrap(<EmptyState {...searchPrompt} />);
     expect(getByText('Search for a place')).toBeTruthy();
+  });
+});
+
+describe('illustration presets', () => {
+  it.each([
+    ['archiveArt', archiveArt],
+    ['notFoundArt', notFoundArt],
+    ['peopleArt', peopleArt],
+    ['todayArt', todayArt],
+    ['offlineArt', offlineArt],
+  ])('%s resolves and renders as an EmptyState illustration', (_name, art) => {
+    expect(art).toBeTruthy();
+    const { getByText } = wrap(<EmptyState illustration={art} title="Art title" />);
+    expect(getByText('Art title')).toBeTruthy();
   });
 });

@@ -57,6 +57,7 @@ import { useAdoptPendingInterests } from './useAdoptPendingInterests';
 export const INTEREST_DEBOUNCE_MS = 600;
 const DESKTOP_LIST_WIDTH = 480;
 const emptyArt = require('../../../assets/images/empty-discover.png');
+const offlineArt = require('../../../assets/images/offline.png');
 
 export interface DiscoverScreenProps {
   tripId: string;
@@ -167,7 +168,6 @@ export function DiscoverScreen({ tripId, dayParam }: DiscoverScreenProps) {
           message={tx(location.status === 'denied' ? 'center.denied' : 'center.unavailable')}
         />
       ) : null}
-      {!online && !query.data ? <DiscoverBanner tone="warning" message={tx('error.offline')} /> : null}
       {dKey ? <DiscoverBanner tone="info" message={tx(dKey)} /> : null}
       {query.error && online ? (
         <DiscoverBanner
@@ -194,7 +194,7 @@ export function DiscoverScreen({ tripId, dayParam }: DiscoverScreenProps) {
       />
     );
   } else if (!online && !query.data) {
-    results = null;
+    results = <EmptyState illustration={offlineArt} title={tx('offlineState.title')} body={tx('error.offline')} />;
   } else if (searching && !query.data) {
     results = <DiscoverSkeleton />;
   } else if (query.data && items.length === 0) {

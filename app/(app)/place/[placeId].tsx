@@ -14,6 +14,8 @@ import {
   themedRefresh,
 } from '@/components';
 import { ReactionChip } from '@/components/ReactionChip';
+import { EmptyState } from '@/components/EmptyState';
+import { notFoundArt } from '@/components/emptyStates';
 import { usePlaceDetails } from '@/api';
 import { usePlacePhotoUrl } from '@/api/place-photos';
 import { useSafeBack } from '@/hooks/useSafeBack';
@@ -84,6 +86,7 @@ export default function PlaceDetailsScreen() {
   const hasTripContext = Boolean(tripPlaceId && tripId);
   // M5 Y3.1: the user's own rating & review (any trip member may write one).
   const { t: tx } = useT('memories');
+  const { t: txPlace } = useT('place');
   const { role: tripRole, isLoading: roleLoading } = useTripRole(hasTripContext ? tripId : undefined);
 
   if (isLoading) {
@@ -102,15 +105,21 @@ export default function PlaceDetailsScreen() {
       <Screen padded={false}>
         <View style={column}>
           <BackButton onPress={goBack} />
-          <Heading level={2}>Couldn't load place</Heading>
-          <Text
-            style={[t.typography.body, { color: t.colors.textMuted }]}
-            accessibilityLiveRegion="polite"
-          >
-            {(error as Error | null)?.message ?? 'Unknown error'}
-          </Text>
-          <Button label="Try again" onPress={() => void refetch()} loading={isRefetching} />
-          <Button variant="secondary" label="Back" onPress={goBack} />
+          <EmptyState
+            illustration={notFoundArt}
+            title={txPlace('detail.loadError.title')}
+            body={txPlace('detail.loadError.body')}
+            action={
+              <View style={{ gap: t.spacing.sm, alignSelf: 'stretch' }}>
+                <Button
+                  label={txPlace('detail.loadError.retry')}
+                  onPress={() => void refetch()}
+                  loading={isRefetching}
+                />
+                <Button variant="secondary" label={txPlace('detail.loadError.back')} onPress={goBack} />
+              </View>
+            }
+          />
         </View>
       </Screen>
     );

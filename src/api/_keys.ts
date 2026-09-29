@@ -106,11 +106,21 @@ export const tripAccommodationsKeys = {
 // the current user has placed across every trip.
 export const tripPlaceReactionsKeys = {
   all: ['trip-place-reactions'] as const,
+  /** Prefix for every user's cached reaction on one place (invalidation). */
   forTripPlace: (tripPlaceId: Uuid) =>
     [...tripPlaceReactionsKeys.all, 'for-trip-place', tripPlaceId] as const,
+  /**
+   * One user's reaction on one place. User-scoped so an account switch on
+   * the same device never serves the previous user's cached reaction.
+   */
+  forTripPlaceUser: (tripPlaceId: Uuid, userId: Uuid) =>
+    [...tripPlaceReactionsKeys.forTripPlace(tripPlaceId), userId] as const,
   forTrip: (tripId: Uuid) =>
     [...tripPlaceReactionsKeys.all, 'for-trip', tripId] as const,
+  /** Prefix for every user's cross-trip reaction list (invalidation). */
   mine: () => [...tripPlaceReactionsKeys.all, 'mine'] as const,
+  /** The given user's cross-trip reaction list (user-scoped, see above). */
+  mineFor: (userId: Uuid) => [...tripPlaceReactionsKeys.mine(), userId] as const,
 };
 
 // ---------------------------------------------------------------------------

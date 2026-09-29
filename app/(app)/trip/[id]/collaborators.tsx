@@ -21,6 +21,8 @@ import { useSafeBack } from '@/hooks/useSafeBack';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
+import { notFoundArt, peopleArt } from '@/components/emptyStates';
+import { useT } from '@/i18n';
 import { Icon } from '@/components/Icon';
 import { Screen } from '@/components/Screen';
 import { CollaboratorRow } from '@/components/collaborators/CollaboratorRow';
@@ -63,6 +65,7 @@ export default function CollaboratorsScreen() {
   const tripId = id ?? '';
   const goBack = useSafeBack(`/trip/${tripId}`);
   const t = useTheme();
+  const { t: tx } = useT('collab');
   const isDesktop = useBreakpoint() === 'desktop';
 
   const { data: session } = useSession();
@@ -88,7 +91,11 @@ export default function CollaboratorsScreen() {
     return (
       <Screen>
         <BackButton onPress={goBack} label="Trip" />
-        <EmptyState title="Trip not found" body="It may have been deleted, or you no longer have access." />
+        <EmptyState
+          illustration={notFoundArt}
+          title={tx('screen.notFound.title')}
+          body={tx('screen.notFound.body')}
+        />
       </Screen>
     );
   }
@@ -205,9 +212,10 @@ export default function CollaboratorsScreen() {
 
         {isOwner && nobodyYet && !collabError ? (
           <EmptyState
-            title="Plan it together"
-            body="Invite a travel buddy by email — or send the invite link over any messenger."
-            ctaLabel="Invite someone"
+            illustration={peopleArt}
+            title={tx('screen.empty.title')}
+            body={tx('screen.empty.body')}
+            ctaLabel={tx('screen.empty.cta')}
             onPress={() => setInviteSheetOpen(true)}
           />
         ) : null}

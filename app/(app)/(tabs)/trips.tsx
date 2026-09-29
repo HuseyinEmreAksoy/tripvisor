@@ -68,9 +68,10 @@ import {
   TAB_SCREEN_EDGES,
   themedRefresh,
 } from '@/components';
-import { noTrips } from '@/components/emptyStates';
+import { archiveArt, noTrips, offlineArt } from '@/components/emptyStates';
 import { TripCard } from '@/components/TripCard';
 import {
+  useIsOnline,
   useTrips,
   useArchiveTrip,
   useUnarchiveTrip,
@@ -126,6 +127,7 @@ const DESKTOP_MAX_WIDTH = 1200;
 export default function TripsList() {
   const t = useTheme();
   const { t: tx } = useT('trip');
+  const online = useIsOnline();
   const router = useRouter();
   const bp = useBreakpoint();
   const { width: windowWidth } = useWindowDimensions();
@@ -575,7 +577,11 @@ export default function TripsList() {
         action={sampleTripAction}
       />
     ) : (
-      <EmptyState title="No archived trips" body="Archived trips will appear here." />
+      <EmptyState
+        illustration={archiveArt}
+        title={tx('list.archivedEmpty.title')}
+        body={tx('list.archivedEmpty.body')}
+      />
     );
 
   // Scrollable wrapper for every non-list state so tall empty states (CTA +
@@ -602,9 +608,10 @@ export default function TripsList() {
       <ScrollView contentContainerStyle={scrollContainerStyle} refreshControl={refreshControl}>
         {hero}
         <EmptyState
-          title="Couldn't load trips"
-          description={(error as Error).message}
-          action={<Button label="Retry" fullWidth={false} onPress={() => refetch()} />}
+          illustration={offlineArt}
+          title={tx(online ? 'list.loadError.title' : 'list.loadError.offlineTitle')}
+          body={tx(online ? 'list.loadError.body' : 'list.loadError.offlineBody')}
+          action={<Button label={tx('list.loadError.retry')} fullWidth={false} onPress={() => refetch()} />}
         />
       </ScrollView>
     );

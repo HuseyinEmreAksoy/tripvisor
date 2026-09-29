@@ -10,5 +10,16 @@
       "notOwner": "Kişileri yalnızca gezinin sahibi davet edebilir.",
       "generic": "Davet gönderilemedi. Lütfen tekrar dene."
     }
+  },
+  "screen": {
+    "notFound": {
+      "title": "Gezi bulunamadı",
+      "body": "Silinmiş olabilir ya da artık erişimin yok."
+    },
+    "empty": {
+      "title": "Birlikte planlayın",
+      "body": "Yol arkadaşını e-postayla davet et ya da davet bağlantısını istediğin mesajlaşma uygulamasından gönder.",
+      "cta": "Birini davet et"
+    }
   }
 }

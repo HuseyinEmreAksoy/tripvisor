@@ -74,7 +74,8 @@
     "notFound": "Trip not found",
     "duplicateError": "Couldn’t duplicate this trip. Check your connection and try again.",
     "shareTitle": "Share this trip",
-    "close": "Close"
+    "close": "Close",
+    "notFoundBody": "It may have been deleted, or you no longer have access."
   },
   "tabs": {
     "plan": "Plan",
@@ -176,6 +177,17 @@
       "archive": "Couldn't archive this trip. Check your connection and try again.",
       "unarchive": "Couldn't restore this trip. Check your connection and try again.",
       "duplicate": "Couldn't duplicate this trip. Check your connection and try again."
+    },
+    "archivedEmpty": {
+      "title": "No archived trips",
+      "body": "Archived trips will appear here."
+    },
+    "loadError": {
+      "title": "Couldn’t load trips",
+      "body": "Something went wrong. Check your connection and try again.",
+      "offlineTitle": "You’re offline",
+      "offlineBody": "Reconnect to load your trips.",
+      "retry": "Retry"
     }
   },
   "settingsSheet": {

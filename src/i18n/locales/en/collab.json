@@ -10,5 +10,16 @@
       "notOwner": "Only the trip owner can invite people.",
       "generic": "Couldn’t send the invite. Please try again."
     }
+  },
+  "screen": {
+    "notFound": {
+      "title": "Trip not found",
+      "body": "It may have been deleted, or you no longer have access."
+    },
+    "empty": {
+      "title": "Plan it together",
+      "body": "Invite a travel buddy by email — or send the invite link over any messenger.",
+      "cta": "Invite someone"
+    }
   }
 }

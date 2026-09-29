@@ -38,3 +38,13 @@ export const searchPrompt: Pick<EmptyStateProps, 'title' | 'body' | 'illustratio
   body: 'Type a name, address, or landmark.',
   illustration: require('../../assets/images/empty-search.png'),
 };
+
+/**
+ * Illustration-only presets (M5 art pass). Copy stays at the call site so it
+ * can go through `tx()`; spread or pass `illustration={…}` onto <EmptyState>.
+ */
+export const archiveArt = require('../../assets/images/empty-archive.png');
+export const notFoundArt = require('../../assets/images/not-found.png');
+export const peopleArt = require('../../assets/images/empty-people.png');
+export const todayArt = require('../../assets/images/empty-today.png');
+export const offlineArt = require('../../assets/images/offline.png');

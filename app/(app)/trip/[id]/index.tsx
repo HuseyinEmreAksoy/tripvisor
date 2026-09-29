@@ -37,6 +37,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeBack } from '@/hooks/useSafeBack';
 import { BottomSheet, Button, Heading, Screen, TabBar } from '@/components';
 import { ShareLinkCard } from '@/components/ShareLinkCard';
+import { EmptyState } from '@/components/EmptyState';
+import { notFoundArt } from '@/components/emptyStates';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { haptics } from '@/lib/haptics';
@@ -231,17 +233,17 @@ export default function TripDetail() {
   if (error) {
     return (
       <Screen>
-        <Heading level={2}>{tx('detail.loadError')}</Heading>
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[t.typography.body, { color: t.colors.textMuted, marginBottom: t.spacing.md }]}
-        >
-          {tx('detail.loadErrorBody')}
-        </Text>
-        <View style={{ gap: t.spacing.sm }}>
-          <Button label={tx('detail.retry')} onPress={() => refetch()} accessibilityLabel={tx('detail.retryA11y')} />
-          <Button variant="secondary" label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />
-        </View>
+        <EmptyState
+          illustration={notFoundArt}
+          title={tx('detail.loadError')}
+          body={tx('detail.loadErrorBody')}
+          action={
+            <View style={{ gap: t.spacing.sm, alignSelf: 'stretch' }}>
+              <Button label={tx('detail.retry')} onPress={() => refetch()} accessibilityLabel={tx('detail.retryA11y')} />
+              <Button variant="secondary" label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />
+            </View>
+          }
+        />
       </Screen>
     );
   }
@@ -249,8 +251,12 @@ export default function TripDetail() {
   if (!trip) {
     return (
       <Screen>
-        <Heading level={2}>{tx('detail.notFound')}</Heading>
-        <Button label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />
+        <EmptyState
+          illustration={notFoundArt}
+          title={tx('detail.notFound')}
+          body={tx('detail.notFoundBody')}
+          action={<Button label={tx('detail.backToTrips')} onPress={() => router.replace('/trips')} />}
+        />
       </Screen>
     );
   }

@@ -32,5 +32,19 @@
     "skipped": "Atlandı",
     "until": "{{time}} saatine kadar",
     "untilNext": "{{time}} saatine kadar · sıradaki"
+  },
+  "empty": {
+    "noTripToday": {
+      "title": "Bugün gezi yok",
+      "body": "Bugüne ya da sonrasına tarihli bir gezin yok. Sıradakini planlayalım mı?"
+    },
+    "planWithAI": "Yapay zekâyla planla",
+    "loadError": {
+      "title": "Gezilerin yüklenemedi",
+      "body": "Bir şeyler ters gitti. Bağlantını kontrol edip tekrar dene.",
+      "offlineTitle": "Çevrimdışısın",
+      "offlineBody": "Bugünün planını görmek için internete yeniden bağlan.",
+      "retry": "Tekrar dene"
+    }
   }
 }

@@ -134,5 +134,8 @@
     "languageSynced": "Your language is saved to your account too, so a new phone opens in it.",
     "saveError": "Couldn't save your preferences. Check your connection and try again.",
     "loading": "Loading your preferences"
+  },
+  "offlineState": {
+    "title": "You’re offline"
   }
 }

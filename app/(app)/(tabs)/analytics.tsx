@@ -63,6 +63,7 @@ import { useMoneySummaries } from '@/api/expense-fx';
 import { buildSpendingGroups, spendingOverTime } from '@/components/analytics/spending';
 import { formatMoney, useT } from '@/i18n';
 import { useTrips } from '@/api';
+import { useSession } from '@/api/auth';
 import { tripPlacesKeys } from '@/api/_keys';
 import { supabase } from '@/api/supabase';
 import { useTheme } from '@/theme';
@@ -83,7 +84,8 @@ export default function AnalyticsScreen() {
   // ── Server state ─────────────────────────────────────────────────────────
   const tripsQuery = useTrips({ archived: false });
   const expensesQuery = useAllUserExpenses();
-  const reactionsQuery = useAllUserReactions();
+  const { data: session } = useSession();
+  const reactionsQuery = useAllUserReactions(session?.user.id);
   const { data: allTrips = [], isLoading: tripsLoading } = tripsQuery;
   const { data: allExpenses = [], isLoading: expensesLoading } = expensesQuery;
   const { data: allReactions = [], isLoading: reactionsLoading } = reactionsQuery;

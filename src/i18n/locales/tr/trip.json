@@ -74,7 +74,8 @@
     "notFound": "Gezi bulunamadı",
     "duplicateError": "Bu gezi kopyalanamadı. Bağlantını kontrol edip tekrar dene.",
     "shareTitle": "Bu geziyi paylaş",
-    "close": "Kapat"
+    "close": "Kapat",
+    "notFoundBody": "Silinmiş olabilir ya da artık erişimin yok."
   },
   "tabs": {
     "plan": "Plan",
@@ -176,6 +177,17 @@
       "archive": "Gezi arşivlenemedi. Bağlantını kontrol edip tekrar dene.",
       "unarchive": "Gezi arşivden çıkarılamadı. Bağlantını kontrol edip tekrar dene.",
       "duplicate": "Gezinin kopyası oluşturulamadı. Bağlantını kontrol edip tekrar dene."
+    },
+    "archivedEmpty": {
+      "title": "Arşivde gezi yok",
+      "body": "Arşivlediğin geziler burada görünür."
+    },
+    "loadError": {
+      "title": "Geziler yüklenemedi",
+      "body": "Bir şeyler ters gitti. Bağlantını kontrol edip tekrar dene.",
+      "offlineTitle": "Çevrimdışısın",
+      "offlineBody": "Gezilerini görmek için internete yeniden bağlan.",
+      "retry": "Tekrar dene"
     }
   },
   "settingsSheet": {

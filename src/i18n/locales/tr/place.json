@@ -1,1 +1,10 @@
-{}
+{
+  "detail": {
+    "loadError": {
+      "title": "Yer yüklenemedi",
+      "body": "Bir şeyler ters gitti. Bağlantını kontrol edip tekrar dene.",
+      "retry": "Tekrar dene",
+      "back": "Geri"
+    }
+  }
+}
