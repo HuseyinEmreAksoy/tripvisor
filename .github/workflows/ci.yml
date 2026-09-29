@@ -33,7 +33,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: supabase-js realtime needs the native WebSocket (Node 20 throws
+          # "Node.js 20 detected without native WebSocket support" in Jest and in
+          # the static web export). .nvmrc is also what Cloudflare Pages reads.
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
@@ -65,14 +68,22 @@ jobs:
   deno:
     name: Deno (edge functions)
     runs-on: ubuntu-latest
+    env:
+      # The repo root has a package.json (the Expo app). Deno 2 auto-detects it
+      # and then demands a node_modules dir ("Could not find a matching package
+      # for 'npm:@types/node'"). The edge functions use URL/node: imports only,
+      # so tell Deno to ignore package.json instead of running `npm ci` here.
+      DENO_NO_PACKAGE_JSON: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Deno 2 is required: deno.lock is lockfile v5 (Deno 1.x fails with
+      # "Unsupported lockfile version '5'" before running a single test).
       - name: Setup Deno
-        uses: denoland/setup-deno@v1
+        uses: denoland/setup-deno@v2
         with:
-          deno-version: v1.x
+          deno-version: v2.x
 
       - name: Cache Deno modules
         uses: actions/cache@v4
@@ -85,8 +96,12 @@ jobs:
       # Let Deno walk the directory itself rather than relying on bash glob
       # expansion (`**` in non-globstar bash matches one level only and would
       # silently skip nested test files — a green-but-empty CI run).
+      # This also picks up the dual-runtime `*.test.mjs` files in _shared/.
+      # Network is limited to loopback: tests fake every upstream (Google,
+      # Supabase, LLMs), and importing a function's index.ts starts its
+      # Deno.serve on 0.0.0.0:8000. Any real outbound call fails loudly.
       - name: Deno test (with coverage)
-        run: deno test --allow-net --allow-env --allow-read --coverage=cov_profile supabase/functions/
+        run: deno test --allow-net=127.0.0.1,localhost,0.0.0.0:8000 --allow-env --allow-read --coverage=cov_profile supabase/functions/
 
       - name: Deno coverage summary
         if: always()
@@ -102,7 +117,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: supabase-js realtime needs the native WebSocket (Node 20 throws
+          # "Node.js 20 detected without native WebSocket support" in Jest and in
+          # the static web export). .nvmrc is also what Cloudflare Pages reads.
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies

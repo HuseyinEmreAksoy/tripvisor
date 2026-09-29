@@ -41,7 +41,7 @@ Create accounts (you, the human, must do this — credentials cannot be automate
 
 You will also need:
 - The Tripvisor repo pushed to your own GitHub (already done — `https://github.com/HuseyinEmreAksoy/tripvisor`).
-- Node 20+ and the Supabase CLI installed locally (`npx supabase --version` should resolve).
+- Node 22+ and the Supabase CLI installed locally (`npx supabase --version` should resolve).
 - The Expo CLI: works via `npx expo`.
 
 ---
@@ -168,7 +168,7 @@ In the Supabase dashboard:
 | Build command | `npm install && npm run build:web` |
 | Build output directory | `dist` |
 | Root directory | *(leave blank)* |
-| Node version | `20` (set under **Environment variables** as `NODE_VERSION=20`) |
+| Node version | `22` (set under **Environment variables** as `NODE_VERSION=22`; also pinned in `.nvmrc`) |
 
 ### 2.3 Set environment variables in Cloudflare Pages
 
@@ -176,7 +176,7 @@ Pages → your project → **Settings → Environment variables** → **Producti
 
 | Name | Value |
 | --- | --- |
-| `NODE_VERSION` | `20` |
+| `NODE_VERSION` | `22` |
 | `EXPO_PUBLIC_SUPABASE_URL` | the Project URL from Step 1.2 |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | the anon key from Step 1.2 |
 | `EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY` | the **WEB** Google Maps key (Maps JS only, referrer-restricted — see `docs/google-maps-setup.md` § 2.4). **NOT the server key.** |
@@ -437,7 +437,7 @@ You haven't created the app in Google Play Console yet. Create the listing with 
 You forgot the `--no-verify-jwt` flag when deploying. Re-run `npx supabase functions deploy place-photo --no-verify-jwt` (or just `npm run deploy:functions`, which already includes the flag).
 
 **Cloudflare build fails with "node: command not found" or build timeout**
-Add `NODE_VERSION=20` to the Pages env vars (Step 2.3). Default is older.
+Add `NODE_VERSION=22` to the Pages env vars (Step 2.3). Default is older.
 
 **Google Maps key works locally but fails on Pages**
 You are using the local-dev `EXPO_PUBLIC_GOOGLE_MAPS_WEB_KEY` (which has `localhost:8081` in the referrer list) on the production domain. Either add the Pages domain to that key's referrer list, or create a separate web JS key for production and set it in Pages env vars only.

@@ -33,7 +33,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: supabase-js realtime needs the native WebSocket (Node 20 throws
+          # "Node.js 20 detected without native WebSocket support" in Jest and in
+          # the static web export). .nvmrc is also what Cloudflare Pages reads.
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies

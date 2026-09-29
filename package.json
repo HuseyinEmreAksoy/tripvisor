@@ -102,7 +102,7 @@
     "typescript": "~5.9.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "overrides": {
     "@legendapp/state": {

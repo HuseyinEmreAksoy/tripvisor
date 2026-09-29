@@ -38,7 +38,14 @@ module.exports = {
     global: {
       lines: 50,
     },
-    'src/lib/**': {
+    // Path/glob thresholds are checked PER FILE, and a file is checked against
+    // EVERY key it matches, so a plain 'src/lib/**' would still hold
+    // encode.web.ts to 80% and make its own 60% entry below dead config. The
+    // extglob keeps every other src/lib source (all .ts) on the 80% bar.
+    // NOTE: on Windows Jest resolves these keys to backslash paths that glob
+    // never matches, so glob thresholds are only enforced on Linux/macOS (CI).
+    // Reproduce CI locally in a node:22 container before trusting a green run.
+    'src/lib/**/!(encode.web).ts': {
       lines: 80,
     },
     // TODO(M5): encode.web.ts canvas/OffscreenCanvas/downscale branches need
