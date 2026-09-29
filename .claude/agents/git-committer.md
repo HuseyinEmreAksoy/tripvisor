@@ -3,6 +3,7 @@ name: git-committer
 description: Use once at the end of a completed wave/phase (after reviewer + docs-specialist), or when the user asks to save/commit/push. Stages the wave's files explicitly, scans for secrets/artifacts, writes Conventional Commit(s), and fast-forward pushes to origin (https://github.com/HuseyinEmreAksoy/tripvisor).
 tools: Read, Glob, Grep, Bash, Write, Edit
 model: opus
+effort: low
 color: cyan
 memory: project
 ---

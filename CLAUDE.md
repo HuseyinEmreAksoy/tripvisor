@@ -29,6 +29,18 @@ Tripvisor ships to **iOS, Android, and Web** from the same Expo tree. Every feat
 
 A feature isn't "Done" in `docs/features/overview.md` until `docs-specialist` has ticked all three "Platforms verified" boxes (iOS, Android, Web) in its feature doc.
 
+## Product vision (user, 2026-09-29): read before adding features
+
+Tripvisor is a **holiday planner and an after-trip memory and review app**.
+- **Plan:** routes and days, with per-leg transport (drive part of the way, then transit).
+- **Expenses:** tracked in any currency, converted to a home currency, with a per-currency breakdown.
+- **Memories:** photos, journal, and a personal rating and review per place. Google ratings and reviews show on tap only and are never stored.
+- **Discovery:** interest-based recommendations (history, food, nature, …) from free OSM/Wikipedia.
+- **Sharing:** per trip with friends and family. The public link has toggles; memories are private by default.
+- **Languages:** Turkish and English. New UI strings go through `t()` with both `en` and `tr` keys, and dates, numbers and money are formatted in the app language.
+- **Zero extra spend:** free tiers only. A paid dependency is a blocker.
+- Phase plan: §M5 in `docs/v2/BUILD-LOG.md`.
+
 ## Current user priorities (2026-04-25)
 
 - Tripvisor must feel like a travel product, not a bare CRUD shell. Auth, empty states, and primary app surfaces should use richer travel-oriented UI, destination imagery, and stronger visual hierarchy.
@@ -48,7 +60,7 @@ A feature isn't "Done" in `docs/features/overview.md` until `docs-specialist` ha
 - Never ship Google HTTP API keys to the client — proxy everything through Edge Functions.
 - RLS on every child table, always scoped via `trips.user_id`.
 
-## Sub-agents (all on `model: opus` — Opus 5.5; one role each)
+## Sub-agents (all on `model: opus`, Opus 5.5; `effort: xhigh` for planner/ui/backend/reviewer, `medium` docs, `low` git-committer; one role each)
 
 - `planner` — decomposes a new phase or multi-step feature into waves in `docs/v2/BUILD-LOG.md` (skip it for small fixes)
 - `ui-specialist` — `app/`, `src/components|hooks|theme/`, `app.json`/EAS/web config, plus component tests for its own code
