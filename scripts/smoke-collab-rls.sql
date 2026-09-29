@@ -64,8 +64,10 @@ commit;
 \echo ''
 \echo '--- Step 3: A invites B as viewer (status=accepted) ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 insert into public.trip_collaborators (trip_id, invitee_email, role, status, user_id)
 values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'user-b@smoke.test', 'viewer', 'accepted', '22222222-2222-2222-2222-222222222222'::uuid);
@@ -102,8 +104,10 @@ commit;
 \echo ''
 \echo '--- Step 5: A upgrades B to editor ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 update public.trip_collaborators
 set role = 'editor'
@@ -136,8 +140,10 @@ commit;
 \echo ''
 \echo '--- Step 7: A revokes B ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 update public.trip_collaborators
 set status = 'revoked'

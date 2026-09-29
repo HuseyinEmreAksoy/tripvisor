@@ -1,0 +1,26 @@
+{
+  "cards": {
+    "ai": {
+      "kicker": "Yapay zekâyla planla",
+      "title": "Saniyeler içinde ilk taslak",
+      "body": "Nereye ve ne kadar süreliğine gideceğini söyle. Tripvisor gün gün bir plan taslağı hazırlar; hiçbir şey kaydedilmeden önce her durağı tutabilir, değiştirebilir ya da çıkarabilirsin."
+    },
+    "route": {
+      "kicker": "Akıllı rotalar",
+      "title": "Kendini düzenleyen bir rota",
+      "body": "Görmek istediğin yerleri ekle. Her gün yolculuk süresine göre sıralanır ve haritada çizilir; daha az yürür, daha çok görürsün."
+    },
+    "offline": {
+      "kicker": "Çevrimdışı çalışır",
+      "title": "Çekmeyen yerde bile gezin yanında",
+      "body": "Planlar, bavul listeleri ve harcamalar cihazında durur. Onları her yerde düzenle; yeniden bağlandığında senkronize olurlar."
+    }
+  },
+  "progress": "{{kicker}} · {{current}}/{{total}}",
+  "skip": "Geç",
+  "skipA11y": "Tanıtımı geç",
+  "goToCard": "Karta git: {{current}}/{{total}}, {{kicker}}",
+  "nextHint": "Sonraki kartı gösterir ({{current}}/{{total}})",
+  "createAccount": "Ücretsiz hesap oluştur",
+  "haveAccount": "Zaten hesabım var"
+}

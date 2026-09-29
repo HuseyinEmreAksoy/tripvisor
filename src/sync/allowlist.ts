@@ -135,6 +135,9 @@ export const TIER1_FIELDS: { readonly [K in Tier1Table]: FieldsOf<Tier1RowTypes[
     'pinned_start',
     'manual_rank',
     'deleted',
+    // M5 (0035): the user's per-leg mode override for the leg ARRIVING here.
+    'arrival_mode',
+    'arrival_minutes',
     'created_at',
     'updated_at',
   ],
@@ -147,9 +150,13 @@ export const TIER1_FIELDS: { readonly [K in Tier1Table]: FieldsOf<Tier1RowTypes[
     'notes',
     'start_time',
     'deleted',
+    // M5 (0035): per-day default leg mode (read-only root: written online).
+    'transport_mode',
     'created_at',
     'updated_at',
   ],
+  // M5 (0034, ADR-0012): original currency + the rate frozen at entry. FX
+  // rates are public ECB data, not Google content — durable by design.
   trip_expenses: [
     'id',
     'trip_id',
@@ -159,6 +166,10 @@ export const TIER1_FIELDS: { readonly [K in Tier1Table]: FieldsOf<Tier1RowTypes[
     'day_index',
     'label',
     'deleted',
+    'currency',
+    'fx_rate',
+    'fx_date',
+    'fx_home_currency',
     'created_at',
     'updated_at',
   ],
@@ -435,6 +446,9 @@ export const TIER1_WRITE_FIELDS: { readonly [K in Tier1WriteTable]: FieldsOf<Tie
   // `manual_rank` is the ONLY client-writable order field (C1 refinement).
   // `deleted` is writable: tombstoning (`deleted: true`) IS the Wave-2
   // delete path — hard DELETEs don't replicate through incremental pulls.
+  // M5 (0035): `arrival_mode` / `arrival_minutes` are USER intent (which mode
+  // the leg into this stop uses) — C1-safe: they never write order, and the
+  // legs they influence stay server-computed (trip_legs is never Tier-1).
   trip_places: [
     'google_place_id',
     'user_title',
@@ -448,13 +462,29 @@ export const TIER1_WRITE_FIELDS: { readonly [K in Tier1WriteTable]: FieldsOf<Tie
     'pinned_start',
     'manual_rank',
     'deleted',
+    'arrival_mode',
+    'arrival_minutes',
   ],
   // X2.5. `day_index` HERE is NOT optimizer order: on trip_expenses it is the
   // user's optional "which day was this spent on" label (0010), authored in
   // the expense sheet. C1's server-only day_index/order_in_day rule is about
   // trip_places ORDER and stays enforced there (it is absent from the
   // trip_places list above). `deleted` = the tombstone delete path.
-  trip_expenses: ['category', 'amount', 'kind', 'day_index', 'label', 'deleted'],
+  // M5 (0034): the four money fields are user-entered (currency) or captured
+  // client-side at entry (the frozen rate, its date and home currency — an
+  // offline entry saves fx_rate = null and the Y2.2 reconciler fills it).
+  trip_expenses: [
+    'category',
+    'amount',
+    'kind',
+    'day_index',
+    'label',
+    'deleted',
+    'currency',
+    'fx_rate',
+    'fx_date',
+    'fx_home_currency',
+  ],
   // X2.5. `auto` (seeded-by-template flag) is CREATE-only — see
   // TIER1_WRITE_STRUCTURAL: an existing row's provenance is not re-writable.
   trip_packing_items: ['label', 'category', 'checked', 'deleted'],

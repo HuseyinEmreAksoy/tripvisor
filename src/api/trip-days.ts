@@ -50,6 +50,11 @@ export function useTripDays(tripId: Uuid | undefined) {
 // v2 N3 (migration 0020 §a): `start_time` is the per-day itinerary start for
 // the timeline's computed arrival/departure chips. 'HH:MM' or 'HH:MM:SS'
 // (Postgres `time`); null clears it back to the client default (09:00).
+//
+// M5 (migration 0035): `transport_mode` is the per-day default leg mode (the 4
+// routable modes, lockstep with trip_days_transport_mode_check); null clears
+// it back to "inherit the trip mode". flight/ferry are per-leg only
+// (trip_places.arrival_mode), so they are rejected here as in the DB.
 const updateTripDaySchema = z.object({
   trip_id: z.string().uuid(),
   day_index: z.number().int().min(0),
@@ -58,6 +63,7 @@ const updateTripDaySchema = z.object({
     .string()
     .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, 'start_time must be HH:MM or HH:MM:SS')
     .nullish(),
+  transport_mode: z.enum(['driving', 'walking', 'transit', 'bicycling']).nullish(),
 });
 
 export type UpdateTripDayInput = z.infer<typeof updateTripDaySchema>;
@@ -89,8 +95,9 @@ async function getCallerId(): Promise<Uuid> {
  * existing pattern across `trips.ts` and `trip-places.ts` is `if (error)
  * throw error`; staying consistent with the codebase wins).
  *
- * Partial-update semantics (v2 N3): `notes` and `start_time` are written
- * ONLY when present on the input — an omitted field is left untouched.
+ * Partial-update semantics (v2 N3; M5 adds `transport_mode`): `notes`,
+ * `start_time` and `transport_mode` are written ONLY when present on the
+ * input — an omitted field is left untouched.
  * This matters now that two independent editors write through this hook
  * (the day-notes editor and the timeline start-time picker): a
  * start-time-only write must not clobber notes to null, and vice versa.
@@ -111,12 +118,14 @@ export function useUpdateTripDay() {
         day_index: number;
         notes?: string | null;
         start_time?: string | null;
+        transport_mode?: TripDay['transport_mode'];
       } = {
         trip_id: parsed.trip_id,
         day_index: parsed.day_index,
       };
       if (parsed.notes !== undefined) payload.notes = parsed.notes;
       if (parsed.start_time !== undefined) payload.start_time = parsed.start_time;
+      if (parsed.transport_mode !== undefined) payload.transport_mode = parsed.transport_mode;
       const { data, error } = await supabase
         .from('trip_days')
         .upsert(payload, { onConflict: 'trip_id,day_index' })

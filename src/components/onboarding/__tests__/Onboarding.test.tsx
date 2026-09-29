@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ScrollView } from 'react-native';
 import { ThemeProvider } from '@/theme';
+import { i18n, setLanguagePreference } from '@/i18n';
 import { PENDING_REDIRECT_KEY, PENDING_REDIRECT_TTL_MS } from '@/lib/pendingRedirect';
 import { Onboarding } from '../Onboarding';
 import { ONBOARDING_SEEN_KEY, markOnboardingSeen, shouldShowOnboarding } from '../onboardingFlag';
@@ -21,30 +22,55 @@ function setup() {
   return { ...utils, onFinish };
 }
 
+// Jest pins the device to English; expected copy comes from the same keys.
+const t = i18n.t.bind(i18n);
+const dot = (n: number) =>
+  t('onboarding:goToCard', { current: n, total: 3, kicker: t(`onboarding:cards.${(['ai', 'route', 'offline'] as const)[n - 1]!}.kicker`) });
+
 describe('Onboarding', () => {
   it('walks through the three cards and exits to signup', () => {
     const { getByRole, getByText, onFinish, queryByRole } = setup();
-    expect(getByText('A first draft in seconds')).toBeTruthy();
-    expect(queryByRole('button', { name: 'Back' })).toBeNull();
-    fireEvent.press(getByRole('button', { name: 'Next' }));
-    expect(getByRole('button', { name: 'Back' })).toBeTruthy();
-    fireEvent.press(getByRole('button', { name: 'Next' }));
-    expect(queryByRole('button', { name: 'Next' })).toBeNull();
-    fireEvent.press(getByRole('button', { name: 'Create a free account' }));
+    expect(getByText(t('onboarding:cards.ai.title'))).toBeTruthy();
+    expect(queryByRole('button', { name: t('common:actions.back') })).toBeNull();
+    fireEvent.press(getByRole('button', { name: t('common:actions.next') }));
+    expect(getByRole('button', { name: t('common:actions.back') })).toBeTruthy();
+    fireEvent.press(getByRole('button', { name: t('common:actions.next') }));
+    expect(queryByRole('button', { name: t('common:actions.next') })).toBeNull();
+    fireEvent.press(getByRole('button', { name: t('onboarding:createAccount') }));
     expect(onFinish).toHaveBeenCalledWith('signup');
   });
 
   it('Skip is always available and exits to login', () => {
     const { getByRole, onFinish } = setup();
-    fireEvent.press(getByRole('button', { name: 'Skip intro' }));
+    fireEvent.press(getByRole('button', { name: t('onboarding:skipA11y') }));
     expect(onFinish).toHaveBeenCalledWith('login');
   });
 
   it('dots jump straight to a card', () => {
     const { getByRole, onFinish } = setup();
-    fireEvent.press(getByRole('button', { name: /Go to card 3 of 3/ }));
-    fireEvent.press(getByRole('button', { name: 'I already have an account' }));
+    fireEvent.press(getByRole('button', { name: dot(3) }));
+    fireEvent.press(getByRole('button', { name: t('onboarding:haveAccount') }));
     expect(onFinish).toHaveBeenCalledWith('login');
+  });
+});
+
+describe('Onboarding in Turkish', () => {
+  afterEach(async () => {
+    await act(async () => {
+      await setLanguagePreference('system');
+    });
+  });
+
+  it('re-renders in Turkish when the app language switches', async () => {
+    const { getByRole, getByText, findByText } = setup();
+    expect(getByText('A first draft in seconds')).toBeTruthy();
+    await act(async () => {
+      await setLanguagePreference('tr');
+    });
+    expect(await findByText('Saniyeler içinde ilk taslak')).toBeTruthy();
+    expect(getByText('Yapay zekâyla planla · 1/3')).toBeTruthy();
+    expect(getByRole('button', { name: 'Tanıtımı geç' })).toBeTruthy();
+    expect(getByRole('button', { name: 'İleri' })).toBeTruthy();
   });
 });
 
@@ -59,7 +85,7 @@ describe('Onboarding dots during programmatic scroll', () => {
 
   it('ignores intermediate onScroll offsets after a dot jump, then follows user drags', () => {
     const { getByRole, UNSAFE_getByType } = setup();
-    const dot3 = () => getByRole('button', { name: /Go to card 3 of 3/ });
+    const dot3 = () => getByRole('button', { name: dot(3) });
     fireEvent.press(dot3());
     const pager = UNSAFE_getByType(ScrollView);
     // The animated scroll passes card 2 on its way — the dots must not flicker back.
@@ -70,7 +96,7 @@ describe('Onboarding dots during programmatic scroll', () => {
     // A real swipe back is tracked again.
     fireEvent(pager, 'scrollBeginDrag', scrollEvent(800));
     fireEvent.scroll(pager, scrollEvent(400));
-    expect(getByRole('button', { name: /Go to card 2 of 3/ }).props.accessibilityState).toEqual(
+    expect(getByRole('button', { name: dot(2) }).props.accessibilityState).toEqual(
       expect.objectContaining({ selected: true }),
     );
   });

@@ -1,0 +1,59 @@
+{
+  "loading": "Yükleniyor",
+  "actions": {
+    "back": "Geri",
+    "goBack": "Geri dön",
+    "goBackTo": "Geri dön: {{label}}",
+    "next": "İleri",
+    "cancel": "Vazgeç",
+    "done": "Tamam"
+  },
+  "language": {
+    "system": "Sistem",
+    "en": "English",
+    "tr": "Türkçe"
+  },
+  "duration": {
+    "minutes": "{{m}} dk",
+    "hours": "{{h}} sa",
+    "hoursMinutes": "{{h}} sa {{m}} dk"
+  },
+  "units": {
+    "meters": "{{value}} m",
+    "kilometers": "{{value}} km"
+  },
+  "relative": {
+    "now": "az önce",
+    "today": "bugün",
+    "yesterday": "dün",
+    "tomorrow": "yarın",
+    "future": {
+      "minute_one": "{{count}} dakika sonra",
+      "minute_other": "{{count}} dakika sonra",
+      "hour_one": "{{count}} saat sonra",
+      "hour_other": "{{count}} saat sonra",
+      "day_one": "{{count}} gün sonra",
+      "day_other": "{{count}} gün sonra",
+      "week_one": "{{count}} hafta sonra",
+      "week_other": "{{count}} hafta sonra",
+      "month_one": "{{count}} ay sonra",
+      "month_other": "{{count}} ay sonra",
+      "year_one": "{{count}} yıl sonra",
+      "year_other": "{{count}} yıl sonra"
+    },
+    "past": {
+      "minute_one": "{{count}} dakika önce",
+      "minute_other": "{{count}} dakika önce",
+      "hour_one": "{{count}} saat önce",
+      "hour_other": "{{count}} saat önce",
+      "day_one": "{{count}} gün önce",
+      "day_other": "{{count}} gün önce",
+      "week_one": "{{count}} hafta önce",
+      "week_other": "{{count}} hafta önce",
+      "month_one": "{{count}} ay önce",
+      "month_other": "{{count}} ay önce",
+      "year_one": "{{count}} yıl önce",
+      "year_other": "{{count}} yıl önce"
+    }
+  }
+}

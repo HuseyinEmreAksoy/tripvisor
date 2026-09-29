@@ -1,0 +1,16 @@
+{
+  "generic": "Something went wrong. Please try again.",
+  "unexpected": "An unexpected error occurred.",
+  "network": "You seem to be offline. Check your connection and try again.",
+  "auth": {
+    "sendLinkFailed": "We couldn’t send the link. Please try again.",
+    "rateLimited": "Too many attempts. Wait a minute, then try again.",
+    "invalidEmail": "That email address doesn’t look right.",
+    "emailRequired": "Email is required.",
+    "emailInUse": "That email is already in use."
+  },
+  "account": {
+    "deleteFailed": "Couldn’t delete your account. Please try again.",
+    "exportFailed": "Couldn’t export your data. Please try again."
+  }
+}

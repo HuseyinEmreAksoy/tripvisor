@@ -437,3 +437,121 @@ describe('sanitizeForTier1Write: X2.5 expenses + packing', () => {
     );
   });
 });
+
+// ===========================================================================
+// M5 Y1.1 — multi-currency (0034) + per-leg modes (0035) on EXISTING roots
+// ===========================================================================
+
+describe('M5 Y1.1: money + leg-mode fields', () => {
+  const MONEY = ['currency', 'fx_rate', 'fx_date', 'fx_home_currency'] as const;
+
+  it('hydration allowlist gains the new columns (and the select projection asks for them)', () => {
+    for (const f of MONEY) {
+      expect(TIER1_FIELDS.trip_expenses).toContain(f);
+      expect(tier1SelectColumns('trip_expenses').split(',')).toContain(f);
+    }
+    expect(TIER1_FIELDS.trip_places).toEqual(expect.arrayContaining(['arrival_mode', 'arrival_minutes']));
+    expect(TIER1_FIELDS.trip_days).toContain('transport_mode');
+  });
+
+  it('write allowlist: expenses write the 4 money fields, places write the arrival override', () => {
+    expect(TIER1_WRITE_FIELDS.trip_expenses).toEqual(expect.arrayContaining([...MONEY]));
+    expect(TIER1_WRITE_FIELDS.trip_places).toEqual(expect.arrayContaining(['arrival_mode', 'arrival_minutes']));
+    // trip_days stays a READ-ONLY root: the day default mode is written online.
+    expect(isTier1WriteTable('trip_days')).toBe(false);
+  });
+
+  it('none of the new names trips the Google tripwire ("fx_rate" is not "rating")', () => {
+    for (const f of [...MONEY, 'arrival_mode', 'arrival_minutes', 'transport_mode']) {
+      expect({ f, restricted: isRestrictedFieldName(f) }).toEqual({ f, restricted: false });
+    }
+    // …while the real Google field still does.
+    expect(isRestrictedFieldName('rating')).toBe(true);
+    expect(() => sanitizeForTier1('trip_places', { id: 'p1', arrival_mode: 'flight', rating: 4.2 })).toThrow(
+      SyncTosViolationError,
+    );
+  });
+
+  it('hydrated expense rows keep the money fields (null = legacy / pending survives as null)', () => {
+    const out = sanitizeForTier1('trip_expenses', {
+      id: 'e1',
+      trip_id: 't1',
+      amount: 10,
+      currency: 'EUR',
+      fx_rate: null,
+      fx_date: '2026-07-01',
+      fx_home_currency: 'TRY',
+    });
+    expect(out).toEqual({
+      id: 'e1',
+      trip_id: 't1',
+      amount: 10,
+      currency: 'EUR',
+      fx_rate: null,
+      fx_date: '2026-07-01',
+      fx_home_currency: 'TRY',
+    });
+  });
+
+  it('expense UPDATE (full row, updatePartial:false) sends the money fields and still strips timestamps', () => {
+    const out = sanitizeForTier1Write('trip_expenses', {
+      id: 'e1',
+      trip_id: 't1',
+      category: 'food',
+      amount: 10,
+      kind: 'actual',
+      day_index: null,
+      label: 'Pasta',
+      deleted: false,
+      currency: 'EUR',
+      fx_rate: 35.2,
+      fx_date: '2026-07-01',
+      fx_home_currency: 'TRY',
+      created_at: '2026-07-01T10:00:00Z',
+      updated_at: '2026-07-01T10:00:00Z',
+    }) as Record<string, unknown>;
+    expect(out).toEqual({
+      id: 'e1',
+      category: 'food',
+      amount: 10,
+      kind: 'actual',
+      day_index: null,
+      label: 'Pasta',
+      deleted: false,
+      currency: 'EUR',
+      fx_rate: 35.2,
+      fx_date: '2026-07-01',
+      fx_home_currency: 'TRY',
+    });
+  });
+
+  it('place UPDATE carries arrival_mode/arrival_minutes while C1 still strips day_index/order_in_day', () => {
+    const dropped: Array<[string, Tier1WriteDropKind]> = [];
+    const out = sanitizeForTier1Write(
+      'trip_places',
+      {
+        id: 'p1',
+        trip_id: 't1',
+        day_index: 1,
+        order_in_day: 0,
+        manual_rank: 'a1',
+        arrival_mode: 'flight',
+        arrival_minutes: 120,
+        created_at: '2026-07-01T10:00:00Z',
+      },
+      { onDrop: (f, k) => dropped.push([f, k]) },
+    ) as Record<string, unknown>;
+    expect(out).toEqual({ id: 'p1', manual_rank: 'a1', arrival_mode: 'flight', arrival_minutes: 120 });
+    expect(dropped).toEqual(
+      expect.arrayContaining([
+        ['day_index', 'server_only'],
+        ['order_in_day', 'server_only'],
+      ]),
+    );
+  });
+
+  it('trip_legs (and its new `source` provenance) never becomes a Tier-1 root (R4)', () => {
+    expect(TIER1_TABLES).not.toContain('trip_legs');
+    expect(Object.prototype.hasOwnProperty.call(TIER1_WRITE_FIELDS, 'trip_legs')).toBe(false);
+  });
+});

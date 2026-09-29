@@ -20,6 +20,28 @@ export type Uuid = string;
 export type TransportMode = 'driving' | 'walking' | 'transit' | 'bicycling';
 
 /**
+ * M5 (migration 0035): every mode a single LEG can have — the 4 routable
+ * {@link TransportMode}s plus `flight` and `ferry`, which no routing API
+ * computes (optimize-trip uses the user's `arrival_minutes` or a distance
+ * estimate, Y2.3). Mirrors `trip_places_arrival_mode_check`.
+ *
+ * Trip-level and day-level defaults stay {@link TransportMode} (routable
+ * modes only); flight/ferry exist only as a per-leg override.
+ */
+export type LegTransportMode = TransportMode | 'flight' | 'ferry';
+
+/**
+ * M5 (migration 0035): who produced a `trip_legs` row. Mirrors
+ * `trip_legs_source_check`.
+ *   - 'ors' / 'google' — a routing API answer (Google-derived legs carry the
+ *     30-day ToS TTL like every leg).
+ *   - 'estimate' — a distance-based fallback (transit without Google, ferry
+ *     without minutes, …). The UI marks its duration with "≈".
+ *   - 'user' — the duration came from `trip_places.arrival_minutes`.
+ */
+export type TripLegSource = 'ors' | 'google' | 'estimate' | 'user';
+
+/**
  * Phase 23 Step 23.1: per-trip render-mode toggle.
  *
  *   - 'optimized' — k-means + 2-opt clusters places into days and orders
@@ -36,9 +58,31 @@ export type TransportMode = 'driving' | 'walking' | 'transit' | 'bicycling';
 export type RouteRenderMode = 'optimized' | 'manual';
 
 /**
- * Currencies supported by the Phase 8 cost rollup. Matches the
- * `trips_currency_check` constraint in `0005_trip_cost_meta.sql`. If the
- * constraint list grows, widen this union in lockstep.
+ * M5 (migration 0034): an ISO 4217 alphabetic currency code, e.g. 'EUR',
+ * 'TRY', 'JPY'. The DB checks only the SHAPE (`^[A-Z]{3}$`) on
+ * `trips.currency`, `trip_expenses.currency`, `trip_expenses.fx_home_currency`
+ * and `fx_rates.base/quote`; the picker lists what the `fx-rates` Edge
+ * Function supports. A plain string alias (not a union) because the set is
+ * open-ended. Validate user input against `/^[A-Z]{3}$/` before writing.
+ */
+export type CurrencyCode = string;
+
+/**
+ * The trip's HOME currency (`trips.currency`): the unit of `total_budget`
+ * and of every converted expense total. Owner-only on the server (editors
+ * get 42501 from enforce_trips_column_restrictions_fn).
+ *
+ * M5 transition (deliberate, Y1.1): migration 0034 widened the DB CHECK from
+ * these 5 codes to any ISO code (`^[A-Z]{3}$`), but this union stays the set
+ * the CURRENT pickers offer (`trip/new.tsx` zod enum, TripSettingsSheet), so
+ * in practice no client writes anything else yet. The step that ships the
+ * widened home-currency picker (Y3.2) flips this line to
+ * `export type TripCurrency = CurrencyCode;` in the same change as those
+ * pickers (widening it earlier breaks `trip/new.tsx`'s zod-enum form type).
+ * Code that only READS a trip currency should already take
+ * {@link CurrencyCode} (money lib, formatters), and must not assume the value
+ * is one of these 5 at runtime (another client or the dashboard may have
+ * stored any ISO code).
  */
 export type TripCurrency = 'USD' | 'EUR' | 'GBP' | 'TRY' | 'JPY';
 
@@ -171,6 +215,24 @@ export interface TripPlace {
    * writes; from then on reads must filter it.
    */
   deleted?: boolean;
+  /**
+   * M5 (migration 0035): the user's mode override for the leg that ARRIVES
+   * at this place (from its predecessor in the day). NULL/absent = inherit.
+   * Effective leg mode (optimize-trip, Y2.3):
+   *   `arrival_mode ?? tripDay.transport_mode ?? trip.transport_mode`.
+   * USER intent: client-writable (owner + editors), Tier-1 synced, LWW
+   * (C1-safe — it never writes order; legs stay server-computed). Optional
+   * because pre-0035 servers and narrow selects don't return it.
+   */
+  arrival_mode?: LegTransportMode | null;
+  /**
+   * M5 (migration 0035): optional user-given duration of the arriving leg in
+   * minutes (1–1440, DB CHECK), for flight/ferry/transit. Only meaningful
+   * when {@link TripPlace.arrival_mode} is set — consumers ignore it
+   * otherwise (the DB deliberately does not couple the two columns; clear
+   * both together). NULL = compute or estimate.
+   */
+  arrival_minutes?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -202,6 +264,15 @@ export interface TripDay {
   updated_at?: string;
   /** v2 S2.1 (migration 0027): soft-delete tombstone — see {@link TripPlace.deleted}. */
   deleted?: boolean;
+  /**
+   * M5 (migration 0035): per-day default leg mode (the 4 routable modes;
+   * flight/ferry are per-leg only, via {@link TripPlace.arrival_mode}).
+   * NULL/absent = inherit `trips.transport_mode`. Hydrated into Tier-1;
+   * trip_days is a READ-ONLY Tier-1 root, so the Y3.3 day-mode control writes
+   * it through the online trip-days path (owner + editors; viewers get RLS
+   * denials).
+   */
+  transport_mode?: TransportMode | null;
 }
 
 /**
@@ -237,8 +308,76 @@ export interface TripExpense {
   label: string | null;
   /** v2 S2.1 (migration 0027): soft-delete tombstone — see {@link TripPlace.deleted}. */
   deleted?: boolean;
+  /*
+   * ── M5 multi-currency (migration 0034, ADR-0012) ─────────────────────────
+   * `amount` is ALWAYS the original amount in `currency`, never pre-converted.
+   * All four fields are optional on the type (pre-0034 servers and narrow
+   * selects omit them) and nullable in the DB. Round only at display.
+   *
+   * NULL semantics (the Y1.1 risk mitigation, used everywhere):
+   *   currency NULL          → legacy row = the trip's home currency, rate 1.
+   *                            (0034 backfilled existing rows and fills
+   *                            currency-less INSERTs from older clients, so
+   *                            this is rare; still handle it.)
+   *   fx_rate NULL           → "rate pending" (entered offline with no known
+   *                            rate); the Y2.2 reconciler fills it.
+   *
+   * Converting ONE expense into the trip's CURRENT home currency
+   * (`trip.currency`) — the same precedence as the 0034 analytics MV, so the
+   * live client totals and the nightly rollup agree:
+   *   1. currency NULL or === trip.currency              → × 1
+   *   2. fx_rate != null && fx_home_currency === trip.currency → × fx_rate
+   *   3. else re-derive on fx_date from fx_rates (base EUR):
+   *        × rate(trip.currency) / rate(currency), with rate('EUR') = 1
+   *   4. still unknown → pending (the MV falls back to × (fx_rate ?? 1))
+   *
+   * DB CHECKs (mirrored by src/sync/mutations.ts before any Tier-1 write,
+   * because a server-rejected sync write is retried forever):
+   *   - currency / fx_home_currency match /^[A-Z]{3}$/ (or are null)
+   *   - fx_rate > 0 (or null)
+   *   - fx_rate != null ⇒ currency, fx_date and fx_home_currency are all set
+   *
+   * Roles: owner + editors may write all four; viewers are read-only (RLS).
+   * `trips.currency` (the home currency) stays owner-only.
+   */
+  /** M5 (0034): original ISO 4217 code of `amount`. NULL = legacy (trip home currency). */
+  currency?: CurrencyCode | null;
+  /**
+   * M5 (0034): home-currency units per 1 unit of `currency`, FROZEN when the
+   * expense was entered (e.g. 35.2 for EUR→TRY). NULL = rate pending.
+   * PostgREST returns Postgres `numeric` as a JSON number.
+   */
+  fx_rate?: number | null;
+  /** M5 (0034): the rate's date, 'YYYY-MM-DD' (or the wanted date while pending). */
+  fx_date?: string | null;
+  /**
+   * M5 (0034): the home currency `fx_rate` converts INTO. When it differs from
+   * the trip's current `currency` (the owner changed the home currency), the
+   * frozen rate no longer applies — re-derive (step 3 above).
+   */
+  fx_home_currency?: CurrencyCode | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * M5 (migration 0034, ADR-0012): one row of the `fx_rates` cache, written only
+ * by the `fx-rates` Edge Function (service role) and readable by any signed-in
+ * user. Always EUR-based: `rate` = `quote` units per 1 `base` (EUR) unit.
+ * Cross rate X→Y on a day = rate(Y) / rate(X), with rate('EUR') = 1. A
+ * weekend/holiday is stored under the requested date too (exact-date lookups).
+ * Non-Google public data, so it MAY be persisted client-side (ADR-0012 §4).
+ */
+export interface FxRateRow {
+  /** Always 'EUR' by convention (DB default). */
+  base: CurrencyCode;
+  quote: CurrencyCode;
+  /** 'YYYY-MM-DD'. */
+  rate_date: string;
+  rate: number;
+  /** Provider tag, e.g. 'frankfurter' or 'currency-api'. */
+  source: string;
+  fetched_at: string;
 }
 
 /**
@@ -306,9 +445,20 @@ export interface TripLeg {
   from_place_id: Uuid;
   to_place_id: Uuid;
   day_index: number;
-  transport_mode: TransportMode;
+  /**
+   * The mode this leg was computed for. M5 (0035/Y2.3): the effective per-leg
+   * mode, so it may be `flight`/`ferry` (no polyline — the client draws an
+   * arc) as well as the 4 routable modes.
+   */
+  transport_mode: LegTransportMode;
   duration_seconds: number;
   distance_meters: number;
+  /**
+   * M5 (migration 0035): leg provenance; `'estimate'` renders with "≈".
+   * Optional: pre-0035 servers and the public share payload omit it
+   * (treat absent as a routed leg). Written only by optimize-trip (C1).
+   */
+  source?: TripLegSource;
   polyline: string | null;
   /**
    * v2 P1.2 (migration 0023): per-step transit geometry/metadata for

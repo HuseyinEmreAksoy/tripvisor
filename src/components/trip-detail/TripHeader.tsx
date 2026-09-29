@@ -32,6 +32,13 @@ import { useTheme } from '@/theme';
 import { OptimizeError, type Trip, type TripLeg } from '@/api';
 import { IOS_MODAL_HANDOFF_MS } from './modalHandoff';
 
+// Optimize-pill copy added in the 2026-09-29 security follow-up. Plain
+// strings until the i18n step lands (then these move to `t()` keys).
+const COPY = {
+  viewOnly: 'View only',
+  routeQuotaExceeded: 'Daily route limit reached — try again tomorrow',
+} as const;
+
 export interface TripHeaderProps {
   trip: Trip;
   legs: TripLeg[];
@@ -376,17 +383,27 @@ function MenuRow({
  *   rapid state-key change). Render as info tone — the auto-optimize effect
  *   in the route shell will re-run when the in-flight call settles, no user
  *   action needed.
+ * - `not_editor` (403, security audit #6) is not a failure either: the
+ *   caller is a viewer. The route shell no longer auto-runs optimize for
+ *   viewers, so this only shows if the role changed mid-session — render a
+ *   neutral "View only" pill, never a red error.
+ * - `quota_exceeded` (429) is the caller's daily routing quota; it resets
+ *   tomorrow, so say that (info tone — an expected limit, not a failure).
  * - All other known codes map to danger tone with a code-specific label.
  * - Unknown codes / non-OptimizeError (network failures, parse fallthrough)
  *   fall back to the generic "Optimize failed" label.
  */
-function pillForOptimizeError(
+export function pillForOptimizeError(
   err: unknown,
 ): { tone: 'info' | 'success' | 'danger'; label: string } {
   if (err instanceof OptimizeError) {
     switch (err.code) {
       case 'already_optimizing':
         return { tone: 'info', label: 'Optimizing in progress…' };
+      case 'not_editor':
+        return { tone: 'info', label: COPY.viewOnly };
+      case 'quota_exceeded':
+        return { tone: 'info', label: COPY.routeQuotaExceeded };
       case 'too_many_places':
         return { tone: 'danger', label: 'Trip is too large' };
       case 'matrix_failed':

@@ -352,6 +352,13 @@ const updateTripPlaceSchema = z.object({
   // bounds: omitted = untouched, explicit null = clear the pin. Same ToS
   // invariant — user input only, never derived from Google data.
   pinned_start: timeOfDaySchema.nullish(),
+  // M5 (migration 0035): per-leg mode override for the leg ARRIVING at this
+  // place, + optional user minutes for it. Lockstep with
+  // trip_places_arrival_mode_check / _arrival_minutes_check (and the
+  // mutation-layer guard). Omitted = untouched; null = back to "inherit".
+  // Clear both together when removing an override.
+  arrival_mode: z.enum(['driving', 'walking', 'bicycling', 'transit', 'flight', 'ferry']).nullish(),
+  arrival_minutes: z.number().int().min(1).max(24 * 60).nullish(),
 });
 
 type UpdateTripPlaceInput = z.infer<typeof updateTripPlaceSchema>;

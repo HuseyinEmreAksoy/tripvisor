@@ -117,17 +117,28 @@ describe('TripHubTab', () => {
     expect(mockPush).toHaveBeenCalledWith('/trip/trip-1/collaborators');
   });
 
-  it('viewers cannot expand Share (no link minting)', () => {
-    const { getByRole, queryByText } = renderHub({ canEdit: false, isOwner: false });
-    fireEvent.press(getByRole('button', { name: /^Share, ask an editor/i }));
+  // Security audit #5: public links are owner-only (share-trip → 403 not_owner).
+  it.each([
+    ['viewers', { canEdit: false, isOwner: false }],
+    ['editors', { canEdit: true, isOwner: false }],
+  ])('%s cannot expand Share and are told to ask the owner', (_who, role) => {
+    const { getByRole, getByText, queryByText } = renderHub(role);
+    const share = getByRole('button', { name: /^Share, only the trip owner can create a share link/i });
+    // A link row, not an accordion: no expanded state to announce.
+    expect(share.props.accessibilityState?.expanded).toBeUndefined();
+    expect(getByText('Only the trip owner can create a share link. Ask them to send you one.')).toBeTruthy();
+    fireEvent.press(share);
     expect(queryByText('stub:ShareLinkCard')).toBeNull();
     expect(mockPush).toHaveBeenCalledWith('/trip/trip-1/collaborators');
   });
 
-  it('editors can expand Share to the link card', () => {
-    const { getByRole, getByText } = renderHub();
-    fireEvent.press(getByRole('button', { name: /^Share, /i }));
+  it('the owner can expand Share to the link card', () => {
+    const { getByRole, getByText } = renderHub({ canEdit: true, isOwner: true });
+    const share = getByRole('button', { name: /^Share, read-only public link/i });
+    expect(share.props.accessibilityState).toMatchObject({ expanded: false });
+    fireEvent.press(share);
     expect(getByText('stub:ShareLinkCard')).toBeTruthy();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
 

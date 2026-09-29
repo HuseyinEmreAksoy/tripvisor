@@ -150,8 +150,10 @@ commit;
 \echo ''
 \echo '--- Setup: A invites B as accepted viewer ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 insert into public.trip_collaborators (trip_id, invitee_email, role, status, user_id)
 values ('c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'::uuid, 'user-b@reactions-smoke.test', 'viewer', 'accepted', 'b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2'::uuid);

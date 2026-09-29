@@ -10,6 +10,11 @@
 //      the Phase 4 allowlist (`shouldDehydrateQuery`) so only durable,
 //      ToS-safe query keys reach disk. Google Places content is never
 //      persisted — it stays in-memory only.
+//   3. i18n (ADR-0011): importing `@/i18n` initialises i18next synchronously
+//      (bundled resources, no network), so the first render is already
+//      translated. On native the persisted Profile → Language choice is read
+//      from AsyncStorage; `useI18nReady` keeps the splash up until then
+//      (bounded by a short timeout) so there's no flash of the device language.
 
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
@@ -24,6 +29,7 @@ import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider } from '@/theme';
 import { shouldDehydrateQuery } from '@/api/offline';
 import { initSentry } from '@/lib/sentry';
+import { useI18nReady, useSystemLanguageSync } from '@/i18n';
 
 // ── Baseline Open Graph / meta tags (web only) ────────────────────────────────
 //
@@ -34,6 +40,8 @@ import { initSentry } from '@/lib/sentry';
 //
 // The runtime-require pattern keeps expo-router/head out of the native bundle —
 // same approach as app/(app)/trip/[id]/print.tsx:PrintHead.
+// These stay English on purpose (M5 Y1.4): they're prerendered once at build
+// time for crawlers and link previews, which have no app language.
 const SITE_ORIGIN = 'https://tripvisor.pages.dev';
 const SITE_TITLE = 'Tripvisor — holiday route planner';
 const SITE_DESCRIPTION =
@@ -102,6 +110,14 @@ export default function RootLayout() {
     // unconfigured (see `src/lib/sentry.ts`).
     initSentry();
   }, []);
+
+  // System mode follows OS language changes (Android per-app language, iOS
+  // Settings, browser `languagechange`).
+  useSystemLanguageSync();
+  // Always true on web; on native, false for the few ms it takes to read the
+  // stored language. Returning null keeps the native splash visible.
+  const i18nReady = useI18nReady();
+  if (!i18nReady) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

@@ -46,6 +46,20 @@
  *          tick applied; later edits sync with `auto` untouched; tombstone +
  *          UndoEntry.inverse round trip.
  *
+ * M5 Y1.1 (appended; contract proofs for migrations 0034/0035, NOT R6 ids):
+ *   n1–n3. Multi-currency expenses through the mutation layer: a frozen-rate
+ *          EUR expense round-trips all four money fields; an edit after ack
+ *          (currency + rate change) reaches the server with trip_id/created_at
+ *          intact; a "rate pending" create is later reconciled by an update,
+ *          and a fresh hydration carries the money fields (the new select
+ *          columns exist server-side).
+ *   n4.    A currency-less create (pre-M5 client shape) is filled server-side
+ *          (0034 §3d: trip home currency @ 1) and the create-ack merges the
+ *          filled values back into the store.
+ *   o1–o2. Per-leg modes: updatePlace({arrival_mode, arrival_minutes}) reaches
+ *          the server with optimizer order untouched (C1); a fresh hydration
+ *          carries arrival_mode/arrival_minutes and trip_days.transport_mode.
+ *
  * If a FAILURE traces to the beta plugin's write path itself, the verdict is
  * "ABORT GATE TRIPPED" (R6): stop, fall back to the named hand-rolled
  * expo-sqlite sync plan. Sanitize bugs (our code) are NOT abort verdicts.
@@ -117,6 +131,13 @@ const S2812_DESC = {
   m1: 'packing seed race: 25-row bulk create + a tick BEFORE ack → all 25 rows land once, the ticked row is checked',
   m2: 'packing edit: label + untick after ack reach the server; `auto` provenance unchanged (create-only)',
   m3: 'packing tombstone: server deleted=true + fresh hydration excludes it; UndoEntry.inverse revives it',
+  // M5 Y1.1 — money (0034) + per-leg modes (0035) on the existing write roots
+  n1: 'expense w/ currency create: frozen EUR rate → server has currency/fx_rate/fx_date/fx_home_currency verbatim',
+  n2: 'expense currency edit after ack: currency + fx_rate + fx_date change reaches the server; trip_id + created_at unchanged',
+  n3: 'rate-pending create (fx_rate null) → reconciler update fills fx_rate server-side; fresh hydration carries all 4 money fields',
+  n4: 'currency-less create (pre-M5 shape) → server fills the trip home currency @ 1; the create-ack merges it into the store',
+  o1: 'arrival_mode write: updatePlace({arrival_mode, arrival_minutes}) → server row updated; day_index/order_in_day untouched (C1)',
+  o2: 'fresh hydration carries trip_places.arrival_mode/arrival_minutes + trip_days.transport_mode',
 };
 
 /** Fail every id in `ids` that has not produced a result yet (block-level
@@ -941,6 +962,203 @@ async function main() {
         );
       } catch (err) {
         failRemaining(err, ['m1', 'm2', 'm3']);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // M5 Y1.1 — multi-currency expenses (n) + per-leg modes (o). Not R6 ids.
+    // ════════════════════════════════════════════════════════════════════
+
+    console.log('── M5 Y1.1 money + leg-mode proofs ──');
+
+    if (!live) {
+      failRemaining(new Error('skipped — no live ledger instance (see l)'), ['n1', 'n2', 'n3', 'n4', 'o1', 'o2']);
+    }
+
+    // ── n. multi-currency expenses ───────────────────────────────────────
+    let pendingId = null;
+    if (live) {
+      try {
+        const m = live.sync.mutations;
+        // The ledger trip was created with the default home currency.
+        const home = (await service.from('trips').select('currency').eq('id', ledgerTripId).single()).data.currency;
+        const frozen = {
+          currency: 'EUR',
+          fx_rate: 1.0842,
+          fx_date: '2026-07-01',
+          fx_home_currency: home,
+        };
+        const moneyId = m.createExpense({
+          trip_id: ledgerTripId,
+          category: 'food',
+          amount: 12.5,
+          kind: 'actual',
+          label: `${runTag} pasta (EUR)`,
+          ...frozen,
+        });
+        const row = await waitFor(`trip_expenses/${moneyId} on server`, async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', moneyId).maybeSingle();
+          return data;
+        });
+        check(
+          'n1',
+          S2812_DESC.n1,
+          row.currency === 'EUR' &&
+            Number(row.fx_rate) === 1.0842 &&
+            row.fx_date === '2026-07-01' &&
+            row.fx_home_currency === home &&
+            Number(row.amount) === 12.5,
+          `amount=${row.amount} ${row.currency} fx_rate=${row.fx_rate} fx_date=${row.fx_date} home=${row.fx_home_currency}`,
+        );
+        await waitFor('money expense create-ack', () => live.store.tripExpenses[moneyId].created_at.get());
+
+        m.updateExpense(moneyId, { currency: 'TRY', amount: 450, fx_rate: 0.0301, fx_date: '2026-07-02' });
+        const edited = await waitFor('money expense edit on server', async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', moneyId).maybeSingle();
+          return data && data.currency === 'TRY' ? data : undefined;
+        });
+        check(
+          'n2',
+          S2812_DESC.n2,
+          Number(edited.amount) === 450 &&
+            Number(edited.fx_rate) === 0.0301 &&
+            edited.fx_date === '2026-07-02' &&
+            edited.fx_home_currency === home &&
+            edited.trip_id === ledgerTripId &&
+            edited.created_at === row.created_at,
+          `amount=${edited.amount} ${edited.currency} fx_rate=${edited.fx_rate} fx_date=${edited.fx_date} created_at ${row.created_at} → ${edited.created_at}`,
+        );
+
+        // Offline-style entry with no known rate, then the reconciler fill.
+        pendingId = m.createExpense({
+          trip_id: ledgerTripId,
+          category: 'transport',
+          amount: 3.2,
+          kind: 'actual',
+          label: `${runTag} tram (pending rate)`,
+          currency: 'EUR',
+          fx_rate: null,
+          fx_date: '2026-07-03',
+          fx_home_currency: home,
+        });
+        await waitFor('pending expense on server', async () => {
+          const { data } = await service.from('trip_expenses').select('fx_rate').eq('id', pendingId).maybeSingle();
+          return data ? data : undefined;
+        });
+        await waitFor('pending expense create-ack', () => live.store.tripExpenses[pendingId].created_at.get());
+        m.updateExpense(pendingId, { fx_rate: 1.09 });
+        await waitFor('reconciled rate on server', async () => {
+          const { data } = await service.from('trip_expenses').select('fx_rate').eq('id', pendingId).maybeSingle();
+          return data && Number(data.fx_rate) === 1.09 ? data : undefined;
+        });
+        const inst = await freshLedgerInstance('n3');
+        const hydrated = inst.store.tripExpenses[pendingId].get();
+        const hydratedMoney = inst.store.tripExpenses[moneyId].get();
+        check(
+          'n3',
+          S2812_DESC.n3,
+          hydrated?.currency === 'EUR' &&
+            Number(hydrated?.fx_rate) === 1.09 &&
+            hydrated?.fx_date === '2026-07-03' &&
+            hydrated?.fx_home_currency === home &&
+            hydratedMoney?.currency === 'TRY' &&
+            Number(hydratedMoney?.fx_rate) === 0.0301,
+          `fresh store: pending→${hydrated?.currency} ${hydrated?.fx_rate} ${hydrated?.fx_date} ${hydrated?.fx_home_currency}; edited→${hydratedMoney?.currency} ${hydratedMoney?.fx_rate}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['n1', 'n2', 'n3']);
+      }
+
+      try {
+        const m = live.sync.mutations;
+        const home = (await service.from('trips').select('currency').eq('id', ledgerTripId).single()).data.currency;
+        const legacyId = m.createExpense({
+          trip_id: ledgerTripId,
+          category: 'other',
+          amount: 7,
+          label: `${runTag} legacy-shaped (no currency)`,
+        });
+        const serverRow = await waitFor('legacy-shaped expense on server', async () => {
+          const { data } = await service.from('trip_expenses').select('*').eq('id', legacyId).maybeSingle();
+          return data ?? undefined;
+        });
+        const merged = await waitFor(
+          'store merges the server-filled currency on create-ack',
+          () => {
+            const r = live.store.tripExpenses[legacyId].get();
+            return r && r.created_at && r.currency ? r : undefined;
+          },
+        );
+        check(
+          'n4',
+          S2812_DESC.n4,
+          serverRow.currency === home &&
+            Number(serverRow.fx_rate) === 1 &&
+            serverRow.fx_home_currency === home &&
+            serverRow.fx_date != null &&
+            merged.currency === home &&
+            Number(merged.fx_rate) === 1,
+          `server: ${serverRow.currency} @ ${serverRow.fx_rate} (${serverRow.fx_date}, home ${serverRow.fx_home_currency}); store: ${merged.currency} @ ${merged.fx_rate}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['n4']);
+      }
+    }
+
+    // ── o. per-leg modes ────────────────────────────────────────────────
+    if (live) {
+      try {
+        const m = live.sync.mutations;
+        const legPlace = m.createPlace({
+          trip_id: ledgerTripId,
+          google_place_id: 'sync-validate-leg-mode',
+          lat: 41.03,
+          lng: 29.01,
+          user_title: `${runTag} leg-mode`,
+        });
+        await waitFor(`leg-mode place ${legPlace} on server`, async () => {
+          const { data } = await service.from('trip_places').select('id').eq('id', legPlace).maybeSingle();
+          return data;
+        });
+        await waitFor('leg-mode place create-ack', () => live.store.tripPlaces[legPlace].created_at.get());
+        // The optimizer (server role) owns order — seed it so C1 can be observed.
+        const seed = await service.from('trip_places').update({ day_index: 0, order_in_day: 4 }).eq('id', legPlace);
+        if (seed.error) throw new Error(seed.error.message);
+        live.sync.hydrate.resyncTier1();
+        await waitFor('store reflects the seeded optimizer order', () => live.store.tripPlaces[legPlace].day_index.get() === 0);
+
+        m.updatePlace(legPlace, { arrival_mode: 'flight', arrival_minutes: 95 });
+        const row = await waitFor('arrival_mode on server', async () => {
+          const { data } = await service.from('trip_places').select('*').eq('id', legPlace).maybeSingle();
+          return data && data.arrival_mode === 'flight' ? data : undefined;
+        });
+        check(
+          'o1',
+          S2812_DESC.o1,
+          row.arrival_minutes === 95 && row.day_index === 0 && row.order_in_day === 4,
+          `arrival_mode=${row.arrival_mode} arrival_minutes=${row.arrival_minutes} day_index=${row.day_index} order_in_day=${row.order_in_day}`,
+        );
+
+        // trip_days is a READ-ONLY root: write the day default the way the
+        // online path does (here: service role), then prove it hydrates.
+        const day = await service
+          .from('trip_days')
+          .upsert({ trip_id: ledgerTripId, day_index: 0, transport_mode: 'transit' }, { onConflict: 'trip_id,day_index' })
+          .select('id')
+          .single();
+        if (day.error) throw new Error(day.error.message);
+        const inst = await freshLedgerInstance('o2');
+        await waitFor('o2: days loaded', () => syncState(inst.store.tripDays).isLoaded.get());
+        const hp = inst.store.tripPlaces[legPlace].get();
+        const hd = inst.store.tripDays[day.data.id].get();
+        check(
+          'o2',
+          S2812_DESC.o2,
+          hp?.arrival_mode === 'flight' && hp?.arrival_minutes === 95 && hd?.transport_mode === 'transit',
+          `place arrival=${hp?.arrival_mode}/${hp?.arrival_minutes} day transport_mode=${hd?.transport_mode}`,
+        );
+      } catch (err) {
+        failRemaining(err, ['o1', 'o2']);
       }
     }
   } finally {

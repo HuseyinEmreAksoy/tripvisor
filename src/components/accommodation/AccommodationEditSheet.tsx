@@ -45,11 +45,19 @@ import {
 import { useCreateTripAccommodation, useUpdateTripAccommodation } from '@/api';
 import {
   PlacesError,
+  isPlacesQuotaExceeded,
   usePlacesAutocomplete,
   usePlaceDetails,
 } from '@/api/places';
 import type { TripAccommodation } from '@/api/types';
 import type { PlaceAutocompleteSuggestion } from '@/api/types';
+
+// Copy added in the 2026-09-29 security follow-up (per-user Places quota).
+// Plain strings until the i18n step lands (then these move to `t()` keys).
+const COPY = {
+  placesQuota: 'Daily place search limit reached — try again tomorrow',
+  manualFallback: 'Use the manual address field below.',
+} as const;
 
 // ─── Session token per edit session ──────────────────────────────────────────
 // crypto.randomUUID() is available in Expo SDK 52+ (Hermes ships it via the
@@ -209,6 +217,9 @@ export function AccommodationEditSheet({
     : isMapsSetupError(detailsError)
       ? detailsError
       : null;
+  // Audit #2: a spent per-user daily Places quota gets its own notice, not
+  // the setup banner (the manual address field still works).
+  const placesQuotaHit = isPlacesQuotaExceeded(autocompleteError) || isPlacesQuotaExceeded(detailsError);
 
   // ── Form helpers ───────────────────────────────────────────────────────────
   function patch<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -348,8 +359,8 @@ export function AccommodationEditSheet({
               ) : null}
             </View>
 
-            {/* Maps setup error banner */}
-            {mapsError ? (
+            {/* Places quota / maps setup error banner */}
+            {placesQuotaHit || mapsError ? (
               <View
                 style={[
                   styles.warningBanner,
@@ -363,16 +374,22 @@ export function AccommodationEditSheet({
                 accessibilityRole="alert"
                 accessibilityLiveRegion="polite"
               >
-                <Text style={[t.typography.caption, { color: t.colors.text }]}>
-                  Google Places not configured — see{' '}
-                  <Text style={{ fontFamily: 'monospace' }}>docs/google-maps-setup.md</Text>.
-                  Use the manual address field below.
-                </Text>
+                {placesQuotaHit ? (
+                  <Text style={[t.typography.caption, { color: t.colors.text }]}>
+                    {`${COPY.placesQuota}. ${COPY.manualFallback}`}
+                  </Text>
+                ) : (
+                  <Text style={[t.typography.caption, { color: t.colors.text }]}>
+                    Google Places not configured — see{' '}
+                    <Text style={{ fontFamily: 'monospace' }}>docs/google-maps-setup.md</Text>.
+                    Use the manual address field below.
+                  </Text>
+                )}
               </View>
             ) : null}
 
             {/* Suggestions list */}
-            {suggestions.length > 0 && !mapsError ? (
+            {suggestions.length > 0 && !mapsError && !placesQuotaHit ? (
               <View
                 style={[
                   styles.suggestionList,

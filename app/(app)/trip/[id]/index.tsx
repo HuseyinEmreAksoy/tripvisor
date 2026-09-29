@@ -52,11 +52,16 @@ import { TripHeader, TripMenuSheet } from '@/components/trip-detail/TripHeader';
 import { MapTab } from '@/components/trip-detail/MapTab';
 import { ItineraryTab } from '@/components/trip-detail/ItineraryTab';
 import { TripHubTab } from '@/components/trip-detail/TripHubTab';
-import { TripSettingsSheet } from '@/components/trip-detail/TripSettingsSheet';
+import { TripSettingsSheet, deleteTripErrorMessage } from '@/components/trip-detail/TripSettingsSheet';
 import { QuickAddFab, QuickAddSheet } from '@/components/trip-detail/QuickAddSheet';
 import { resolveTripTab, type TripTabKey } from '@/components/trip-detail/tripTabs';
 import { ActionErrorBanner } from '@/components/trip-detail/ActionErrorBanner';
 import { PlanSkeleton, TripDetailSkeleton } from '@/components/trip-detail/TripDetailSkeleton';
+
+// New copy (2026-09-29 security follow-up); moves to `t()` keys with i18n.
+const COPY = {
+  shareOwnerOnly: 'Only the trip owner can create a share link. Ask them to send you one.',
+} as const;
 
 // FAB (56) + its bottom offset — the hub and the Plan list pad by this so the last row clears it.
 const FAB_CLEARANCE = 88;
@@ -163,6 +168,9 @@ export default function TripDetail() {
   );
   const lastOptimizedRef = useRef<string | null>(null);
   useEffect(() => {
+    // Audit #6: optimize is editor-only (viewers get 403 `not_editor`). Also
+    // waits out role loading — the ref stays unset, so it runs once it flips.
+    if (!canEditTrip) return;
     if (!id || places.length < 2 || !trip) return;
     if (lastOptimizedRef.current === stateKey) return;
     const renderMode = trip.route_render_mode ?? 'optimized';
@@ -171,7 +179,7 @@ export default function TripDetail() {
       optimizeMutate({ tripId: id, mode: renderMode });
     }, 500);
     return () => clearTimeout(timer);
-  }, [id, stateKey, places.length, trip, optimizeMutate]);
+  }, [canEditTrip, id, stateKey, places.length, trip, optimizeMutate]);
 
   if (isLoading) {
     return (
@@ -224,9 +232,9 @@ export default function TripDetail() {
     setDeleteError(null);
     try {
       await deleteTrip.mutateAsync(trip.id);
-    } catch {
+    } catch (err) {
       haptics.error();
-      setDeleteError("Couldn't delete this trip. Check your connection and try again.");
+      setDeleteError(deleteTripErrorMessage(err));
       return;
     }
     setSettingsOpen(false);
@@ -358,12 +366,11 @@ export default function TripDetail() {
       />
       <BottomSheet visible={shareOpen} onClose={() => setShareOpen(false)} accessibilityLabel="Share trip">
         <Heading level={3}>Share this trip</Heading>
-        {canEditTrip ? (
+        {/* Audit #5: public links are owner-only (editors get 403 `not_owner`). */}
+        {isOwner ? (
           <ShareLinkCard tripId={trip.id} tripTitle={trip.title} />
         ) : (
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            Only the owner or an editor can create a share link. Ask them to send you one.
-          </Text>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{COPY.shareOwnerOnly}</Text>
         )}
         <Button variant="ghost" label="Close" onPress={() => setShareOpen(false)} />
       </BottomSheet>

@@ -26,6 +26,37 @@ const ROLE_OPTIONS: Array<{ value: TripCollaboratorRole; label: string }> = [
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Invite-failure copy (2026-09-29 security follow-up, audit #14 quotas).
+// Plain strings until the i18n step lands (then these move to `t()` keys).
+const COPY = {
+  alreadyInvited: 'This person already has an invite for this trip. Cancel it first to send a new one.',
+  inviteRateLimited: "You've sent a lot of invites today — try again tomorrow",
+  tripInviteLimit: 'This trip has too many pending invites — cancel some first',
+  quotaUnavailable: 'Invites are temporarily unavailable',
+  generic: 'Could not send invite. Please try again.',
+} as const;
+
+const INVITE_ERROR_COPY: Readonly<Record<string, string>> = {
+  already_invited: COPY.alreadyInvited,
+  invite_rate_limited: COPY.inviteRateLimited,
+  trip_invite_limit: COPY.tripInviteLimit,
+  quota_unavailable: COPY.quotaUnavailable,
+};
+
+/**
+ * Map an invite failure to the inline error. Known `CollaboratorError`
+ * codes get our copy (the server's 429/503 messages are English-only);
+ * anything else falls back to the error's own message, then a generic line.
+ */
+export function inviteErrorMessage(err: unknown): string {
+  if (err instanceof CollaboratorError) {
+    const known = INVITE_ERROR_COPY[err.code];
+    if (known) return known;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return COPY.generic;
+}
+
 interface InviteResult {
   url: string;
   email: string;
@@ -73,13 +104,7 @@ export function InviteSheet({ tripId, tripTitle, visible, onClose, inviteMutatio
       const res = await inviteMutation.mutateAsync({ tripId, inviteeEmail: normalized, role });
       setResult({ url: res.inviteUrl, email: normalized, emailSent: res.emailSent });
     } catch (err) {
-      if (err instanceof CollaboratorError && err.code === 'already_invited') {
-        setError('This person already has an invite for this trip. Cancel it first to send a new one.');
-      } else if (err instanceof Error && err.message) {
-        setError(err.message);
-      } else {
-        setError('Could not send invite. Please try again.');
-      }
+      setError(inviteErrorMessage(err));
     }
   }
 

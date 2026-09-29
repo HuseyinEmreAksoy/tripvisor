@@ -1,0 +1,168 @@
+{
+  "chrome": {
+    "lastUpdated": "Son güncelleme: {{date}}",
+    "contactHeading": "İletişim",
+    "contactBody": "Soruların, veri talebin ya da şikâyetin mi var? Geliştiriciye e-posta gönder; 30 gün içinde yanıt alırsın.",
+    "emailA11y": "{{email}} adresine e-posta gönder",
+    "translationNote": "Bu sayfa İngilizce aslının çevirisidir. İki metin arasında fark olması durumunda İngilizce sürüm geçerlidir.",
+    "showOriginal": "İngilizce aslını oku",
+    "originalNote": "Şu anda İngilizce aslını okuyorsun.",
+    "showTranslation": "Türkçe çeviriye dön"
+  },
+  "privacy": {
+    "title": "Gizlilik politikası",
+    "intro": "Bu politika, Tripvisor’ın hangi verileri neden topladığını, bunları kimlerin işlediğini ve verilerini nasıl dışa aktarabileceğini ya da silebileceğini açıklar. Kısacası: yalnızca uygulamanın gezilerini planlamak ve senkronize etmek için ihtiyaç duyduğu verileri tutarız ve bunları asla satmayız.",
+    "related": "Kullanım koşullarını oku",
+    "sections": [
+      {
+        "heading": "Biz kimiz",
+        "paragraphs": [
+          "Tripvisor, bireysel bir geliştirici tarafından geliştirilen ve işletilen, ücretsiz ve ticari olmayan bir tatil rotası planlayıcısıdır. Reklam, ücretli paket ya da veri satışı yoktur. Aşağıda geçen “biz” ifadesi bu geliştiriciyi kasteder."
+        ]
+      },
+      {
+        "heading": "Topladığımız veriler",
+        "bullets": [
+          "Hesap: Giriş yapmanı sağlamak (e-posta bağlantısıyla ya da Google ile) ve hesabınla ilgili seninle iletişime geçmek için kullanılan e-posta adresin. Google ile giriş yaparsan e-posta adresini ve temel profil adını alırız, başka hiçbir şey almayız.",
+          "Girdiğin içerik: geziler, tarihler, yerler, notlar, sabitlenmiş saatler, bavul listeleri, konaklamalar, bütçeler ve harcamalar.",
+          "Yerler: Eklediğin her yer için Google yer kimliğini (place ID) ve koordinatlarını saklarız. Google’dan gelen adlar, fotoğraflar, puanlar ve yorumlar sen görüntülediğinde getirilir ve sunucularımızda saklanmaz.",
+          "Geziye yüklediğin belgeler: bilet ya da rezervasyon onayı gibi PDF’ler ve görseller. Dosya depolama alanımızda gizli olarak saklanır ve yalnızca o gezinin üyeleri tarafından görülebilir.",
+          "Ortak kullanım: Bir geziyi kimlerle paylaştığın, bu kişilerin rolleri ve oluşturduğun paylaşım bağlantıları.",
+          "Çökme raporları ve performans verileri: Uygulama çökerse hatayı, cihaz türünü, işletim sistemini ve uygulama sürümünü içeren bir rapor, küçük bir performans ölçümü örneğiyle (ekranların ve isteklerin ne kadar sürdüğü) birlikte Sentry’ye gönderilir. Bu rapor gezi içeriğini kapsamaz."
+        ],
+        "paragraphs": [
+          "Rehberini, reklam kimliğini ya da tarama geçmişini toplamayız; seni başka uygulamalarda veya web sitelerinde izlemeyiz."
+        ]
+      },
+      {
+        "heading": "Konumun",
+        "paragraphs": [
+          "Uygulama, yalnızca sen istediğinde (Bugün ekranındaki “Ne kadar uzaktayım?” ya da haritadaki “Konumumdan” seçeneği) mesafeyi tahmin etmek veya ilk durağına bir çizgi çizmek için cihazındaki anlık konumunu okur. Konumun hesabına kaydedilmez ve sunucularımıza gönderilmez. Konum erişimini telefonunun ya da tarayıcının ayarlarından istediğin zaman kapatabilirsin."
+        ]
+      },
+      {
+        "heading": "Verilerini nasıl kullanırız",
+        "bullets": [
+          "Uygulamayı çalıştırmak için: gezilerini saklamak, cihazların arasında senkronize etmek ve davet ettiğin kişilerle paylaşmak.",
+          "Rota ve öneri hazırlamak için: yer adları, koordinatlar ve yazdığın metinler aşağıda listelenen hizmetlere gönderilir.",
+          "Hataları düzeltmek için: çökme raporları sorunları bulup düzeltmemize yardımcı olur."
+        ],
+        "paragraphs": [
+          "Verilerini asla satmayız; reklam ya da profil oluşturma amacıyla kullanmayız."
+        ]
+      },
+      {
+        "heading": "Verileri bizim adımıza işleyen hizmetler",
+        "bullets": [
+          "Supabase: veritabanı, giriş ve sunucu fonksiyonları. Hesap ve gezi verilerini saklar.",
+          "Google Maps Platform: yer arama, yer ayrıntıları ve rota süreleri. Arama metnini, yer kimliklerini ve koordinatları alır. Sonuçlar, yer kimlikleri ve koordinatlar dışında saklanmaz.",
+          "Google Gemini ve Groq: yapay zekâyla gezi planlama ve düzenleme. Yalnızca yapay zekâ planlayıcısına yazdığın metni ve gezideki yerlerin adlarını alırlar; e-posta adresini asla almazlar.",
+          "OpenRouteService: rota optimizasyonu ve yolculuk süreleri. Koordinatları alır.",
+          "Open-Meteo: hava durumu tahminleri. Koordinatları ve tarihleri alır.",
+          "OpenFreeMap / OpenStreetMap: web haritası için harita karoları. Karo sunucuları IP adresini ve görüntülediğin harita alanını alır.",
+          "Google Maps SDK: Android uygulamasında haritayı çizer. Google, cihaz ve harita kullanım verilerini kendi koşulları ve gizlilik politikası kapsamında alır.",
+          "Cloudflare Pages: web uygulamasını barındırır; sayfaları sunmak için IP adresi gibi standart istek verilerini işler.",
+          "Sentry: yukarıda açıklandığı gibi çökme raporları ve performans ölçümü örnekleri."
+        ],
+        "paragraphs": [
+          "Bu sağlayıcıların bazıları, Amerika Birleşik Devletleri de dahil olmak üzere, senin ülkenin dışında bulunur. Verileri kendi gizlilik koşulları kapsamında ve yalnızca bize hizmet sunmak için işlerler."
+        ]
+      },
+      {
+        "heading": "Verileri ne kadar süre saklarız",
+        "paragraphs": [
+          "Verilerin, hesabın olduğu sürece saklanır. Hesabını sildiğinde hesabın ve gezilerin (yerleri, harcamaları, paylaşım bağlantıları ve yüklenen belge ve dosyalar dahil) hemen silinir; yedekler 30 gün içinde yenilenir. Cihazına kaydedilen veriler hesabını sildiğinde temizlenir; bunları uygulamayı kaldırarak ya da site verilerini temizleyerek de silebilirsin."
+        ]
+      },
+      {
+        "heading": "Seçeneklerin ve hakların",
+        "bullets": [
+          "Dışa aktarma: Profil ve ayarlar → Verilerin → Verilerimi dışa aktar seçeneği her şeyi bir JSON dosyası olarak indirir.",
+          "Silme: Profil ve ayarlar → Hesabı sil seçeneği hesabını ve tüm gezilerini kalıcı olarak kaldırır. Silme talebini bize e-postayla da iletebilirsin.",
+          "Düzeltme: Uygulamadaki her geziyi, yeri ya da harcamayı istediğin zaman düzenleyebilir veya silebilirsin.",
+          "Talep: {{email}} adresine e-posta göndererek verilerinin bir kopyasını, düzeltilmesini ya da silinmesini isteyebilirsin. Yaşadığın yere bağlı olarak (örneğin AB’de veya Birleşik Krallık’ta GDPR kapsamında) veri koruma otoritesine şikâyette de bulunabilirsin."
+        ]
+      },
+      {
+        "heading": "Güvenlik",
+        "paragraphs": [
+          "Veriler aktarım sırasında şifrelenir (HTTPS). Veritabanı erişim kuralları, verileri yalnızca senin ve geziyi paylaştığın kişilerin okuyabilmesini sağlar. Hiçbir sistem kusursuz derecede güvenli değildir; bu yüzden lütfen gezi notlarında hassas kişisel bilgiler (pasaport numarası gibi) saklama."
+        ]
+      },
+      {
+        "heading": "Çocuklar",
+        "paragraphs": [
+          "Tripvisor 13 yaşından küçük çocuklara yönelik değildir ve onların verilerini bilerek toplamayız."
+        ]
+      },
+      {
+        "heading": "Değişiklikler",
+        "paragraphs": [
+          "Bu politika önemli ölçüde değişirse yukarıdaki tarihi güncelleriz ve bunu uygulamada duyururuz. Güncel sürüm her zaman bu sayfada yer alır."
+        ]
+      }
+    ]
+  },
+  "terms": {
+    "title": "Kullanım koşulları",
+    "intro": "Bu koşullar, ücretsiz bir seyahat planlayıcısı olan Tripvisor’ı nasıl kullanabileceğini düzenler. Hesap oluşturarak ya da uygulamayı kullanarak bu koşulları kabul etmiş olursun. Verilerini nasıl işlediğimiz gizlilik politikasında açıklanmıştır.",
+    "related": "Gizlilik politikasını oku",
+    "sections": [
+      {
+        "heading": "Hizmet",
+        "paragraphs": [
+          "Tripvisor, tatil rotası planlamak için geliştirilmiş ücretsiz bir hobi projesidir: yerleri günlere ayırma, yolculuk sürelerini tahmin etme, yapay zekâyla plan taslağı hazırlama ve gezileri arkadaşlarla paylaşma. Hizmet “olduğu gibi” sunulur; özellikler her an değişebilir ya da kaldırılabilir."
+        ]
+      },
+      {
+        "heading": "Hesabın",
+        "bullets": [
+          "Giriş yapmak için bir e-posta adresine (ya da Google hesabına) ihtiyacın var. Bu gelen kutusuna erişimi güvende tut; onu okuyabilen herkes senin adına giriş yapabilir.",
+          "En az 13 yaşında ya da yaşadığın yerde çevrim içi hizmetler için geçerli asgari yaşta olmalısın.",
+          "Hesabını istediğin zaman Profil ve ayarlar bölümünden silebilirsin."
+        ]
+      },
+      {
+        "heading": "İçeriğin",
+        "paragraphs": [
+          "Geziler, notlar, harcamalar ve girdiğin diğer her şey sana ait olmaya devam eder. Bunları yalnızca uygulamayı senin ve paylaştığın kişiler için çalıştırmak amacıyla gerektiği ölçüde saklamamıza, işlememize ve göstermemize izin verirsin. Bir geziyi paylaştığında ya da paylaşım bağlantısı oluşturduğunda, erişimi olan herkes o geziyi görebilir."
+        ]
+      },
+      {
+        "heading": "Kabul edilebilir kullanım",
+        "bullets": [
+          "Tripvisor’ı yasa dışı hiçbir amaçla ya da birini taciz etmek için kullanma.",
+          "Hizmeti veya API kotalarını bozmaya, aşırı yüklemeye, otomatik olarak veri kazımaya (scraping) ya da tersine mühendislikle çözmeye çalışma.",
+          "Paylaşma hakkına sahip olmadığın içerikleri yükleme."
+        ],
+        "paragraphs": [
+          "Hizmeti kötüye kullanan hesapları, özellikle ücretsiz hizmeti herkes için riske attığı durumlarda askıya alabiliriz."
+        ]
+      },
+      {
+        "heading": "Haritalar, rotalar ve yapay zekâ önerileri",
+        "paragraphs": [
+          "Yolculuk süreleri, açılış saatleri, rotalar, hava durumu ve yapay zekâyla hazırlanan planlar, üçüncü taraf hizmetlerden (Google Maps, OpenFreeMap/OpenStreetMap, OpenRouteService, Open-Meteo, Gemini ve Groq dahil) gelen tahminlerdir. Yanlış ya da güncelliğini yitirmiş olabilirler. Açılış saatlerini, yerel koşulları ve güvenlik bilgilerini her zaman kendin kontrol et; seyahat ederken yol işaretlerine ve yerel kurallara uy. Harita verileri ve yer bilgileri, Google Maps Hizmet Şartları ve OpenStreetMap lisansı dahil olmak üzere sağlayıcıların kendi koşullarına tabidir."
+        ]
+      },
+      {
+        "heading": "Garanti verilmez, sorumluluk sınırlıdır",
+        "paragraphs": [
+          "Tripvisor ücretsiz olarak, “olduğu gibi” ve “mevcut olduğu şekliyle”, hiçbir türde garanti verilmeksizin sunulur. Yasaların izin verdiği ölçüde geliştirici; kaçırılan rezervasyonlardan, seyahat masraflarından, kaybolan verilerden ya da uygulamanın kullanımından doğan herhangi bir dolaylı zarardan sorumlu değildir. Önemli rezervasyonlarının ve belgelerinin bir kopyasını kendin sakla; verilerini istediğin zaman dışa aktarabilirsin. Buradaki hiçbir hüküm, tüketici mevzuatı kapsamında sahip olduğun ve vazgeçilemeyen hakları sınırlamaz."
+        ]
+      },
+      {
+        "heading": "Hizmetin sona ermesi",
+        "paragraphs": [
+          "Tripvisor’ı kullanmayı istediğin zaman bırakabilir ve hesabını silebilirsin. Hizmet bir gün kapatılırsa, gezilerini dışa aktarabilmen için mümkün olduğunda uygulama içinde makul bir süre önceden bildirimde bulunuruz."
+        ]
+      },
+      {
+        "heading": "Bu koşullardaki değişiklikler",
+        "paragraphs": [
+          "Bu koşulları güncelleyebiliriz; yukarıdaki tarih en son sürümü gösterir. Bir değişiklikten sonra uygulamayı kullanmaya devam etmen, güncellenen koşulları kabul ettiğin anlamına gelir."
+        ]
+      }
+    ]
+  }
+}

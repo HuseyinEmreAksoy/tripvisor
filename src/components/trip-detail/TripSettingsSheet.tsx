@@ -20,10 +20,31 @@ import { useTheme } from '@/theme';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 // Metro resolves ics.native.ts on native, ics.web.ts on web automatically.
 import { useDownloadTripIcs } from '@/api/ics';
-import { useUpdateTrip, type TransportMode, type TripCurrency } from '@/api';
+import { DeleteTripError, useUpdateTrip, type TransportMode, type TripCurrency } from '@/api';
 import { CoverPhotoSection } from './CoverPhotoSection';
 import { CoverPickerModal } from './CoverPickerModal';
 import { SectionHeading } from './TripHubCards';
+
+// User-facing copy for delete failures. Plain strings until the i18n step
+// lands (then these move to `t()` keys).
+const COPY = {
+  deleteStorageCleanupFailed: "Couldn't remove the trip's files — nothing was deleted. Try again.",
+  deleteNotOwner: 'Only the trip owner can delete this trip.',
+  deleteGeneric: "Couldn't delete this trip. Check your connection and try again.",
+} as const;
+
+/**
+ * Map a `useDeleteTrip` failure to the message shown under the Delete button.
+ * `storage_cleanup_failed` is atomic server-side (the row is kept when the
+ * trip's Storage files can't be removed), so the copy says nothing was lost.
+ */
+export function deleteTripErrorMessage(err: unknown): string {
+  if (err instanceof DeleteTripError) {
+    if (err.code === 'storage_cleanup_failed') return COPY.deleteStorageCleanupFailed;
+    if (err.code === 'not_owner') return COPY.deleteNotOwner;
+  }
+  return COPY.deleteGeneric;
+}
 
 const CURRENCIES: TripCurrency[] = ['USD', 'EUR', 'GBP', 'TRY', 'JPY'];
 
@@ -42,7 +63,10 @@ export interface TripSettingsSheetProps {
   coverPhotoPlaceId: string | null;
   onDelete: () => void;
   deleting: boolean;
-  /** Shown under the Delete button when the last delete attempt failed. */
+  /**
+   * Shown under the Delete button when the last delete attempt failed.
+   * Build it with {@link deleteTripErrorMessage} so typed codes get their copy.
+   */
   deleteError?: string | null;
 }
 

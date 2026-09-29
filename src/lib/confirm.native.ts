@@ -7,11 +7,14 @@
  * Consumers import as `@/lib/confirm`.
  */
 import { Alert } from 'react-native';
+import { i18n } from '@/i18n';
 
 export interface ConfirmDestructiveOpts {
   title: string;
   message: string;
   confirmLabel: string;
+  /** Defaults to `common:actions.cancel` in the app language. */
+  cancelLabel?: string;
 }
 
 /**
@@ -26,7 +29,7 @@ export async function confirmDestructive(opts: ConfirmDestructiveOpts): Promise<
       opts.message,
       [
         {
-          text: 'Cancel',
+          text: opts.cancelLabel ?? i18n.t('common:actions.cancel'),
           style: 'cancel',
           onPress: () => resolve(false),
         },

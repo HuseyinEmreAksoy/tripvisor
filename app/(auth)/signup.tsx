@@ -10,6 +10,9 @@
  * listing.
  *
  * Imagery: bundled brand photo (assets/images/hero-signup.jpg).
+ *
+ * M5 Y1.4: strings from the `auth` / `errors` namespaces; the "or continue
+ * with email" divider belongs to GoogleSignInButton (it used to render twice).
  */
 import { useState } from 'react';
 import { useSafeBack } from '@/hooks/useSafeBack';
@@ -23,18 +26,21 @@ import { LegalLinks } from '@/components/legal/LegalLinks';
 import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useT } from '@/i18n';
+import { authErrorKey } from '@/components/auth/authErrorKey';
 
 // Bundled brand art (mountain road at sunrise) — distinct from login, offline-safe.
 const HERO_SOURCE = require('../../assets/images/hero-signup.jpg');
 
 const Schema = z.object({
-  email: z.string().email('Enter a valid email'),
+  email: z.string().email(),
 });
 
 type FormValues = z.infer<typeof Schema>;
 
 export default function Signup() {
   const t = useTheme();
+  const { t: tx } = useT(['auth', 'errors']);
   const goBack = useSafeBack('/login');
   const signIn = useSignInWithMagicLink();
   const [sentTo, setSentTo] = useState<string | null>(null);
@@ -62,31 +68,22 @@ export default function Signup() {
   // Shared form content — rendered identically on desktop and mobile.
   const formContent = (
     <>
-      <Heading level={2}>Create your free account</Heading>
+      <Heading level={2}>{tx('signup.title')}</Heading>
 
-      {/* v2 N1 1.6: Google OAuth above the magic-link form */}
+      {/* v2 N1 1.6: Google OAuth (and its "or" divider) above the magic-link form */}
       <GoogleSignInButton />
 
-      <View style={[styles.orRow, { gap: t.spacing.sm }]} accessibilityElementsHidden importantForAccessibility="no">
-        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>or with email</Text>
-        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
-      </View>
-
-      <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-        No password to create or remember. Enter your email and we’ll send a one-time link that sets up your account
-        and signs you in.
-      </Text>
+      <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('signup.intro')}</Text>
 
       <Controller
         control={control}
         name="email"
         rules={{
-          validate: (v) => Schema.shape.email.safeParse(v.trim()).success || 'Enter a valid email',
+          validate: (v) => Schema.shape.email.safeParse(v.trim()).success || tx('email.invalid'),
         }}
         render={({ field: { value, onChange, onBlur } }) => (
           <TextField
-            label="Email address"
+            label={tx('email.label')}
             autoCapitalize="none"
             autoComplete="email"
             autoCorrect={false}
@@ -105,26 +102,26 @@ export default function Signup() {
 
       {sentTo ? (
         <Text accessibilityLiveRegion="polite" style={[t.typography.body, { color: t.colors.success }]}>
-          {`Link sent to ${sentTo}. Open it on this device to finish. Can’t find it? Check your spam folder.`}
+          {tx('signup.sentTo', { email: sentTo })}
         </Text>
       ) : null}
 
       {signIn.error ? (
         <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[t.typography.small, { color: t.colors.danger }]}>
-          {(signIn.error as Error).message}
+          {tx(authErrorKey(signIn.error))}
         </Text>
       ) : null}
 
       <Button
-        label={sentTo ? 'Resend link' : 'Email me a sign-up link'}
+        label={sentTo ? tx('inbox.resend') : tx('signup.submit')}
         onPress={handleSubmit(onSubmit)}
         loading={signIn.isPending}
         disabled={!isValid}
       />
 
-      <Button variant="ghost" label="Already have an account? Sign in" onPress={goBack} />
+      <Button variant="ghost" label={tx('signup.toLogin')} onPress={goBack} />
 
-      <LegalLinks prefix="By creating an account you agree to the" />
+      <LegalLinks variant="signUp" />
     </>
   );
 
@@ -150,9 +147,9 @@ export default function Signup() {
 
   const heroCopy = (
     <>
-      <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>Start your{'\n'}adventure.</Text>
+      <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>{tx('hero.signupTitle')}</Text>
       <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
-        Free forever. No credit card. Just great trips.
+        {tx('hero.signupSubtitle')}
       </Text>
       <HeroValueChips />
     </>
@@ -243,6 +240,4 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: 'center',
   },
-  orRow: { flexDirection: 'row', alignItems: 'center' },
-  orLine: { flex: 1, height: StyleSheet.hairlineWidth },
 });

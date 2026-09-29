@@ -46,6 +46,8 @@
  */
 
 import type {
+  CurrencyCode,
+  LegTransportMode,
   RouteRenderMode,
   TransportMode,
   Trip,
@@ -88,7 +90,10 @@ export function isTier1SyncActive(): boolean {
   return isTier1SyncEnabled() && isTier1SyncInitialized();
 }
 
-export type SyncWriteErrorCode = 'sync_inactive' | 'table_not_writable' | 'row_not_found';
+/** `invalid_value` (M5): a value the DB CHECKs would reject — thrown BEFORE the
+ * store write, because the engine retries a server-rejected write forever
+ * (hydrate.ts header), so that row would never sync. */
+export type SyncWriteErrorCode = 'sync_inactive' | 'table_not_writable' | 'row_not_found' | 'invalid_value';
 
 /** Typed error for the gate + lookup failures (mirrors PlacesError/AuthMutationError). */
 export class SyncWriteError extends Error {
@@ -178,6 +183,108 @@ function capturePatch(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Value guards (M5 Y1.1) — client mirrors of the 0034/0035 CHECKs
+// ───────────────────────────────────────────────────────────────────────────
+//
+// The sync engine retries a write the server rejects FOREVER (infinite retry;
+// RLS/CHECK rejections included — see hydrate.ts). A bad value that reached
+// the store would therefore never sync and would keep failing in telemetry.
+// So every M5 CHECK is re-asserted here, on the would-be row, and throws
+// SyncWriteError('invalid_value') before the store is touched.
+// Keep these in lockstep with supabase/migrations/0034 + 0035.
+
+/** ISO 4217 alphabetic shape (trips_currency_check & friends). */
+const CURRENCY_CODE_RE = /^[A-Z]{3}$/;
+/** trip_places_arrival_mode_check. */
+const ARRIVAL_MODES: ReadonlySet<string> = new Set([
+  'driving',
+  'walking',
+  'bicycling',
+  'transit',
+  'flight',
+  'ferry',
+]);
+
+function invalid(message: string): never {
+  throw new SyncWriteError('invalid_value', message);
+}
+
+function isNil(v: unknown): v is null | undefined {
+  return v === null || v === undefined;
+}
+
+/** 'YYYY-MM-DD' that is a real calendar date (Postgres `date` rejects 2026-02-30). */
+function isIsoDate(v: unknown): boolean {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number) as [number, number, number];
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+function assertCurrencyField(field: string, value: unknown): void {
+  if (isNil(value)) return;
+  if (typeof value !== 'string' || !CURRENCY_CODE_RE.test(value)) {
+    invalid(`${field} must be an ISO 4217 code like "EUR" (got ${JSON.stringify(value)})`);
+  }
+}
+
+/** trips.currency is NOT NULL: only the shape is checked (null never reaches here from the typed API). */
+function assertTripValues(row: Record<string, unknown>): void {
+  if ('currency' in row) assertCurrencyField('trips.currency', row['currency']);
+}
+
+const MONEY_FIELDS = ['currency', 'fx_rate', 'fx_date', 'fx_home_currency'] as const;
+
+/**
+ * trip_expenses money CHECKs (0034 §3b) + the pre-existing amount >= 0 (0010).
+ * `row` is the FULL would-be row (for an update: the store row merged with the
+ * patch — the frozen-rate rule couples four columns). `touched` (updates
+ * only) limits the per-field checks to the fields the patch writes, so a
+ * label-only edit of a hydrated row is never blocked by an untouched value;
+ * the coupling rule runs whenever any money field is touched.
+ */
+function assertExpenseValues(row: Record<string, unknown>, touched?: ReadonlySet<string>): void {
+  const checks = (field: string) => touched === undefined || touched.has(field);
+  const amount = row['amount'];
+  if (checks('amount') && (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0)) {
+    invalid(`trip_expenses.amount must be a finite number >= 0 (got ${JSON.stringify(amount)})`);
+  }
+  if (checks('currency')) assertCurrencyField('trip_expenses.currency', row['currency']);
+  if (checks('fx_home_currency')) {
+    assertCurrencyField('trip_expenses.fx_home_currency', row['fx_home_currency']);
+  }
+  const rate = row['fx_rate'];
+  if (checks('fx_rate') && !isNil(rate) && (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0)) {
+    invalid(`trip_expenses.fx_rate must be a number > 0 or null (got ${JSON.stringify(rate)})`);
+  }
+  const date = row['fx_date'];
+  if (checks('fx_date') && !isNil(date) && !isIsoDate(date)) {
+    invalid(`trip_expenses.fx_date must be 'YYYY-MM-DD' or null (got ${JSON.stringify(date)})`);
+  }
+  const moneyTouched = touched === undefined || MONEY_FIELDS.some((f) => touched.has(f));
+  if (moneyTouched && !isNil(rate) && (isNil(row['currency']) || isNil(date) || isNil(row['fx_home_currency']))) {
+    invalid(
+      'trip_expenses: a frozen fx_rate needs currency, fx_date and fx_home_currency (use fx_rate = null for "rate pending")',
+    );
+  }
+}
+
+/** trip_places arrival CHECKs (0035 §1). Independent columns, as in the DB. */
+function assertPlaceValues(row: Record<string, unknown>): void {
+  const mode = row['arrival_mode'];
+  if (!isNil(mode) && (typeof mode !== 'string' || !ARRIVAL_MODES.has(mode))) {
+    invalid(`trip_places.arrival_mode must be one of ${[...ARRIVAL_MODES].join('|')} or null (got ${JSON.stringify(mode)})`);
+  }
+  const minutes = row['arrival_minutes'];
+  if (
+    !isNil(minutes) &&
+    (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > 1440)
+  ) {
+    invalid(`trip_places.arrival_minutes must be an integer 1–1440 or null (got ${JSON.stringify(minutes)})`);
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Trips
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -229,6 +336,7 @@ export function createTrip(input: CreateTripInput): string {
     route_render_mode: input.route_render_mode ?? 'optimized',
     cover_photo_google_place_id: input.cover_photo_google_place_id ?? null,
   };
+  assertTripValues(row as unknown as Record<string, unknown>);
   // Cast rationale: the store row type (Trip) declares the server-stamped
   // fields as required because HYDRATED rows always carry them; a local
   // create must omit them (created_at absence IS the create signal). The
@@ -269,6 +377,7 @@ export function updateTrip(id: string, patch: TripWritePatch, label = 'Edit trip
     TRIP_PATCH_FIELDS,
     prev as unknown as Record<string, unknown>,
   );
+  assertTripValues(clean);
   node(tier1Store$.trips[id]).assign(clean as TripWritePatch);
   return {
     label,
@@ -311,6 +420,10 @@ export interface CreatePlaceInput {
    * hand-ordered" — callers that insert into an ordered list compute
    * rankBetween(prevNeighbor, nextNeighbor) themselves. */
   manual_rank?: string | null;
+  /** M5 (0035): mode override for the leg arriving here. Defaults to null (inherit). */
+  arrival_mode?: LegTransportMode | null;
+  /** M5 (0035): user-given minutes for that leg (1–1440). Defaults to null. */
+  arrival_minutes?: number | null;
 }
 
 /** Store shape of a locally-created place (no server timestamps). The
@@ -345,7 +458,10 @@ export function createPlace(input: CreatePlaceInput): string {
     pinned_start: input.pinned_start ?? null,
     manual_rank: input.manual_rank ?? null,
     deleted: false,
+    arrival_mode: input.arrival_mode ?? null,
+    arrival_minutes: input.arrival_minutes ?? null,
   };
+  assertPlaceValues(row as unknown as Record<string, unknown>);
   // Same cast rationale as createTrip: server-stamped fields must be absent.
   node(tier1Store$.tripPlaces[id]).set(row as TripPlace);
   return id;
@@ -367,10 +483,14 @@ export type PlaceWritePatch = Partial<
     | 'leave_before'
     | 'pinned_start'
     | 'manual_rank'
+    | 'arrival_mode'
+    | 'arrival_minutes'
   >
 >;
 
-/** Patch a place; returns the inverse-op entry (prior values restore). */
+/** Patch a place; returns the inverse-op entry (prior values restore).
+ * M5: clearing the per-leg override = `{ arrival_mode: null, arrival_minutes: null }`
+ * (minutes are ignored without a mode, but clear both to keep rows tidy). */
 export function updatePlace(id: string, patch: PlaceWritePatch, label = 'Edit place'): UndoEntry {
   assertWritable('trip_places');
   const prev = node(tier1Store$.tripPlaces[id]).peek();
@@ -380,6 +500,7 @@ export function updatePlace(id: string, patch: PlaceWritePatch, label = 'Edit pl
     PLACE_PATCH_FIELDS,
     prev as unknown as Record<string, unknown>,
   );
+  assertPlaceValues(clean);
   node(tier1Store$.tripPlaces[id]).assign(clean as PlaceWritePatch);
   return {
     label,
@@ -500,6 +621,19 @@ export interface CreateExpenseInput {
   kind?: TripExpenseKind;
   day_index?: number | null;
   label?: string | null;
+  /*
+   * M5 (0034, ADR-0012) — see TripExpense in src/api/types.ts for the model.
+   * All default to null. A null currency is filled server-side (0034 §3d) with
+   * the trip's home currency at rate 1 and merged back on the create ack;
+   * M5 callers should always send the currency they entered. Offline with no
+   * known rate: send currency + fx_date + fx_home_currency and fx_rate: null
+   * ("rate pending"). A non-null fx_rate requires the other three (DB CHECK,
+   * asserted here before the store write).
+   */
+  currency?: CurrencyCode | null;
+  fx_rate?: number | null;
+  fx_date?: string | null;
+  fx_home_currency?: CurrencyCode | null;
 }
 
 /** Store shape of a locally-created expense (no server timestamps). */
@@ -519,16 +653,33 @@ export function createExpense(input: CreateExpenseInput): string {
     day_index: input.day_index ?? null,
     label: input.label ?? null,
     deleted: false,
+    currency: input.currency ?? null,
+    fx_rate: input.fx_rate ?? null,
+    fx_date: input.fx_date ?? null,
+    fx_home_currency: input.fx_home_currency ?? null,
   };
+  assertExpenseValues(row as unknown as Record<string, unknown>);
   // Same cast rationale as createTrip: server-stamped fields must be absent.
   node(tier1Store$.tripExpenses[id]).set(row as TripExpense);
   return id;
 }
 
 /** Client-writable expense fields. `deleted` is excluded — tombstoneExpense()
- * owns the delete lifecycle (and its inverse). */
+ * owns the delete lifecycle (and its inverse). M5: the four money fields —
+ * e.g. the Y2.2 reconciler's `{ fx_rate, fx_date, fx_home_currency }` fill. */
 export type ExpenseWritePatch = Partial<
-  Pick<TripExpense, 'category' | 'amount' | 'kind' | 'day_index' | 'label'>
+  Pick<
+    TripExpense,
+    | 'category'
+    | 'amount'
+    | 'kind'
+    | 'day_index'
+    | 'label'
+    | 'currency'
+    | 'fx_rate'
+    | 'fx_date'
+    | 'fx_home_currency'
+  >
 >;
 
 const EXPENSE_PATCH_FIELDS: ReadonlySet<string> = new Set(
@@ -544,6 +695,11 @@ export function updateExpense(id: string, patch: ExpenseWritePatch, label = 'Edi
     patch as Record<string, unknown>,
     EXPENSE_PATCH_FIELDS,
     prev as unknown as Record<string, unknown>,
+  );
+  // The frozen-rate rule spans columns: validate the would-be row.
+  assertExpenseValues(
+    { ...(prev as unknown as Record<string, unknown>), ...clean },
+    new Set(Object.keys(clean)),
   );
   node(tier1Store$.tripExpenses[id]).assign(clean as ExpenseWritePatch);
   return {

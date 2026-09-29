@@ -1,0 +1,53 @@
+{
+  "title": "Profil ve ayarlar",
+  "sections": {
+    "account": "Hesap",
+    "appearance": "Görünüm",
+    "language": "Dil",
+    "data": "Verilerin",
+    "legal": "Gizlilik ve yasal",
+    "delete": "Hesabı sil"
+  },
+  "account": {
+    "signedInAs": "Giriş yapılan hesap",
+    "emailA11y": "E-posta: {{email}}",
+    "changeEmail": "E-postayı değiştir",
+    "changeEmailA11y": "E-posta adresini değiştir"
+  },
+  "theme": {
+    "light": "Açık",
+    "dark": "Koyu",
+    "system": "Sistem"
+  },
+  "language": {
+    "deviceHint": "Cihaz: {{language}}",
+    "systemA11y": "Sistem dili, şu an {{language}}",
+    "groupA11y": "Uygulama dili"
+  },
+  "data": {
+    "export": "Verilerimi dışa aktar",
+    "exportA11y": "Verilerimi JSON olarak dışa aktar",
+    "exportHint": "Tüm gezilerini ve yerlerini içeren bir JSON dosyası indirir.",
+    "signOut": "Çıkış yap"
+  },
+  "legal": {
+    "privacy": "Gizlilik politikası",
+    "terms": "Kullanım koşulları"
+  },
+  "delete": {
+    "body": "Hesabını ve içindeki her şeyi kalıcı olarak siler: geziler, yerler, harcamalar, bavul listeleri, yüklenen belgeler ve paylaşım bağlantıları. Seninle paylaşılan geziler sahiplerinde kalır. Bir kopyasını istiyorsan önce verilerini dışa aktar.",
+    "button": "Hesabı sil",
+    "a11y": "Hesabı kalıcı olarak sil",
+    "hint": "Onay ister. Hesabını ve tüm gezilerini kalıcı olarak kaldırır.",
+    "confirmTitle": "Hesabın silinsin mi?",
+    "confirmMessage": "Bu işlem hesabını ve tüm gezilerini kalıcı olarak siler. Geri alınamaz.",
+    "confirmLabel": "Sil"
+  },
+  "changeEmail": {
+    "title": "E-postayı değiştir",
+    "current": "Mevcut: {{email}}",
+    "placeholder": "Yeni e-posta adresi",
+    "sent": "Değişikliği onaylamak için {{email}} adresindeki gelen kutunu kontrol et.",
+    "submit": "Onay gönder"
+  }
+}

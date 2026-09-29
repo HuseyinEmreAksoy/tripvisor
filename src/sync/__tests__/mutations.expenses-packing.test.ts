@@ -49,6 +49,12 @@ describe('expenses', () => {
       day_index: null,
       label: null,
       deleted: false,
+      // M5 (0034): money fields are explicit nulls on a currency-less create
+      // (complete-create rule); the server fills the home currency on ack.
+      currency: null,
+      fx_rate: null,
+      fx_date: null,
+      fx_home_currency: null,
     });
     expect('created_at' in row).toBe(false);
     expect('updated_at' in row).toBe(false);

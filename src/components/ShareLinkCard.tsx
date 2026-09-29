@@ -7,6 +7,10 @@
  * 2. Invite collaborator — "Invite a specific person by email". Navigates to
  *    /trip/[id]/collaborators, where invite links are shared the same way.
  *
+ * Owner-only: `share-trip` create/revoke reject collaborators with 403
+ * `not_owner` (security audit #5). Callers render this card for the owner
+ * only; a stale role still gets a clear message instead of "try again".
+ *
  * URL shape is built by the platform-split `buildAppUrl` helper
  * (src/components/share/shareSheet.{web,native}.ts) so this shared file
  * never touches `window`:
@@ -22,8 +26,29 @@ import { Icon } from './Icon';
 import { useTheme } from '@/theme';
 import { copyToClipboard } from '@/lib/clipboard';
 import { confirmDestructive } from '@/lib/confirm';
-import { useCreateShareLink, useRevokeShareLink } from '@/api/share';
+import { ShareLinkError, useCreateShareLink, useRevokeShareLink } from '@/api/share';
 import { buildAppUrl, useShareAction } from './share';
+
+// Copy added in the 2026-09-29 security follow-up. Plain strings until the
+// i18n step lands (then these move to `t()` keys).
+const COPY = {
+  notOwner: 'Only the trip owner can create a share link. Ask them to send you one.',
+  createFailed: 'Could not create link — try again.',
+  revokeFailed: 'Could not revoke link — try again.',
+} as const;
+
+/**
+ * Public links are OWNER-ONLY server-side (security audit #5). Callers gate
+ * the card on ownership, but a stale role can still reach the server, so a
+ * `not_owner` failure gets its own message instead of "try again".
+ */
+function isNotOwner(err: unknown): boolean {
+  return err instanceof ShareLinkError && err.code === 'not_owner';
+}
+
+function shareErrorMessage(err: unknown, fallback: string): string {
+  return isNotOwner(err) ? COPY.notOwner : fallback;
+}
 
 interface ShareLinkCardProps {
   tripId: string;
@@ -42,6 +67,8 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
 
   const createLink = useCreateShareLink(tripId);
   const revokeLink = useRevokeShareLink(tripId);
+  // Retrying can't succeed for a non-owner, so the button goes inert.
+  const createForbidden = isNotOwner(createLink.error);
 
   const shareUrlResult = token ? buildAppUrl(`share/${token}`) : null;
   const shareUrl = shareUrlResult?.url ?? null;
@@ -174,7 +201,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
                 style={[t.typography.caption, { color: t.colors.danger }]}
                 accessibilityLiveRegion="polite"
               >
-                Could not revoke link — try again.
+                {shareErrorMessage(revokeLink.error, COPY.revokeFailed)}
               </Text>
             ) : null}
           </>
@@ -188,6 +215,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
               variant="secondary"
               onPress={handleCreate}
               loading={createLink.isPending}
+              disabled={createForbidden}
               accessibilityLabel="Create a read-only share link for this trip"
             />
             {createLink.isError ? (
@@ -195,7 +223,7 @@ export function ShareLinkCard({ tripId, tripTitle }: ShareLinkCardProps) {
                 style={[t.typography.caption, { color: t.colors.danger }]}
                 accessibilityLiveRegion="polite"
               >
-                Could not create link — try again.
+                {shareErrorMessage(createLink.error, COPY.createFailed)}
               </Text>
             ) : null}
           </>

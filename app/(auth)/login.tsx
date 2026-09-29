@@ -13,6 +13,11 @@
  *
  * Imagery: bundled brand photo (assets/images/hero-login.jpg), works offline.
  * Decorative — accessibilityElementsHidden keeps it out of the screen-reader tree.
+ *
+ * M5 Y1.4: every string comes from the `auth` / `errors` namespaces, and
+ * Supabase errors are mapped to translated messages (authErrorKey). The "or
+ * continue with email" divider belongs to GoogleSignInButton (it used to be
+ * rendered twice).
  */
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -26,18 +31,21 @@ import { LegalLinks } from '@/components/legal/LegalLinks';
 import { useSignInWithMagicLink } from '@/api';
 import { useTheme } from '@/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { Trans, useT } from '@/i18n';
+import { authErrorKey } from '@/components/auth/authErrorKey';
 
 // Bundled brand art (generated 2026-09-28) — offline-safe and COEP-safe, unlike a hotlink.
 const HERO_SOURCE = require('../../assets/images/hero-login.jpg');
 
 const Schema = z.object({
-  email: z.string().email('Enter a valid email'),
+  email: z.string().email(),
 });
 
 type FormValues = z.infer<typeof Schema>;
 
 export default function Login() {
   const t = useTheme();
+  const { t: tx } = useT(['auth', 'errors']);
   const router = useRouter();
   const signIn = useSignInWithMagicLink();
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
@@ -76,7 +84,7 @@ export default function Login() {
 
   const errorText = signIn.error ? (
     <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[t.typography.small, { color: t.colors.danger }]}>
-      {(signIn.error as Error).message}
+      {tx(authErrorKey(signIn.error))}
     </Text>
   ) : null;
 
@@ -88,26 +96,27 @@ export default function Login() {
           <View style={[styles.confirmIcon, { backgroundColor: t.colors.gradientSubtle, borderRadius: t.radius.pill }]}>
             <Icon name="mail" size={36} color={t.colors.primary} />
           </View>
-          <Heading level={1}>Check your inbox</Heading>
+          <Heading level={1}>{tx('inbox.title')}</Heading>
           <Text style={[t.typography.body, styles.center, { color: t.colors.textMuted }]}>
-            We sent a sign-in link to{' '}
-            <Text style={[t.typography.bodyStrong, { color: t.colors.primary }]}>{submittedEmail}</Text>. Open it on
-            this device and you’re in. No password needed.
+            <Trans
+              t={tx}
+              i18nKey="inbox.body"
+              values={{ email: submittedEmail }}
+              components={{ email: <Text style={[t.typography.bodyStrong, { color: t.colors.primary }]} /> }}
+            />
           </Text>
-          <Text style={[t.typography.caption, styles.center, { color: t.colors.textMuted }]}>
-            The link works once and expires after about an hour. Can’t find it? Check your spam folder.
-          </Text>
+          <Text style={[t.typography.caption, styles.center, { color: t.colors.textMuted }]}>{tx('inbox.hint')}</Text>
           {resent ? (
             <Text accessibilityLiveRegion="polite" style={[t.typography.caption, { color: t.colors.success }]}>
-              A new link is on its way.
+              {tx('inbox.resent')}
             </Text>
           ) : null}
           {errorText}
           <View style={[styles.confirmActions, { gap: t.spacing.sm }]}>
-            <Button label="Resend link" variant="secondary" onPress={resend} loading={signIn.isPending} />
+            <Button label={tx('inbox.resend')} variant="secondary" onPress={resend} loading={signIn.isPending} />
             <Button
               variant="ghost"
-              label="Use a different email"
+              label={tx('inbox.differentEmail')}
               onPress={() => {
                 signIn.reset();
                 setSubmittedEmail(null);
@@ -121,30 +130,22 @@ export default function Login() {
 
   const formContent = (
     <>
-      <Heading level={2}>Sign in</Heading>
+      <Heading level={2}>{tx('login.title')}</Heading>
 
-      {/* v2 N1 1.6: Google OAuth above the magic-link form */}
+      {/* v2 N1 1.6: Google OAuth (and its "or" divider) above the magic-link form */}
       <GoogleSignInButton />
 
-      <View style={[styles.orRow, { gap: t.spacing.sm }]} accessibilityElementsHidden importantForAccessibility="no">
-        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
-        <Text style={[t.typography.caption, { color: t.colors.textMuted }]}>or with email</Text>
-        <View style={[styles.orLine, { backgroundColor: t.colors.border }]} />
-      </View>
-
-      <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-        No password needed. Enter your email and we’ll send you a one-time sign-in link.
-      </Text>
+      <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('login.intro')}</Text>
 
       <Controller
         control={control}
         name="email"
         rules={{
-          validate: (v) => Schema.shape.email.safeParse(v.trim()).success || 'Enter a valid email',
+          validate: (v) => Schema.shape.email.safeParse(v.trim()).success || tx('email.invalid'),
         }}
         render={({ field: { value, onChange, onBlur } }) => (
           <TextField
-            label="Email address"
+            label={tx('email.label')}
             autoCapitalize="none"
             autoComplete="email"
             autoCorrect={false}
@@ -164,15 +165,15 @@ export default function Login() {
       {errorText}
 
       <Button
-        label="Email me a sign-in link"
+        label={tx('login.submit')}
         onPress={handleSubmit(onSubmit)}
         loading={signIn.isPending}
         disabled={!isValid}
       />
 
-      <Button variant="ghost" label="New to Tripvisor? Create an account" onPress={() => router.push('/signup')} />
+      <Button variant="ghost" label={tx('login.toSignup')} onPress={() => router.push('/signup')} />
 
-      <LegalLinks prefix="By signing in you agree to the" />
+      <LegalLinks variant="signIn" />
     </>
   );
 
@@ -254,11 +255,12 @@ function HeroBackdrop() {
 
 function HeroCopy() {
   const t = useTheme();
+  const { t: tx } = useT('auth');
   return (
     <>
-      <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>Your trip,{'\n'}perfectly planned.</Text>
+      <Text style={[styles.heroTitle, { color: '#FFFFFF' }]}>{tx('hero.loginTitle')}</Text>
       <Text style={[t.typography.body, { color: 'rgba(255,255,255,0.85)', marginTop: t.spacing.sm, lineHeight: 24 }]}>
-        Add destinations, optimise your days, share with your crew.
+        {tx('hero.loginSubtitle')}
       </Text>
       <HeroValueChips />
     </>
@@ -307,8 +309,6 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: 'center',
   },
-  orRow: { flexDirection: 'row', alignItems: 'center' },
-  orLine: { flex: 1, height: StyleSheet.hairlineWidth },
   confirmCard: {
     flexGrow: 1,
     alignItems: 'center',

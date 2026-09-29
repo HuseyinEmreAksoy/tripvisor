@@ -15,11 +15,40 @@ const mockCreateMutateAsync = jest.fn<() => Promise<{ token: string }>>();
 const mockRevokeMutateAsync = jest.fn<(input?: { token?: string }) => Promise<{ revoked: number }>>();
 const mockConfirm = jest.fn<() => Promise<boolean>>();
 const mockShareLink = jest.fn<(input: { url: string; title: string; message: string }) => Promise<string>>();
+// Last create failure as the mutation would expose it (null = no error).
+let mockCreateError: Error | null = null;
 
-jest.mock('@/api/share', () => ({
-  useCreateShareLink: () => ({ mutateAsync: mockCreateMutateAsync, isPending: false, isError: false }),
-  useRevokeShareLink: () => ({ mutateAsync: mockRevokeMutateAsync, isPending: false, isError: false }),
-}));
+jest.mock('@/api/share', () => {
+  class ShareLinkError extends Error {
+    code: string;
+    status: number;
+    constructor(code: string, message: string, status: number) {
+      super(message);
+      this.code = code;
+      this.status = status;
+    }
+  }
+  return {
+    ShareLinkError,
+    useCreateShareLink: () => ({
+      mutateAsync: mockCreateMutateAsync,
+      isPending: false,
+      isError: mockCreateError !== null,
+      error: mockCreateError,
+    }),
+    useRevokeShareLink: () => ({
+      mutateAsync: mockRevokeMutateAsync,
+      isPending: false,
+      isError: false,
+      error: null,
+    }),
+  };
+});
+
+// The mocked class (same identity the component's `instanceof` sees).
+const { ShareLinkError: MockShareLinkError } = jest.requireMock<{
+  ShareLinkError: new (code: string, message: string, status: number) => Error;
+}>('@/api/share');
 
 jest.mock('@/lib/clipboard', () => ({
   copyToClipboard: () => Promise.resolve(true),
@@ -54,6 +83,7 @@ beforeEach(() => {
   mockRevokeMutateAsync.mockReset();
   mockConfirm.mockReset();
   mockShareLink.mockReset();
+  mockCreateError = null;
   mockCreateMutateAsync.mockResolvedValue({ token: TOKEN });
   mockRevokeMutateAsync.mockResolvedValue({ revoked: 1 });
   mockConfirm.mockResolvedValue(true);
@@ -81,6 +111,26 @@ describe('ShareLinkCard — before create', () => {
   it('keeps the invite-collaborator entry point', () => {
     const { getByRole } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
     expect(getByRole('button', { name: /manage collaborators/i })).toBeTruthy();
+  });
+});
+
+describe('ShareLinkCard — create failures', () => {
+  // Security audit #5: share-trip create is owner-only (403 not_owner).
+  it('explains not_owner and makes Create inert (a retry cannot succeed)', () => {
+    mockCreateError = new MockShareLinkError('not_owner', 'Only the trip owner can share it', 403);
+    const { getByRole, getByText, queryByText } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(
+      getByText('Only the trip owner can create a share link. Ask them to send you one.'),
+    ).toBeTruthy();
+    expect(queryByText(/could not create link/i)).toBeNull();
+    expect(getByRole('button', CREATE).props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
+  it('keeps the generic retry message for other failures', () => {
+    mockCreateError = new MockShareLinkError('db_error', 'db down', 500);
+    const { getByRole, getByText } = wrap(<ShareLinkCard tripId={TRIP_ID} />);
+    expect(getByText('Could not create link — try again.')).toBeTruthy();
+    expect(getByRole('button', CREATE).props.accessibilityState).toMatchObject({ disabled: false });
   });
 });
 

@@ -7,16 +7,23 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { ThemeProvider } from '@/theme';
 import type { Trip, TripLeg } from '@/api';
-import { TripHeader, TripMenuSheet } from '../TripHeader';
+import { TripHeader, TripMenuSheet, pillForOptimizeError } from '../TripHeader';
 import { IOS_MODAL_HANDOFF_MS } from '../modalHandoff';
 
 // Keep the real API layer (supabase client, NetInfo listeners) out of a
 // presentational test; TripHeader only needs the error class.
 jest.mock('@/api', () => ({
   OptimizeError: class OptimizeError extends Error {
-    code = 'unknown';
+    code: string;
+    constructor(code = 'unknown') {
+      super(code);
+      this.code = code;
+    }
   },
 }));
+const { OptimizeError: MockOptimizeError } = jest.requireMock<{
+  OptimizeError: new (code?: string) => Error;
+}>('@/api');
 // Barrel components pull in the offline module; use NetInfo's official mock.
 jest.mock('@react-native-community/netinfo', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -87,6 +94,53 @@ describe('TripHeader — compact', () => {
     fireEvent.press(getByRole('button', { name: 'Print itinerary' }));
     expect(onPrint).toHaveBeenCalledTimes(1);
     expect(getByRole('button', { name: 'Trip menu' })).toBeTruthy();
+  });
+});
+
+describe('optimize status pill', () => {
+  function renderWithError(optimizeError: unknown) {
+    return wrap(
+      <TripHeader
+        trip={trip}
+        legs={legs}
+        placesCount={5}
+        optimizePending={false}
+        optimizeError={optimizeError}
+        onBack={jest.fn()}
+        onPrint={jest.fn()}
+        onOpenMenu={jest.fn()}
+        compact
+      />,
+    );
+  }
+
+  // Security audit #6: viewers get 403 not_editor — never a red failure pill.
+  it('not_editor shows a neutral "View only" pill, not a failure', () => {
+    expect(pillForOptimizeError(new MockOptimizeError('not_editor'))).toEqual({
+      tone: 'info',
+      label: 'View only',
+    });
+    const { getByText, queryByText } = renderWithError(new MockOptimizeError('not_editor'));
+    expect(getByText('View only')).toBeTruthy();
+    expect(queryByText(/optimize failed/i)).toBeNull();
+  });
+
+  // Audit #2: the per-user daily routing quota resets tomorrow.
+  it('quota_exceeded says the daily route limit is reached', () => {
+    expect(pillForOptimizeError(new MockOptimizeError('quota_exceeded'))).toEqual({
+      tone: 'info',
+      label: 'Daily route limit reached — try again tomorrow',
+    });
+    const { getByText } = renderWithError(new MockOptimizeError('quota_exceeded'));
+    expect(getByText('Daily route limit reached — try again tomorrow')).toBeTruthy();
+  });
+
+  it('other failures keep the generic danger pill', () => {
+    expect(pillForOptimizeError(new MockOptimizeError('db_error'))).toEqual({
+      tone: 'danger',
+      label: 'Optimize failed',
+    });
+    expect(pillForOptimizeError(new Error('network'))).toEqual({ tone: 'danger', label: 'Optimize failed' });
   });
 });
 

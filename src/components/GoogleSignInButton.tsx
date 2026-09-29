@@ -1,7 +1,8 @@
 /**
  * GoogleSignInButton — "Continue with Google" + the "or" divider
  * (v2 Phase N1 step 1.6). Mounted ABOVE the magic-link email form on the
- * login and signup screens.
+ * login and signup screens. It owns the ONLY "or continue with email"
+ * divider, so screens must not render a second one.
  *
  * Self-contained: owns the useGoogleSignIn mutation and its error surface.
  * When the provider isn't configured in Supabase yet (config lands in N2),
@@ -15,16 +16,18 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Button } from './Button';
 import { useTheme } from '@/theme';
 import { useGoogleSignIn } from '@/hooks/useGoogleSignIn';
+import { useT } from '@/i18n';
 
 export function GoogleSignInButton() {
   const t = useTheme();
+  const { t: tx } = useT('auth');
   const google = useGoogleSignIn();
 
   return (
     <View style={{ gap: t.spacing.md }}>
       <Button
         variant="secondary"
-        label="Continue with Google"
+        label={tx('google.continue')}
         loading={google.isPending}
         onPress={() => google.mutate()}
         leftIcon={
@@ -44,16 +47,14 @@ export function GoogleSignInButton() {
           accessibilityLiveRegion="polite"
           style={[t.typography.small, { color: t.colors.danger, textAlign: 'center' }]}
         >
-          {"Google sign-in isn't configured yet — use email below."}
+          {tx('google.notConfigured')}
         </Text>
       ) : null}
 
       {/* "or" divider between OAuth and the email form */}
       <View style={styles.dividerRow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <View style={[styles.dividerLine, { backgroundColor: t.colors.border }]} />
-        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>
-          or continue with email
-        </Text>
+        <Text style={[t.typography.small, { color: t.colors.textMuted }]}>{tx('google.orEmail')}</Text>
         <View style={[styles.dividerLine, { backgroundColor: t.colors.border }]} />
       </View>
     </View>

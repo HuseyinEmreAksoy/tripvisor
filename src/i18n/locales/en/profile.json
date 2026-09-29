@@ -1,0 +1,53 @@
+{
+  "title": "Profile & settings",
+  "sections": {
+    "account": "Account",
+    "appearance": "Appearance",
+    "language": "Language",
+    "data": "Your data",
+    "legal": "Privacy & legal",
+    "delete": "Delete account"
+  },
+  "account": {
+    "signedInAs": "Signed in as",
+    "emailA11y": "Email: {{email}}",
+    "changeEmail": "Change email",
+    "changeEmailA11y": "Change email address"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "language": {
+    "deviceHint": "Device: {{language}}",
+    "systemA11y": "System language, currently {{language}}",
+    "groupA11y": "App language"
+  },
+  "data": {
+    "export": "Export my data",
+    "exportA11y": "Export my data as JSON",
+    "exportHint": "Downloads a JSON file with all your trips and places.",
+    "signOut": "Sign out"
+  },
+  "legal": {
+    "privacy": "Privacy policy",
+    "terms": "Terms of use"
+  },
+  "delete": {
+    "body": "Permanently deletes your account and everything in it: trips, places, expenses, packing lists, uploaded documents and share links. Trips shared with you stay with their owners. Export your data first if you want a copy.",
+    "button": "Delete account",
+    "a11y": "Delete account permanently",
+    "hint": "Requires confirmation. Permanently removes your account and all trips.",
+    "confirmTitle": "Delete account?",
+    "confirmMessage": "This permanently deletes your account and all trips. This cannot be undone.",
+    "confirmLabel": "Delete"
+  },
+  "changeEmail": {
+    "title": "Change email",
+    "current": "Current: {{email}}",
+    "placeholder": "New email address",
+    "sent": "Check your inbox at {{email}} to confirm the change.",
+    "submit": "Send confirmation"
+  }
+}

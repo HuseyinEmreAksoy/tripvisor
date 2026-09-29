@@ -1,0 +1,26 @@
+{
+  "cards": {
+    "ai": {
+      "kicker": "Plan with AI",
+      "title": "A first draft in seconds",
+      "body": "Say where you’re going and for how long. Tripvisor drafts a day-by-day plan, and you keep, swap or remove each stop before anything is saved."
+    },
+    "route": {
+      "kicker": "Smart routes",
+      "title": "A route that sorts itself",
+      "body": "Add the places you want to see. Each day is ordered by travel time and drawn on the map, so you walk less and see more."
+    },
+    "offline": {
+      "kicker": "Works offline",
+      "title": "Your trip, even without signal",
+      "body": "Plans, packing lists and expenses live on your device. Edit them anywhere, and they sync when you’re back online."
+    }
+  },
+  "progress": "{{kicker}} · {{current}} of {{total}}",
+  "skip": "Skip",
+  "skipA11y": "Skip intro",
+  "goToCard": "Go to card {{current}} of {{total}}: {{kicker}}",
+  "nextHint": "Shows card {{current}} of {{total}}",
+  "createAccount": "Create a free account",
+  "haveAccount": "I already have an account"
+}

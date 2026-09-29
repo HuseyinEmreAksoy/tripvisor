@@ -3,10 +3,16 @@
 -- This script simulates the email-mismatch guard the Edge Function
 -- enforces in its `accept` handler. The Edge Function does the
 -- comparison in TS (caller's auth email vs row's invitee_email,
--- case-insensitive) BEFORE binding user_id. To prove the guard at the
--- DB level, we exercise the `trip_collaborators_invitee_update` RLS
--- policy: an authenticated user whose email does NOT match the
--- invitee_email must NOT be able to flip a pending row to accepted.
+-- case-insensitive) BEFORE binding user_id. At the DB level, an
+-- authenticated user whose email does NOT match the invitee_email must
+-- NOT be able to flip a pending row to accepted.
+--
+-- 0031 update: the old `trip_collaborators_invitee_update` policy is gone
+-- and clients have NO write privilege on trip_collaborators at all (every
+-- write goes through manage-collaborators with the service role). So the
+-- invite is seeded as service_role, and the attacker's UPDATE now fails with
+-- insufficient_privilege (still a PASS below). supabase/tests/security_0031.sql
+-- covers the full 0031 exploit matrix.
 --
 -- Setup:
 --   - User A (owner) creates a trip
@@ -36,11 +42,18 @@ set local "request.jwt.claims" = '{"sub":"33333333-3333-3333-3333-333333333333",
 
 insert into public.trips (id, user_id, title)
 values ('cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid, '33333333-3333-3333-3333-333333333333'::uuid, 'email-mismatch-smoke');
+commit;
+
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so the invite is seeded as service_role.
+begin;
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 insert into public.trip_collaborators (id, trip_id, invitee_email, role, status)
 values ('dddddddd-dddd-dddd-dddd-dddddddddddd'::uuid, 'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid, 'intended@smoke.test', 'editor', 'pending');
 commit;
-\echo 'Owner inserted pending invite addressed to intended@smoke.test'
+\echo 'Pending invite addressed to intended@smoke.test created (service role, as manage-collaborators does)'
 
 -- Attacker tries to flip the pending row to accepted, binding user_id to themselves.
 \echo ''
@@ -53,9 +66,10 @@ set local "request.jwt.claims" = '{"sub":"44444444-4444-4444-4444-444444444444",
 -- return 'attacker@smoke.test' which doesn't match invitee_email.
 select 'ATTACKER_SEES_ROW (expect 0): ' || count(*)::text from public.trip_collaborators where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 
--- The attacker tries to flip status anyway. Even with a direct id-targeted
--- UPDATE the RLS policy must deny it (USING fails because neither
--- user_id matches nor email matches).
+-- The attacker tries to flip status anyway. Since 0031 the authenticated
+-- role has no UPDATE privilege on the table, so this raises
+-- insufficient_privilege (pre-0031 the invitee policy's USING filtered it
+-- to 0 rows; both outcomes are a PASS).
 do $$
 declare
   v_count int;

@@ -1,6 +1,6 @@
 # delete-trip
 
-Owner-only hard delete of one trip **including its Storage objects** (security audit #13, 2026-09-29). Replaces the client's direct PostgREST `from('trips').delete()`, which cascaded every child table but left `trip-docs/<tripId>/…` orphaned forever.
+Owner-only hard delete of one trip **including its Storage objects** (security audit #13, 2026-09-29). Replaces the client's direct PostgREST `from('trips').delete()`, which cascaded every child table but left `trip-docs/<tripId>/…` (and, since M5, `trip-memories/<tripId>/…`) orphaned forever.
 
 ## Contract
 
@@ -15,7 +15,7 @@ Owner-only hard delete of one trip **including its Storage objects** (security a
 
 1. `auth.getUser(jwt)` → `401 not_authenticated`.
 2. Trip read under the caller's JWT (RLS): not visible → `404 not_found`; visible but not owned (viewer/editor) → `403 not_owner`.
-3. **Storage first:** remove everything under `<tripId>/` in every `TRIP_PREFIXED_BUCKETS` bucket (reuses `../delete-account/storage-cleanup.ts`). Any failure → `500 storage_cleanup_failed`, the trip is **not** deleted and the client can retry.
+3. **Storage first:** remove everything under `<tripId>/` in every `TRIP_PREFIXED_BUCKETS` bucket (reuses `../delete-account/storage-cleanup.ts`): `trip-docs` and, from M5 (migration 0036), `trip-memories` (every member's photos of the trip). A bucket that doesn't exist yet counts as empty. Any failure → `500 storage_cleanup_failed`, the trip is **not** deleted and the client can retry.
 4. Delete the row under the caller's JWT (`trips_owner_delete`); FK cascades clean the children. If 0 rows were deleted but the row still exists → `500 db_error` (never a false success).
 5. Best-effort Storage sweep for an upload that raced steps 3→4 (logged, never fails the response).
 
@@ -35,7 +35,7 @@ Owner-only hard delete of one trip **including its Storage objects** (security a
 | `not_owner` | 403 | caller is a collaborator, not the owner |
 | `not_found` | 404 | trip missing or not visible (the client hook treats this as "already deleted") |
 | `method_not_allowed` | 405 | non-POST, non-ping |
-| `storage_cleanup_failed` | 500 | documents could not be removed; nothing else was deleted — retry |
+| `storage_cleanup_failed` | 500 | documents / photos could not be removed; nothing else was deleted — retry |
 | `db_error` | 500 | trip read / delete failed |
 | `internal_error` | 500 | unexpected exception |
 

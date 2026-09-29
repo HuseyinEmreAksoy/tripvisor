@@ -74,22 +74,30 @@ interface FakeWorld {
   deps: DeleteTripDeps;
   events: string[];
   trips: Map<string, TripOwnerRow>;
+  /** `trip-docs` */
   bucket: ReturnType<typeof fakeBucket>;
+  /** `trip-memories` (0036) */
+  memories: ReturnType<typeof fakeBucket>;
 }
 
 function world(opts: {
   caller: string | null;
   trips?: TripOwnerRow[];
+  /** trip-docs keys */
   keys?: string[];
+  /** trip-memories keys (`<trip>/<author>/<photo>.jpg`) */
+  memoryKeys?: string[];
   failRemove?: boolean;
+  failMemoriesRemove?: boolean;
   refuseDelete?: boolean;
-  /** Keys that "land" (a racing collaborator upload) right after pass 1. */
+  /** Keys that "land" (a racing collaborator upload) between pass 1 and the row delete. */
   raceUploadKeys?: string[];
+  raceMemoryKeys?: string[];
 }): FakeWorld {
   const events: string[] = [];
   const trips = new Map((opts.trips ?? []).map((t) => [t.id, t]));
   const bucket = fakeBucket(opts.keys ?? [], { failRemove: opts.failRemove });
-  let pass = 0;
+  const memories = fakeBucket(opts.memoryKeys ?? [], { failRemove: opts.failMemoriesRemove });
   const deps: DeleteTripDeps = {
     authenticate: () => {
       events.push('auth');
@@ -101,18 +109,20 @@ function world(opts: {
     },
     deleteTrip: (_req: Request, id: string) => {
       events.push('delete');
+      for (const k of opts.raceUploadKeys ?? []) bucket.store.add(k);
+      for (const k of opts.raceMemoryKeys ?? []) memories.store.add(k);
       if (opts.refuseDelete) return Promise.resolve({ deleted: 0, error: null });
       const had = trips.delete(id);
       return Promise.resolve({ deleted: had ? 1 : 0, error: null });
     },
     bucket: (name: string) => {
-      pass += 1;
-      events.push(`storage:${name}#${pass}`);
-      if (pass === 2) for (const k of opts.raceUploadKeys ?? []) bucket.store.add(k);
-      return bucket.api;
+      events.push(`storage:${name}`);
+      if (name === 'trip-docs') return bucket.api;
+      if (name === 'trip-memories') return memories.api;
+      throw new Error(`unexpected bucket ${name}`);
     },
   };
-  return { deps, events, trips, bucket };
+  return { deps, events, trips, bucket, memories };
 }
 
 function post(body: unknown, auth = 'Bearer eyJ.OWNER.sig'): Request {
@@ -190,10 +200,37 @@ D.test('owner: Storage cleaned BEFORE the row delete, then swept; only this trip
     storage: { objectsRemoved: 3 },
     meta: { contractVersion: 1 },
   });
-  assertEquals(w.events, ['auth', 'load', 'storage:trip-docs#1', 'delete', 'storage:trip-docs#2']);
+  assertEquals(w.events, [
+    'auth',
+    'load',
+    'storage:trip-docs',
+    'storage:trip-memories',
+    'delete',
+    'storage:trip-docs',
+    'storage:trip-memories',
+  ]);
   assertEquals([...w.bucket.store], [`${OTHER_TRIP}/keep.pdf`], 'other trips untouched');
   assert(!w.trips.has(TRIP_ID));
   assert(w.trips.has(OTHER_TRIP));
+});
+
+D.test('owner: every member\'s memory photos of the trip go too (trip-memories, 0036)', async () => {
+  const w = world({
+    caller: OWNER_ID,
+    trips: [ownedTrip, { id: OTHER_TRIP, user_id: OWNER_ID }],
+    keys: [`${TRIP_ID}/1_ticket.pdf`],
+    memoryKeys: [
+      `${TRIP_ID}/${OWNER_ID}/p1.jpg`,
+      `${TRIP_ID}/${OWNER_ID}/p1_t.jpg`,
+      `${TRIP_ID}/${VIEWER_ID}/p2.jpg`, // a collaborator's photo: its row cascades with the trip
+      `${OTHER_TRIP}/${OWNER_ID}/keep.jpg`,
+    ],
+  });
+  const res = await createHandler(w.deps)(post({ tripId: TRIP_ID }));
+  assertEquals(res.status, 200);
+  assertEquals(((await res.json()) as { storage: { objectsRemoved: number } }).storage.objectsRemoved, 4);
+  assertEquals([...w.memories.store], [`${OTHER_TRIP}/${OWNER_ID}/keep.jpg`], 'other trips untouched');
+  assertEquals(w.bucket.store.size, 0);
 });
 
 D.test('owner, trip with no documents → 200, objectsRemoved 0', async () => {
@@ -211,11 +248,13 @@ D.test('post-delete sweep removes an upload that raced the row delete', async ()
     trips: [ownedTrip],
     keys: [`${TRIP_ID}/a.pdf`],
     raceUploadKeys: [`${TRIP_ID}/late_upload.pdf`],
+    raceMemoryKeys: [`${TRIP_ID}/${VIEWER_ID}/late_photo.jpg`],
   });
   const res = await createHandler(w.deps)(post({ tripId: TRIP_ID }));
   assertEquals(res.status, 200);
-  assertEquals(((await res.json()) as { storage: { objectsRemoved: number } }).storage.objectsRemoved, 2);
-  assertEquals(w.bucket.store.size, 0, 'no orphan left behind');
+  assertEquals(((await res.json()) as { storage: { objectsRemoved: number } }).storage.objectsRemoved, 3);
+  assertEquals(w.bucket.store.size, 0, 'no orphan document left behind');
+  assertEquals(w.memories.store.size, 0, 'no orphan photo left behind');
 });
 
 // ---- Failure modes ------------------------------------------------------------------
@@ -227,6 +266,20 @@ D.test('Storage failure → 500 storage_cleanup_failed and the trip is NOT delet
   assertEquals(((await res.json()) as { error: { code: string } }).error.code, 'storage_cleanup_failed');
   assert(!w.events.includes('delete'), 'row delete must not run after a Storage failure');
   assert(w.trips.has(TRIP_ID), 'trip still exists → the user can retry');
+});
+
+D.test('trip-memories failure alone also aborts: 500 storage_cleanup_failed, trip kept', async () => {
+  const w = world({
+    caller: OWNER_ID,
+    trips: [ownedTrip],
+    memoryKeys: [`${TRIP_ID}/${OWNER_ID}/p.jpg`],
+    failMemoriesRemove: true,
+  });
+  const res = await createHandler(w.deps)(post({ tripId: TRIP_ID }));
+  assertEquals(res.status, 500);
+  assertEquals(((await res.json()) as { error: { code: string } }).error.code, 'storage_cleanup_failed');
+  assert(!w.events.includes('delete'));
+  assert(w.trips.has(TRIP_ID));
 });
 
 D.test('row vanished between read and delete (other device) → 200, deleted:false', async () => {
@@ -289,7 +342,16 @@ D.test('supabaseDeps: user JWT for trip read + delete, service role only for tri
       const prefix = JSON.parse(body ?? '{}').prefix;
       return j(prefix === TRIP_ID && !deleted ? [{ name: 'a.pdf', id: 'obj-1' }] : []);
     }
+    if (url.includes('/storage/v1/object/list/trip-memories')) {
+      // One level at a time, like the real API: <trip>/ → author folder → files.
+      const prefix = JSON.parse(body ?? '{}').prefix;
+      if (deleted) return j([]);
+      if (prefix === TRIP_ID) return j([{ name: OWNER_ID, id: null }]);
+      if (prefix === `${TRIP_ID}/${OWNER_ID}`) return j([{ name: 'p.jpg', id: 'obj-2' }, { name: 'p_t.jpg', id: 'obj-3' }]);
+      return j([]);
+    }
     if (url.includes('/storage/v1/object/trip-docs') && method === 'DELETE') return j([{ name: `${TRIP_ID}/a.pdf` }]);
+    if (url.includes('/storage/v1/object/trip-memories') && method === 'DELETE') return j(JSON.parse(body ?? '{}').prefixes);
     return j({ error: `unexpected ${method} ${url}` }, 500);
   }) as typeof fetch;
   try {
@@ -297,7 +359,7 @@ D.test('supabaseDeps: user JWT for trip read + delete, service role only for tri
     assertEquals(res.status, 200);
     const body = (await res.json()) as { deleted: boolean; storage: { objectsRemoved: number } };
     assertEquals(body.deleted, true);
-    assertEquals(body.storage.objectsRemoved, 1);
+    assertEquals(body.storage.objectsRemoved, 3);
 
     const rest = calls.filter((c) => c.url.includes('/rest/v1/'));
     assert(rest.length >= 2);
@@ -312,8 +374,17 @@ D.test('supabaseDeps: user JWT for trip read + delete, service role only for tri
     for (const c of storage) {
       assertEquals(c.auth, 'Bearer test-service-role-key', 'Storage runs with the service role');
     }
-    const removed = storage.find((c) => c.method === 'DELETE')!;
+    const removed = storage.find((c) => c.method === 'DELETE' && c.url.endsWith('/trip-docs'))!;
     assertEquals(JSON.parse(removed.body ?? '{}').prefixes, [`${TRIP_ID}/a.pdf`]);
+    const removedPhotos = storage.find((c) => c.method === 'DELETE' && c.url.endsWith('/trip-memories'))!;
+    assertEquals(JSON.parse(removedPhotos.body ?? '{}').prefixes, [
+      `${TRIP_ID}/${OWNER_ID}/p.jpg`,
+      `${TRIP_ID}/${OWNER_ID}/p_t.jpg`,
+    ]);
+    for (const c of storage.filter((c) => c.url.includes('/object/list/'))) {
+      const prefix = JSON.parse(c.body ?? '{}').prefix as string;
+      assert(prefix === TRIP_ID || prefix.startsWith(`${TRIP_ID}/`), `listing must stay inside the trip prefix: ${prefix}`);
+    }
   } finally {
     globalThis.fetch = original;
   }

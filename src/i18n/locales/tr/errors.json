@@ -1,0 +1,16 @@
+{
+  "generic": "Bir şeyler ters gitti. Lütfen tekrar dene.",
+  "unexpected": "Beklenmeyen bir hata oluştu.",
+  "network": "Çevrimdışı görünüyorsun. Bağlantını kontrol edip tekrar dene.",
+  "auth": {
+    "sendLinkFailed": "Bağlantı gönderilemedi. Lütfen tekrar dene.",
+    "rateLimited": "Çok fazla deneme yapıldı. Bir dakika bekleyip tekrar dene.",
+    "invalidEmail": "Bu e-posta adresi doğru görünmüyor.",
+    "emailRequired": "E-posta adresi gerekli.",
+    "emailInUse": "Bu e-posta adresi zaten kullanılıyor."
+  },
+  "account": {
+    "deleteFailed": "Hesabın silinemedi. Lütfen tekrar dene.",
+    "exportFailed": "Verilerin dışa aktarılamadı. Lütfen tekrar dene."
+  }
+}

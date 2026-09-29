@@ -76,6 +76,7 @@ import {
   Plane,
   SunMoon,
   Trash2,
+  Smartphone,
 } from 'lucide-react-native';
 import { useTheme } from '@/theme';
 
@@ -139,6 +140,7 @@ const REGISTRY = {
   plane: Plane,
   'sun-moon': SunMoon,
   trash: Trash2,
+  smartphone: Smartphone,
 } as const;
 
 export type IconName = keyof typeof REGISTRY;

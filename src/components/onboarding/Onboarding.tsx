@@ -24,37 +24,18 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { useTheme } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useT } from '@/i18n';
 
 export interface OnboardingCard {
-  key: string;
-  kicker: string;
-  title: string;
-  body: string;
+  key: 'ai' | 'route' | 'offline';
   art: number;
 }
 
+/** Copy lives in `onboarding:cards.<key>.{kicker,title,body}` (en + tr). */
 export const ONBOARDING_CARDS: readonly OnboardingCard[] = [
-  {
-    key: 'ai',
-    kicker: 'Plan with AI',
-    title: 'A first draft in seconds',
-    body: 'Say where you’re going and for how long. Tripvisor drafts a day-by-day plan, and you keep, swap or remove each stop before anything is saved.',
-    art: require('../../../assets/images/empty-search.png'),
-  },
-  {
-    key: 'route',
-    kicker: 'Smart routes',
-    title: 'A route that sorts itself',
-    body: 'Add the places you want to see. Each day is ordered by travel time and drawn on the map, so you walk less and see more.',
-    art: require('../../../assets/images/empty-places.png'),
-  },
-  {
-    key: 'offline',
-    kicker: 'Works offline',
-    title: 'Your trip, even without signal',
-    body: 'Plans, packing lists and expenses live on your device. Edit them anywhere, and they sync when you’re back online.',
-    art: require('../../../assets/images/empty-trips.png'),
-  },
+  { key: 'ai', art: require('../../../assets/images/empty-search.png') },
+  { key: 'route', art: require('../../../assets/images/empty-places.png') },
+  { key: 'offline', art: require('../../../assets/images/empty-trips.png') },
 ];
 
 export type OnboardingExit = 'signup' | 'login';
@@ -65,6 +46,9 @@ export interface OnboardingProps {
 
 export function Onboarding({ onFinish }: OnboardingProps) {
   const t = useTheme();
+  const { t: tx } = useT(['onboarding', 'common']);
+  const total = ONBOARDING_CARDS.length;
+  const kicker = (card: OnboardingCard) => tx(`cards.${card.key}.kicker`);
   const reducedMotion = useReducedMotion();
   const scrollRef = useRef<ScrollView | null>(null);
   const [width, setWidth] = useState(0);
@@ -140,12 +124,12 @@ export function Onboarding({ onFinish }: OnboardingProps) {
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Skip intro"
+          accessibilityLabel={tx('skipA11y')}
           onPress={() => onFinish('login')}
           hitSlop={12}
           style={({ pressed }) => [styles.skip, { padding: t.spacing.sm }, pressed && { opacity: 0.6 }]}
         >
-          <Text style={[t.typography.bodyStrong, { color: t.colors.textMuted }]}>Skip</Text>
+          <Text style={[t.typography.bodyStrong, { color: t.colors.textMuted }]}>{tx('skip')}</Text>
         </Pressable>
       </View>
 
@@ -179,16 +163,18 @@ export function Onboarding({ onFinish }: OnboardingProps) {
                     aria-hidden
                   />
                   <Text style={[t.typography.overline, { color: t.colors.accent }]}>
-                    {`${card.kicker} · ${i + 1} of ${ONBOARDING_CARDS.length}`}
+                    {tx('progress', { kicker: kicker(card), current: i + 1, total })}
                   </Text>
                   <Text
                     style={[t.typography.title, styles.center, { color: t.colors.text }]}
                     accessibilityRole="header"
                     aria-level={1}
                   >
-                    {card.title}
+                    {tx(`cards.${card.key}.title`)}
                   </Text>
-                  <Text style={[t.typography.body, styles.center, { color: t.colors.textMuted }]}>{card.body}</Text>
+                  <Text style={[t.typography.body, styles.center, { color: t.colors.textMuted }]}>
+                    {tx(`cards.${card.key}.body`)}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -202,7 +188,7 @@ export function Onboarding({ onFinish }: OnboardingProps) {
             <Pressable
               key={card.key}
               accessibilityRole="button"
-              accessibilityLabel={`Go to card ${i + 1} of ${ONBOARDING_CARDS.length}: ${card.kicker}`}
+              accessibilityLabel={tx('goToCard', { current: i + 1, total, kicker: kicker(card) })}
               accessibilityState={{ selected: i === index }}
               onPress={() => goTo(i)}
               hitSlop={10}
@@ -222,17 +208,21 @@ export function Onboarding({ onFinish }: OnboardingProps) {
           <View style={[styles.row, { gap: t.spacing.md }]}>
             {index > 0 ? (
               <View style={styles.grow}>
-                <Button variant="secondary" label="Back" onPress={() => goTo(index - 1)} />
+                <Button variant="secondary" label={tx('common:actions.back')} onPress={() => goTo(index - 1)} />
               </View>
             ) : null}
             <View style={styles.grow}>
-              <Button label="Next" onPress={() => goTo(index + 1)} accessibilityHint={`Shows card ${index + 2} of ${ONBOARDING_CARDS.length}`} />
+              <Button
+                label={tx('common:actions.next')}
+                onPress={() => goTo(index + 1)}
+                accessibilityHint={tx('nextHint', { current: index + 2, total })}
+              />
             </View>
           </View>
         ) : (
           <View style={{ gap: t.spacing.sm }}>
-            <Button label="Create a free account" onPress={() => onFinish('signup')} />
-            <Button variant="ghost" label="I already have an account" onPress={() => onFinish('login')} />
+            <Button label={tx('createAccount')} onPress={() => onFinish('signup')} />
+            <Button variant="ghost" label={tx('haveAccount')} onPress={() => onFinish('login')} />
           </View>
         )}
       </View>

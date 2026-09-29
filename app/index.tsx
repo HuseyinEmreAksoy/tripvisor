@@ -4,8 +4,10 @@ import { View, ActivityIndicator } from 'react-native';
 import { useSession } from '@/api';
 import { usePendingRedirect } from '@/hooks/usePendingRedirect';
 import { Onboarding, useOnboardingGate, type OnboardingExit } from '@/components/onboarding';
+import { useT } from '@/i18n';
 
 export default function Root() {
+  const { t: tx } = useT();
   const { data: session, isLoading } = useSession();
   // Magic links land on `/`; consume any stored post-login destination here.
   const pending = usePendingRedirect(!!session);
@@ -18,7 +20,7 @@ export default function Root() {
 
   const spinner = (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator accessibilityLabel="Loading" />
+      <ActivityIndicator accessibilityLabel={tx('loading')} />
     </View>
   );
 

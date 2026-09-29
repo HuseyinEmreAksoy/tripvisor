@@ -1,24 +1,48 @@
-// delete-account — Storage cleanup for trips the caller OWNS.
+// delete-account — Storage cleanup helpers (also used by delete-trip).
 //
 // Why this exists: deleting the auth.users row cascades `public.trips` (and
-// from there `trip_documents` metadata), but Postgres cascades never reach
-// Storage. Without this, every uploaded document of a deleted account would
-// stay in the `trip-docs` bucket forever (unreachable via RLS — the policies
-// key on `user_can_access_trip(<first path segment>)` and the trip is gone —
-// but still billed disk and still personal data we promised to erase).
+// from there `trip_documents` / `trip_photos` metadata), but Postgres
+// cascades never reach Storage. Without this, every uploaded file of a
+// deleted account or trip would stay in Storage forever (unreachable via
+// RLS, but still billed disk and still personal data we promised to erase).
 //
 // Buckets cleaned (grep `storage.buckets` in supabase/migrations):
-//   - `trip-docs` (0024) — object key convention `<trip_id>/<ts>_<filename>`
-//     (see src/api/trip-documents.ts `storagePath`). We list recursively
-//     anyway so any nested sub-folder a future writer adds is also removed.
-// No other bucket exists: cover photos are a Google place-id pointer (0018,
-// bytes proxied live by `place-photo`), and there are no avatar uploads.
+//   - `trip-docs` (0024): key `<trip_id>/<ts>_<filename>`
+//     (src/api/trip-documents.ts `storagePath`).
+//   - `trip-memories` (0036): key `<trip_id>/<author_id>/<photo_id>(_t).jpg`.
+//     A user's photos can live on trips they do NOT own (any member may add
+//     memories), so account deletion also removes `<trip_id>/<user_id>/` on
+//     those trips (AUTHOR_PREFIXED_BUCKETS), never other authors' folders.
+// We list recursively so any nested sub-folder a future writer adds is also
+// removed. Cover photos are a Google place-id pointer (0018, bytes proxied
+// live by `place-photo`), and there are no avatar uploads.
+//
+// A bucket that does not exist yet (Edge Functions deployed before the
+// migration that creates it) is treated as empty, so a mis-ordered deploy
+// can never block a trip or account deletion.
 //
 // Pure w.r.t. its inputs: takes a minimal Storage-bucket interface so the
-// Deno test can drive it with a fake instead of the full supabase-js client.
+// Deno tests can drive it with a fake instead of the full supabase-js client.
 
-/** Buckets whose object keys are prefixed with `<trip_id>/`. */
-export const TRIP_PREFIXED_BUCKETS = ['trip-docs'] as const;
+/** Buckets whose object keys are prefixed with `<trip_id>/`. delete-trip
+ * and delete-account wipe the WHOLE `<trip_id>/` prefix of trips being
+ * deleted in every one of these. */
+export const TRIP_PREFIXED_BUCKETS = ['trip-docs', 'trip-memories'] as const;
+
+/** Buckets whose keys are `<trip_id>/<author_id>/…`: an author's objects on
+ * trips they don't own. delete-account removes only `<trip_id>/<user_id>/`
+ * there (see `authorPrefix`). */
+export const AUTHOR_PREFIXED_BUCKETS = ['trip-memories'] as const;
+
+/** `<tripId>/<userId>`: one author's folder inside a trip prefix. */
+export function authorPrefix(tripId: string, userId: string): string {
+  return `${tripId}/${userId}`;
+}
+
+/** storage-api answers "Bucket not found" on some versions (others: 200 []). */
+export function isMissingBucketError(error: { message: string } | null | undefined): boolean {
+  return !!error && /bucket not found/i.test(error.message);
+}
 
 /** Page size for `list` (Storage caps a page at 1000; smaller keeps memory flat). */
 export const LIST_PAGE_SIZE = 100;
@@ -67,7 +91,8 @@ export async function listAllKeys(
       sortBy: { column: 'name', order: 'asc' },
     });
     if (error) {
-      errors.push(`list ${prefix}@${offset}: ${error.message}`);
+      // A bucket that doesn't exist holds no objects: nothing to clean.
+      if (!isMissingBucketError(error)) errors.push(`list ${prefix}@${offset}: ${error.message}`);
       break;
     }
     const page = data ?? [];
@@ -88,28 +113,28 @@ export async function listAllKeys(
 }
 
 /**
- * Best-effort: remove every object under `<tripId>/` in `bucket` for each
- * trip id. Never throws — failures land in `report.errors` so the caller can
- * log them and still complete the (already irreversible) account deletion.
+ * Best-effort: remove every object under each `prefix/` (no trailing slash)
+ * in `bucket`. Never throws — failures land in `report.errors` so the caller
+ * can log them and decide (delete-trip aborts, delete-account continues).
  */
-export async function cleanupTripStorage(
+export async function cleanupStoragePrefixes(
   api: BucketApi,
   bucket: string,
-  tripIds: readonly string[],
+  prefixes: readonly string[],
 ): Promise<StorageCleanupReport> {
   const report: StorageCleanupReport = {
     bucket,
-    prefixes: tripIds.length,
+    prefixes: prefixes.length,
     found: 0,
     removed: 0,
     errors: [],
   };
-  for (const tripId of tripIds) {
+  for (const prefix of prefixes) {
     let keys: string[];
     try {
-      keys = await listAllKeys(api, tripId, report.errors);
+      keys = await listAllKeys(api, prefix, report.errors);
     } catch (e) {
-      report.errors.push(`list ${tripId}: ${e instanceof Error ? e.message : String(e)}`);
+      report.errors.push(`list ${prefix}: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
     report.found += keys.length;
@@ -118,16 +143,28 @@ export async function cleanupTripStorage(
       try {
         const { error } = await api.remove(batch);
         if (error) {
-          report.errors.push(`remove ${tripId}[${i}..${i + batch.length}]: ${error.message}`);
+          report.errors.push(`remove ${prefix}[${i}..${i + batch.length}]: ${error.message}`);
         } else {
           report.removed += batch.length;
         }
       } catch (e) {
         report.errors.push(
-          `remove ${tripId}[${i}..${i + batch.length}]: ${e instanceof Error ? e.message : String(e)}`,
+          `remove ${prefix}[${i}..${i + batch.length}]: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
   }
   return report;
+}
+
+/**
+ * Best-effort: remove every object under `<tripId>/` in `bucket` for each
+ * trip id (all authors). Same contract as `cleanupStoragePrefixes`.
+ */
+export function cleanupTripStorage(
+  api: BucketApi,
+  bucket: string,
+  tripIds: readonly string[],
+): Promise<StorageCleanupReport> {
+  return cleanupStoragePrefixes(api, bucket, tripIds);
 }

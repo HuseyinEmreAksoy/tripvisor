@@ -1,19 +1,15 @@
 /**
- * formatCurrency — format a numeric amount with the trip's currency.
+ * formatCurrency — legacy entry point, kept so existing callers don't change.
+ * Delegates to `formatMoney` in `src/i18n/format.ts` (ADR-0011), so output
+ * follows the ACTIVE APP LANGUAGE (`₺1.234,50` in Turkish, `€1,234.50` in
+ * English) instead of the device locale.
  *
- * Uses Intl.NumberFormat when available (all modern browsers + React Native
- * Hermes via the polyfill that ships with Expo SDK 52+). Falls back to a
- * plain "CODE amount" string for any currency code that Intl rejects.
- *
- * Callers should pass `trip.currency` directly; null/undefined falls back to
- * USD to handle older trip rows that pre-date the column.
+ * null/undefined falls back to USD only for old trip rows that pre-date the
+ * column. New code should call `formatMoney(amount, row.currency)` from
+ * `@/i18n` with the row's own ISO code.
  */
+import { formatMoney } from '@/i18n/format';
+
 export function formatCurrency(amount: number, currency: string | null | undefined): string {
-  const cur = (currency ?? 'USD').toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(amount);
-  } catch {
-    // Fallback for invalid currency codes — print the code + amount with 2 decimals.
-    return `${cur} ${amount.toFixed(2)}`;
-  }
+  return formatMoney(amount, currency ?? 'USD');
 }

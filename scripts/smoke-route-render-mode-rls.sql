@@ -48,8 +48,10 @@ select 'INITIAL_RENDER_MODE (expect optimized): ' || route_render_mode
 -- Seed: editor + viewer collaborator rows (status=accepted).
 \echo '--- Seed: invite editor + viewer (accepted) ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"f1111111-1111-1111-1111-111111111111","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 insert into public.trip_collaborators (trip_id, invitee_email, role, status, user_id)
 values

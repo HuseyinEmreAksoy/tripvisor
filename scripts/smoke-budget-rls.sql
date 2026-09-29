@@ -3,9 +3,9 @@
 -- Exercises RLS for trip_expenses and trips.total_budget under three
 -- collaborator roles: owner, viewer, editor.
 --
--- Also explicitly tests editor UPDATE on trips.total_budget and confirms
--- the expected policy: editors CANNOT update trips.total_budget because
--- the trips UPDATE policy is owner-only.
+-- Also explicitly tests editor UPDATEs on trips: since Phase 22 (0015)
+-- editors MAY update trips.total_budget, while the home currency
+-- (trips.currency) stays owner-only (M5 0034 kept it on the deny list).
 --
 -- Expected results (by step):
 --   Step 1: A owns trip + inserts expense          → PASS
@@ -18,7 +18,8 @@
 --   Step 5: Upgrade B to editor
 --   Step 6: B editor can INSERT expense            → PASS
 --           B editor can UPDATE own expense        → PASS
---           B editor cannot UPDATE trips.total_budget → FAIL (42501 expected)
+--           B editor can UPDATE trips.total_budget → PASS (0015)
+--           B editor cannot UPDATE trips.currency  → PASS (42501, owner-only)
 --   Step 7: Revoke B; B loses access               → 0 rows, INSERT denied
 --
 -- Run as superuser against the local Supabase database:
@@ -74,8 +75,10 @@ commit;
 \echo ''
 \echo '--- Step 3: A invites B as viewer (status=accepted) ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 insert into public.trip_collaborators (trip_id, invitee_email, role, status, user_id)
 values ('c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'::uuid, 'budget-b@budget-smoke.test', 'viewer', 'accepted', 'b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2'::uuid);
@@ -144,8 +147,10 @@ commit;
 \echo ''
 \echo '--- Step 5: A upgrades B to editor ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 update public.trip_collaborators
 set role = 'editor'
@@ -154,8 +159,8 @@ where trip_id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'::uuid
 commit;
 
 -- ============================================================
--- Step 6: B as editor can CRUD trip_expenses
---         BUT cannot update trips.total_budget (owner-only)
+-- Step 6: B as editor can CRUD trip_expenses and set trips.total_budget
+--         (0015) BUT cannot change the home currency (owner-only)
 -- ============================================================
 \echo ''
 \echo '--- Step 6: B as editor ---'
@@ -206,32 +211,43 @@ exception when others then
   raise notice 'FAIL: B editor DELETE trip_expense error (%): %', sqlstate, sqlerrm;
 end$$;
 
--- B editor attempts to UPDATE trips.total_budget — expected: DENIED.
--- The trips UPDATE policy is owner-only (user_id = auth.uid()).
--- An editor collaborator must NOT be able to change the trip's budget ceiling.
+-- Phase 22 (migration 0015) made trips.total_budget EDITOR-writable by design
+-- (the trips_editor_budget_update policy + the
+-- enforce_trips_column_restrictions_fn allow-list; smoke-editor-budget-rls.sql
+-- covers it in depth). This Phase 21 script used to expect a denial here.
+-- The home currency (trips.currency, M5 migration 0034) stays OWNER-only.
 do $$
 begin
   update public.trips
   set total_budget = 9999
   where id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'::uuid;
   if found then
-    raise notice 'FINDING: B editor was able to UPDATE trips.total_budget (expected: denied). Report to backend-specialist — trips UPDATE policy may be too permissive.';
+    raise notice 'PASS: B editor UPDATE trips.total_budget allowed (0015 editor allow-list)';
   else
-    raise notice 'PASS: B editor UPDATE trips.total_budget denied (0 rows — owner-only policy applied)';
+    raise notice 'FAIL: B editor UPDATE trips.total_budget matched 0 rows (0015 allows editors)';
   end if;
+exception when others then
+  raise notice 'FAIL: B editor UPDATE trips.total_budget error (%): %', sqlstate, sqlerrm;
+end$$;
+
+do $$
+begin
+  update public.trips
+  set currency = 'EUR'
+  where id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'::uuid;
+  raise notice 'FAIL: B editor changed trips.currency (the home currency is owner-only)';
 exception when insufficient_privilege then
-  raise notice 'PASS: B editor UPDATE trips.total_budget denied (42501)';
-when others then
-  raise notice 'PASS: B editor UPDATE trips.total_budget denied (%): %', sqlstate, sqlerrm;
+  raise notice 'PASS: B editor UPDATE trips.currency denied (42501, owner-only home currency)';
 end$$;
 
 commit;
 
--- Confirm budget did not change
+-- Confirm the editor's budget change landed and the currency did not change
 begin;
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1","role":"authenticated"}';
-select 'TOTAL_BUDGET_UNCHANGED (expect 1000): ' || total_budget::text from public.trips where id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3';
+select 'TOTAL_BUDGET_AFTER_EDITOR (expect 9999): ' || total_budget::text from public.trips where id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3';
+select 'CURRENCY_UNCHANGED (expect USD): ' || currency from public.trips where id = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3';
 commit;
 
 -- ============================================================
@@ -240,8 +256,10 @@ commit;
 \echo ''
 \echo '--- Step 7: A revokes B ---'
 begin;
-set local role authenticated;
-set local "request.jwt.claims" = '{"sub":"a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1","role":"authenticated"}';
+-- 0031: clients can no longer write trip_collaborators (manage-collaborators
+-- does it with the service role), so this step runs as service_role.
+set local role service_role;
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 update public.trip_collaborators
 set status = 'revoked'

@@ -3,10 +3,12 @@
  *
  * Explicit navigation is a binding UX principle, so the back affordance is a
  * visible soft pill (elevated surface + quiet border) instead of a bare text
- * link. Accessible name stays "Go back[ to X]".
+ * link. Accessible name: "Go back" / "Go back to X" (`common:actions.goBack*`),
+ * translated since M5 Y1.4; the default visible label is `common:actions.back`.
  */
 import { Platform, Pressable, StyleSheet, Text, type ViewStyle } from 'react-native';
 import { useTheme } from '@/theme';
+import { useT } from '@/i18n';
 import { Icon } from './Icon';
 
 export interface BackButtonProps {
@@ -15,8 +17,9 @@ export interface BackButtonProps {
   noPrint?: boolean;
 }
 
-export function BackButton({ onPress, label = 'Back', noPrint = false }: BackButtonProps) {
+export function BackButton({ onPress, label, noPrint = false }: BackButtonProps) {
   const t = useTheme();
+  const { t: tx } = useT();
 
   const printProps =
     noPrint && Platform.OS === 'web'
@@ -29,7 +32,7 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Go back${label !== 'Back' ? ` to ${label}` : ''}`}
+      accessibilityLabel={label ? tx('actions.goBackTo', { label }) : tx('actions.goBack')}
       hitSlop={8}
       style={({ pressed }) => [
         styles.btn,
@@ -51,7 +54,7 @@ export function BackButton({ onPress, label = 'Back', noPrint = false }: BackBut
           Pressable carries the accessible name). */}
       <Icon name="chevron-left" size={18} color={t.colors.primary} />
       <Text style={[t.typography.caption, { color: t.colors.text, fontWeight: '600', fontSize: 14 }]}>
-        {label}
+        {label ?? tx('actions.back')}
       </Text>
     </Pressable>
   );

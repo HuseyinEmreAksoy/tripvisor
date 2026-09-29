@@ -10,14 +10,15 @@
  *   Packing  X / Y packed + bar         → /trip/[id]/packing
  *   Docs     N documents                → DocumentsSection
  *   People   avatars + invite           → /trip/[id]/collaborators
- *   Share    public link                → ShareLinkCard (editors)
+ *   Share    public link                → ShareLinkCard (owner only)
  *   + the "You liked / didn't like" catalogs (reactions)
  *
  * Trip-level settings (cover, hours, transport, currency, export, delete)
  * moved to TripSettingsSheet, opened from the header ⋯ menu.
  *
  * Role gating: the moved components keep their own `canEdit` gates; the
- * Share card only expands for editors (viewers can't mint links).
+ * Share card only expands for the OWNER — public links are owner-only
+ * server-side (security audit #5: editors get 403 `not_owner`).
  */
 import { useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -44,6 +45,13 @@ import { AccommodationList } from '@/components/accommodation/AccommodationList'
 import { AccommodationEditSheet } from '@/components/accommodation/AccommodationEditSheet';
 import { DocumentsSection } from './DocumentsSection';
 import { HubCard, ProgressBar, ReactionCatalogSection } from './TripHubCards';
+
+// Copy added in the 2026-09-29 security follow-up. Plain strings until the
+// i18n step lands (then these move to `t()` keys).
+const COPY = {
+  shareOwnerSummary: 'Read-only public link or invite by email',
+  shareOwnerOnly: 'Only the trip owner can create a share link. Ask them to send you one.',
+} as const;
 
 export type HubSection = 'budget' | 'stays' | 'docs' | 'share';
 
@@ -262,9 +270,9 @@ export function TripHubTab({
       <HubCard
         icon="share-2"
         title="Share"
-        summary={canEdit ? 'Read-only public link or invite by email' : 'Ask an editor for a share link'}
-        expanded={canEdit ? open.has('share') : undefined}
-        onPress={() => (canEdit ? toggle('share') : router.push(`/trip/${tripId}/collaborators`))}
+        summary={isOwner ? COPY.shareOwnerSummary : COPY.shareOwnerOnly}
+        expanded={isOwner ? open.has('share') : undefined}
+        onPress={() => (isOwner ? toggle('share') : router.push(`/trip/${tripId}/collaborators`))}
       >
         <ShareLinkCard tripId={tripId} tripTitle={tripTitle} />
       </HubCard>

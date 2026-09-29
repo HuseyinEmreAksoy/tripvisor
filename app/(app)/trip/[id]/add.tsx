@@ -33,6 +33,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useSafeBack } from '@/hooks/useSafeBack';
 import {
   PlacesError,
+  isPlacesQuotaExceeded,
   useAutocompleteSession,
   useCreateTripPlace,
   useMoveToDay,
@@ -50,6 +51,13 @@ import {
   getRecentPlaces,
   type RecentPlace,
 } from '@/lib/recentPlaces';
+
+// Copy added in the 2026-09-29 security follow-up (per-user Places quota).
+// Plain strings until the i18n step lands (then these move to `t()` keys).
+const COPY = {
+  placesQuota: 'Daily place search limit reached — try again tomorrow',
+  detailsFailed: "Couldn't load this place. Check your connection and try again.",
+} as const;
 
 function useDebounced<T>(value: T, ms = 250): T {
   const [debounced, setDebounced] = useState(value);
@@ -123,6 +131,9 @@ export default function AddPlace() {
   // rejecting the server key. Surface them above the result list instead of
   // making them look like "no results".
   const mapsSetupError = getMapsSetupError(autocompleteError, detailsError);
+  // Audit #2: a spent per-user daily quota is not a setup problem and not
+  // "no results" — it gets its own notice (details has the lower cap).
+  const placesQuotaHit = isPlacesQuotaExceeded(autocompleteError) || isPlacesQuotaExceeded(detailsError);
 
   const { data: existingPlaces = [] } = useTripPlaces(tripId);
   const { data: trip } = useTrip(tripId);
@@ -267,22 +278,9 @@ export default function AddPlace() {
           </View>
 
           {schedulingOffline ? (
-            <View
-              style={[
-                addStyles.setupBanner,
-                {
-                  backgroundColor: t.colors.bgElevated,
-                  borderLeftColor: t.colors.warning,
-                  borderRadius: t.radius.md,
-                  padding: t.spacing.md,
-                },
-              ]}
-              accessibilityLiveRegion="polite"
-            >
-              <Text style={[t.typography.caption, { color: t.colors.text }]}>
-                {"You're offline. Scheduling needs a connection — it'll go to Ideas, and you can move it to a day later."}
-              </Text>
-            </View>
+            <Notice>
+              {"You're offline. Scheduling needs a connection — it'll go to Ideas, and you can move it to a day later."}
+            </Notice>
           ) : (
             <DayPicker
               dayCount={dayCount}
@@ -319,7 +317,9 @@ export default function AddPlace() {
             </View>
           ) : null}
 
-          {mapsSetupError ? (
+          {placesQuotaHit ? (
+            <Notice alert>{COPY.placesQuota}</Notice>
+          ) : mapsSetupError ? (
             <View
               style={[
                 addStyles.setupBanner,
@@ -355,8 +355,23 @@ export default function AddPlace() {
 
         {pickedId ? (
           <View style={[{ flex: 1, padding: t.spacing.lg, gap: t.spacing.md }, desktopWrap]}>
-            {loadingDetails || !picked ? (
+            {loadingDetails || (!picked && !detailsError) ? (
               <ActivityIndicator />
+            ) : !picked ? (
+              // Details failed (quota / setup are explained in the banner
+              // above) — offer a way out instead of an endless spinner.
+              <>
+                {placesQuotaHit || mapsSetupError ? null : (
+                  <Text
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={[t.typography.caption, { color: t.colors.danger }]}
+                  >
+                    {COPY.detailsFailed}
+                  </Text>
+                )}
+                <Button variant="ghost" label="Pick a different place" onPress={() => setPickedId(null)} />
+              </>
             ) : (
               <>
                 <Text style={[t.typography.title, { color: t.colors.text }]} numberOfLines={2}>
@@ -487,9 +502,9 @@ export default function AddPlace() {
               contentContainerStyle={{ paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.lg }}
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: t.colors.border }} />}
               ListEmptyComponent={
-                // The setup banner above already explains why nothing came
-                // back — a "No results" state under it would contradict it.
-                mapsSetupError ? null : debounced.length >= 2 ? (
+                // The setup / quota banner above already explains why nothing
+                // came back — a "No results" state under it would contradict it.
+                mapsSetupError || placesQuotaHit ? null : debounced.length >= 2 ? (
                   isFetching ? (
                     <View style={{ padding: t.spacing.xl, alignItems: 'center' }}>
                       <ActivityIndicator />
@@ -524,6 +539,28 @@ export default function AddPlace() {
         )}
       </KeyboardAvoid>
     </Screen>
+  );
+}
+
+/** Warning-edged inline notice (offline scheduling, Places quota). */
+function Notice({ children, alert = false }: { children: string; alert?: boolean }) {
+  const t = useTheme();
+  return (
+    <View
+      style={[
+        addStyles.setupBanner,
+        {
+          backgroundColor: t.colors.bgElevated,
+          borderLeftColor: t.colors.warning,
+          borderRadius: t.radius.md,
+          padding: t.spacing.md,
+        },
+      ]}
+      accessibilityRole={alert ? 'alert' : undefined}
+      accessibilityLiveRegion="polite"
+    >
+      <Text style={[t.typography.caption, { color: t.colors.text }]}>{children}</Text>
+    </View>
   );
 }
 

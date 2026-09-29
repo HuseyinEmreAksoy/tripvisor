@@ -23,7 +23,10 @@
 //      `not_owner`. Nothing destructive has happened yet.
 //   3. Storage pass 1: remove every object under `<tripId>/` in each
 //      TRIP_PREFIXED_BUCKETS bucket (delete-account/storage-cleanup.ts, the
-//      same helper account deletion uses). ANY failure → 500
+//      same helper account deletion uses): `trip-docs` (documents) and, from
+//      M5 (0036), `trip-memories` (every member's photos of this trip; their
+//      trip_photos rows cascade with the trip). A bucket that doesn't exist
+//      yet counts as empty. ANY failure → 500
 //      `storage_cleanup_failed` and the trip is NOT deleted, so the client
 //      can simply retry. (Deleting the row first would make a Storage failure
 //      permanent: once the trip row is gone nobody can retry through the
@@ -196,7 +199,7 @@ export function createHandler(deps: DeleteTripDeps): (req: Request) => Promise<R
         });
         return errorResponse(
           'storage_cleanup_failed',
-          "Couldn't remove this trip's documents. Nothing else was deleted — try again.",
+          "Couldn't remove this trip's files (documents and photos). Nothing else was deleted — try again.",
           500,
           origin,
         );

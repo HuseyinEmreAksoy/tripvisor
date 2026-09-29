@@ -9,13 +9,17 @@
  * Auth is passwordless (magic link + Google), so there is no "Change
  * password" entry — it would contradict the sign-in model.
  *
+ * M5 Y1.4: every string comes from the `profile` / `errors` namespaces, and
+ * a Language section (System / Türkçe / English) switches the app language
+ * live. The change-email modal lives in src/components/profile/.
+ *
  * Desktop: max-width 720px centered.
  */
 import { useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, Heading, Icon, Screen, TAB_SCREEN_EDGES, type IconName } from '@/components';
-import { useSession, useSignOut, useExportAccount, supabase, useChangeEmail, AuthMutationError } from '@/api';
+import { useSession, useSignOut, useExportAccount, supabase } from '@/api';
 import { teardownTier1Sync } from '@/sync/hydrate';
 import { wipeTier1PersistedStorage } from '@/sync/wipe';
 import { useTheme, useThemeControls, type ThemeMode } from '@/theme';
@@ -23,15 +27,21 @@ import { confirmDestructive } from '@/lib/confirm';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useRouter } from 'expo-router';
 import { PRIVACY_HREF, TERMS_HREF } from '@/components/legal/LegalLinks';
+import { ChangeEmailModal } from '@/components/profile/ChangeEmailModal';
+import { LanguagePicker } from '@/components/profile/LanguagePicker';
+import { toLocaleUpper, useT } from '@/i18n';
 
-const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: IconName }> = [
-  { value: 'light', label: 'Light', icon: 'sun' },
-  { value: 'dark', label: 'Dark', icon: 'moon' },
-  { value: 'system', label: 'System', icon: 'sun-moon' },
-];
+const THEME_OPTIONS = [
+  { value: 'light', labelKey: 'theme.light', icon: 'sun' },
+  { value: 'dark', labelKey: 'theme.dark', icon: 'moon' },
+  { value: 'system', labelKey: 'theme.system', icon: 'sun-moon' },
+] as const satisfies ReadonlyArray<{ value: ThemeMode; labelKey: string; icon: IconName }>;
+
+type ErrorKey = 'errors:account.deleteFailed' | 'errors:unexpected';
 
 export default function SettingsScreen() {
   const t = useTheme();
+  const { t: tx } = useT(['profile', 'common', 'errors']);
   const bp = useBreakpoint();
   const isDesktop = bp === 'desktop';
   const { data: session } = useSession();
@@ -42,13 +52,15 @@ export default function SettingsScreen() {
   const router = useRouter();
 
   const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // A key, not a string, so a language switch re-translates the message.
+  const [deleteError, setDeleteError] = useState<ErrorKey | null>(null);
 
   // Phase 25 Step 25.9: change email modal
   const [emailModalOpen, setEmailModalOpen] = useState(false);
 
   const email = session?.user?.email ?? '—';
-  const initial = email[0]?.toUpperCase() ?? '?';
+  // Locale-aware: an "i…" address shows "İ" in Turkish.
+  const initial = email[0] ? toLocaleUpper(email[0]) : '?';
 
   const handleSignOut = () => {
     signOut.mutate();
@@ -56,10 +68,10 @@ export default function SettingsScreen() {
 
   const handleDeleteAccount = async () => {
     const confirmed = await confirmDestructive({
-      title: 'Delete account?',
-      message:
-        'This permanently deletes your account and all trips. This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: tx('delete.confirmTitle'),
+      message: tx('delete.confirmMessage'),
+      confirmLabel: tx('delete.confirmLabel'),
+      cancelLabel: tx('common:actions.cancel'),
     });
     if (!confirmed) return;
 
@@ -77,7 +89,7 @@ export default function SettingsScreen() {
       });
 
       if (error) {
-        setDeleteError(error.message ?? 'Failed to delete account. Please try again.');
+        setDeleteError('errors:account.deleteFailed');
         return;
       }
 
@@ -94,10 +106,8 @@ export default function SettingsScreen() {
 
       await signOut.mutateAsync();
       qc.clear();
-    } catch (err) {
-      setDeleteError(
-        err instanceof Error ? err.message : 'An unexpected error occurred.',
-      );
+    } catch {
+      setDeleteError('errors:unexpected');
     } finally {
       setIsDeleting(false);
     }
@@ -124,7 +134,7 @@ export default function SettingsScreen() {
     <Screen padded={false} edges={TAB_SCREEN_EDGES}>
       <ScrollView contentContainerStyle={[{ padding: t.spacing.lg, gap: t.spacing.lg }, contentStyle]}>
         {/* Tab root (Profile tab, M4 X1.1) — the tab bar is the way back. */}
-        <Heading level={1}>Profile & settings</Heading>
+        <Heading level={1}>{tx('title')}</Heading>
 
         {/* ─── Profile / Account section ───────────────────────────────── */}
         <Text
@@ -132,7 +142,7 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           aria-level={2}
         >
-          Account
+          {tx('sections.account')}
         </Text>
 
         <View
@@ -165,11 +175,11 @@ export default function SettingsScreen() {
               style={[t.typography.caption, { color: t.colors.textMuted }]}
               accessibilityRole="none"
             >
-              Signed in as
+              {tx('account.signedInAs')}
             </Text>
             <Text
               style={[t.typography.bodyStrong, { color: t.colors.text }]}
-              accessibilityLabel={`Email: ${email}`}
+              accessibilityLabel={tx('account.emailA11y', { email })}
               accessibilityRole="text"
               selectable
             >
@@ -194,11 +204,11 @@ export default function SettingsScreen() {
         >
           <Button
             variant="ghost"
-            label="Change email"
+            label={tx('account.changeEmail')}
             leftIcon={<Icon name="mail" size={18} color={t.colors.primaryInk} />}
             onPress={() => setEmailModalOpen(true)}
             disabled={screenDisabled}
-            accessibilityLabel="Change email address"
+            accessibilityLabel={tx('account.changeEmailA11y')}
           />
         </View>
 
@@ -207,7 +217,7 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           aria-level={2}
         >
-          Appearance
+          {tx('sections.appearance')}
         </Text>
         <View style={styles.themeRow}>
           {THEME_OPTIONS.map((opt) => {
@@ -216,8 +226,8 @@ export default function SettingsScreen() {
               <Pressable
                 key={opt.value}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={opt.label}
+                accessibilityState={{ checked: active, selected: active }}
+                accessibilityLabel={tx(opt.labelKey)}
                 onPress={() => setMode(opt.value)}
                 style={({ pressed }) => [
                   styles.themeCard,
@@ -234,41 +244,50 @@ export default function SettingsScreen() {
                   } as ViewStyle),
                 ]}
               >
-                <Icon name={opt.icon} size={24} color={active ? t.colors.primary : t.colors.text} />
+                <Icon name={opt.icon} size={24} color={active ? t.colors.primaryInk : t.colors.text} />
                 <Text
                   style={[
                     t.typography.caption,
                     {
-                      color: active ? t.colors.primary : t.colors.text,
+                      color: active ? t.colors.primaryInk : t.colors.text,
                       fontWeight: active ? '700' : '500',
                     },
                   ]}
                 >
-                  {opt.label}
+                  {tx(opt.labelKey)}
                 </Text>
               </Pressable>
             );
           })}
         </View>
 
+        {/* ─── Language (M5 Y1.4) ──────────────────────────────────────────── */}
+        <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}
+          accessibilityRole="header"
+          aria-level={2}
+        >
+          {tx('sections.language')}
+        </Text>
+        <LanguagePicker />
+
         {/* ─── Actions card ──────────────────────────────────────────────── */}
         <Text style={[t.typography.caption, { color: t.colors.textMuted, fontWeight: '600' }]}
           accessibilityRole="header"
           aria-level={2}
         >
-          Your data
+          {tx('sections.data')}
         </Text>
         <View style={[styles.actionsCard, cardStyle]}>
           {/* Export */}
           <Button
             variant="ghost"
-            label="Export my data"
+            label={tx('data.export')}
             leftIcon={<Icon name="download" size={18} color={t.colors.primaryInk} />}
             onPress={handleExport}
             loading={exportAccount.isPending}
             disabled={screenDisabled || exportAccount.isPending}
-            accessibilityLabel="Export my data as JSON"
-            accessibilityHint="Downloads a JSON file with all your trips and places."
+            accessibilityLabel={tx('data.exportA11y')}
+            accessibilityHint={tx('data.exportHint')}
           />
 
           <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
@@ -276,7 +295,7 @@ export default function SettingsScreen() {
           {/* Sign out */}
           <Button
             variant="ghost"
-            label="Sign out"
+            label={tx('data.signOut')}
             leftIcon={<Icon name="log-out" size={18} color={t.colors.primaryInk} />}
             onPress={handleSignOut}
             loading={signOut.isPending}
@@ -289,12 +308,12 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           aria-level={2}
         >
-          Privacy & legal
+          {tx('sections.legal')}
         </Text>
         <View style={[styles.actionsCard, cardStyle]}>
-          <Button variant="ghost" label="Privacy policy" leftIcon={<Icon name="lock" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(PRIVACY_HREF)} accessibilityRole="link" accessibilityLabel="Privacy policy" />
+          <Button variant="ghost" label={tx('legal.privacy')} leftIcon={<Icon name="lock" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(PRIVACY_HREF)} accessibilityRole="link" accessibilityLabel={tx('legal.privacy')} />
           <View style={[styles.divider, { backgroundColor: t.colors.border }]} />
-          <Button variant="ghost" label="Terms of use" leftIcon={<Icon name="file-text" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(TERMS_HREF)} accessibilityRole="link" accessibilityLabel="Terms of use" />
+          <Button variant="ghost" label={tx('legal.terms')} leftIcon={<Icon name="file-text" size={18} color={t.colors.primaryInk} />} onPress={() => router.push(TERMS_HREF)} accessibilityRole="link" accessibilityLabel={tx('legal.terms')} />
         </View>
 
         {/* ─── Delete account (Play policy: easy to find, own section) ─────── */}
@@ -302,22 +321,19 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           aria-level={2}
         >
-          Delete account
+          {tx('sections.delete')}
         </Text>
         <View style={[cardStyle, { padding: t.spacing.lg, gap: t.spacing.md }]}>
-          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>
-            Permanently deletes your account and everything in it: trips, places, expenses, packing lists, uploaded
-            documents and share links. Trips shared with you stay with their owners. Export your data first if you want a copy.
-          </Text>
+          <Text style={[t.typography.body, { color: t.colors.textMuted }]}>{tx('delete.body')}</Text>
           <Button
             variant="danger"
-            label="Delete account"
+            label={tx('delete.button')}
             leftIcon={<Icon name="trash" size={18} color={t.colors.dangerText} />}
             onPress={handleDeleteAccount}
             loading={isDeleting}
             disabled={screenDisabled}
-            accessibilityLabel="Delete account permanently"
-            accessibilityHint="Requires confirmation. Permanently removes your account and all trips."
+            accessibilityLabel={tx('delete.a11y')}
+            accessibilityHint={tx('delete.hint')}
           />
         </View>
 
@@ -328,7 +344,7 @@ export default function SettingsScreen() {
             accessibilityRole="alert"
             accessibilityLiveRegion="polite"
           >
-            {exportAccount.error.message ?? 'Failed to export data. Please try again.'}
+            {tx('errors:account.exportFailed')}
           </Text>
         ) : null}
 
@@ -338,7 +354,7 @@ export default function SettingsScreen() {
             accessibilityRole="alert"
             accessibilityLiveRegion="polite"
           >
-            {deleteError}
+            {tx(deleteError)}
           </Text>
         ) : null}
       </ScrollView>
@@ -350,135 +366,6 @@ export default function SettingsScreen() {
         onClose={() => setEmailModalOpen(false)}
       />
     </Screen>
-  );
-}
-
-// ── ChangeEmailModal ──────────────────────────────────────────────────────────
-
-function ChangeEmailModal({
-  visible,
-  currentEmail,
-  onClose,
-}: {
-  visible: boolean;
-  currentEmail: string;
-  onClose: () => void;
-}) {
-  const t = useTheme();
-  const changeEmail = useChangeEmail();
-  const [newEmail, setNewEmail] = useState('');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
-  function reset() {
-    setNewEmail('');
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    changeEmail.reset();
-  }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
-
-  async function handleSubmit() {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    const trimmed = newEmail.trim();
-    if (!trimmed) {
-      setErrorMsg('Email is required.');
-      return;
-    }
-    try {
-      await changeEmail.mutateAsync({ newEmail: trimmed });
-      setSuccessMsg(`Check your inbox at ${trimmed} to confirm the change.`);
-    } catch (err) {
-      if (err instanceof AuthMutationError) {
-        if (err.code === 'email_exists') {
-          setErrorMsg('That email is already in use.');
-        } else {
-          setErrorMsg(err.message ?? 'Something went wrong. Please try again.');
-        }
-      } else {
-        setErrorMsg('Something went wrong. Please try again.');
-      }
-    }
-  }
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
-      accessibilityViewIsModal
-    >
-      <View style={modalStyles.overlay}>
-      <View style={[modalStyles.sheet, { backgroundColor: t.colors.bgElevated, borderRadius: t.radius.xl }]}>
-        <Text style={[t.typography.subtitle, { color: t.colors.text, marginBottom: t.spacing.md }]}>
-          Change email
-        </Text>
-        <Text style={[t.typography.caption, { color: t.colors.textMuted, marginBottom: t.spacing.sm }]}>
-          Current: {currentEmail}
-        </Text>
-        <TextInput
-          value={newEmail}
-          onChangeText={(v) => { setNewEmail(v); setErrorMsg(null); setSuccessMsg(null); }}
-          placeholder="New email address"
-          placeholderTextColor={t.colors.textMuted}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          accessibilityLabel="New email address"
-          style={[
-            modalStyles.input,
-            {
-              borderColor: errorMsg ? t.colors.danger : t.colors.border,
-              borderRadius: t.radius.sm,
-              color: t.colors.text,
-              backgroundColor: t.colors.bg,
-              ...t.typography.body,
-            },
-          ]}
-        />
-        {errorMsg ? (
-          <Text
-            style={[t.typography.caption, { color: t.colors.danger, marginTop: t.spacing.xs }]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            {errorMsg}
-          </Text>
-        ) : null}
-        {successMsg ? (
-          <Text
-            style={[t.typography.caption, { color: t.colors.success, marginTop: t.spacing.xs }]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            {successMsg}
-          </Text>
-        ) : null}
-        <View style={{ flexDirection: 'row', gap: t.spacing.sm, marginTop: t.spacing.md }}>
-          <Button
-            variant="ghost"
-            label="Cancel"
-            onPress={handleClose}
-            fullWidth={false}
-          />
-          <View style={{ flex: 1 }}>
-            <Button
-              label={successMsg ? 'Done' : 'Send confirmation'}
-              onPress={successMsg ? handleClose : handleSubmit}
-              loading={changeEmail.isPending}
-              disabled={changeEmail.isPending}
-            />
-          </View>
-        </View>
-      </View>
-      </View>
-    </Modal>
   );
 }
 
@@ -521,30 +408,5 @@ const styles = StyleSheet.create({
     maxWidth: 720,
     width: '100%',
     alignSelf: 'center',
-  },
-});
-
-const modalStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  sheet: {
-    width: '100%',
-    maxWidth: 480,
-    padding: 24,
-    ...Platform.select({
-      web: { boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } as ViewStyle,
-      default: {},
-    }),
-  },
-  input: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    height: 44,
   },
 });

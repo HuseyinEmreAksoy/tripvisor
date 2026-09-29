@@ -13,6 +13,8 @@ export interface ConfirmDestructiveOpts {
   title: string;
   message: string;
   confirmLabel: string;
+  /** Native only: `window.confirm` labels its buttons in the browser's language. */
+  cancelLabel?: string;
 }
 
 /**

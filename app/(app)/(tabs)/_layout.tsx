@@ -16,9 +16,12 @@
 import { Tabs } from 'expo-router';
 import { AppTabBar } from '@/components/navigation/AppTabBar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useT } from '@/i18n';
 
 export default function TabsLayout() {
   const isDesktop = useBreakpoint() === 'desktop';
+  // Re-renders on a language switch, so the labels follow Profile → Language.
+  const { t: tx } = useT('shell');
 
   return (
     <Tabs
@@ -31,15 +34,15 @@ export default function TabsLayout() {
         lazy: true,
       }}
     >
-      <Tabs.Screen name="trips" options={{ title: 'Trips', tabBarAccessibilityLabel: 'Trips' }} />
-      <Tabs.Screen name="today" options={{ title: 'Today', tabBarAccessibilityLabel: 'Today' }} />
+      <Tabs.Screen name="trips" options={{ title: tx('tabs.trips'), tabBarAccessibilityLabel: tx('tabs.trips') }} />
+      <Tabs.Screen name="today" options={{ title: tx('tabs.today'), tabBarAccessibilityLabel: tx('tabs.today') }} />
       <Tabs.Screen
         name="analytics"
-        options={{ title: 'Insights', tabBarAccessibilityLabel: 'Insights' }}
+        options={{ title: tx('tabs.insights'), tabBarAccessibilityLabel: tx('tabs.insights') }}
       />
       <Tabs.Screen
         name="settings"
-        options={{ title: 'Profile', tabBarAccessibilityLabel: 'Profile and settings' }}
+        options={{ title: tx('tabs.profile'), tabBarAccessibilityLabel: tx('tabs.profileA11y') }}
       />
     </Tabs>
   );
