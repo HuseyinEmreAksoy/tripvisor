@@ -67,7 +67,7 @@ Tripvisor is a **holiday planner and an after-trip memory and review app**.
 - `backend-specialist` — Supabase, Edge Functions, `src/api/`, `src/sync/`, optimizer, plus unit tests for its own code
 - `reviewer` — read-only; **owns the verification gate** (tsc vs recorded count, Jest, `sync:validate`, web export) and the diff review
 - `docs-specialist` — BUILD-LOG, `docs/v2/`, `docs/features/`, `plan-v2.md` status
-- `git-committer` — explicit-path staging, Conventional Commits, ff-push; no Co-Authored-By trailer
+- `git-committer` — explicit-path staging, Conventional Commits, ff-push; every commit ends with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer (user decision 2026-10-30)
 - `test-specialist` — **disabled** (`.md.disabled`). Tests are written by the owning specialist, and the reviewer runs the gate.
 
 **Orchestration (per wave, not per step):**

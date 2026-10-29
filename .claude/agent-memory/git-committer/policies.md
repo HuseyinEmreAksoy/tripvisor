@@ -5,7 +5,7 @@ metadata:
   type: feedback
 ---
 
-- **No Co-Authored-By trailer.** This is explicit user policy, reaffirmed many times. Only add it when a brief explicitly asks.
+- **Always add a Co-Authored-By trailer** (`Co-Authored-By: Claude <model> <noreply@anthropic.com>`). The user reversed the old "no trailer" policy on 2026-10-30 so Claude shows as a contributor.
 - **Fast-forward push to `origin/master` is pre-authorized.** Only force or non-ff pushes need confirmation. If the sandbox blocks a push, report it; the user pushes manually.
 - **Commit via Bash heredoc (`git commit -F -`).** PowerShell 5.1 writes a BOM and mangles `$`.
 - **Quote `app/(app)/…` and `app/(auth)/…` paths** in bash.

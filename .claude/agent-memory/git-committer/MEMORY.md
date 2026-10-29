@@ -1,1 +1,1 @@
-- [Commit/push policies](policies.md) — no Co-Authored-By; ff-push pre-authorized; heredoc commits; never-commit list; quote (app)/(auth) paths
+- [Commit/push policies](policies.md) — always add Co-Authored-By: Claude trailer; ff-push pre-authorized; heredoc commits; never-commit list; quote (app)/(auth) paths
